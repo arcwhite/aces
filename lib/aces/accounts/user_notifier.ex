@@ -65,7 +65,10 @@ defmodule Aces.Accounts.UserNotifier do
     """)
   end
 
-  defp deliver_confirmation_instructions(user, url) do
+  @doc """
+  Deliver email confirmation instructions.
+  """
+  def deliver_confirmation_instructions(user, url) do
     deliver(user.email, "Confirmation instructions", """
 
     ==============================
@@ -77,6 +80,26 @@ defmodule Aces.Accounts.UserNotifier do
     #{url}
 
     If you didn't create an account with us, please ignore this.
+
+    ==============================
+    """)
+  end
+
+  @doc """
+  Deliver instructions to reset a user password.
+  """
+  def deliver_reset_password_instructions(user, url) do
+    deliver(user.email, "Reset password instructions", """
+
+    ==============================
+
+    Hi #{user.email},
+
+    You can reset your password by visiting the URL below:
+
+    #{url}
+
+    If you didn't request this change, please ignore this.
 
     ==============================
     """)

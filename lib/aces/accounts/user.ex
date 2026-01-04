@@ -13,6 +13,25 @@ defmodule Aces.Accounts.User do
   end
 
   @doc """
+  A user changeset for registration with email and password.
+
+  ## Options
+
+    * `:hash_password` - Hashes the password so it can be stored securely
+      in the database and ensures the password field is cleared to prevent
+      leaks in the logs. Defaults to `true`.
+    * `:validate_unique` - Set to false if you don't want to validate the
+      uniqueness of the email. Defaults to `true`.
+  """
+  def registration_changeset(user, attrs, opts \\ []) do
+    user
+    |> cast(attrs, [:email, :password])
+    |> validate_email(opts)
+    |> validate_confirmation(:password, message: "does not match password")
+    |> validate_password(opts)
+  end
+
+  @doc """
   A user changeset for registering or changing the email.
 
   It requires the email to change otherwise an error is added.

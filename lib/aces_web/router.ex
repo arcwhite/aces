@@ -73,8 +73,13 @@ defmodule AcesWeb.Router do
     pipe_through [:browser]
 
     get "/users/log-in", UserSessionController, :new
-    get "/users/log-in/:token", UserSessionController, :confirm
     post "/users/log-in", UserSessionController, :create
+    get "/users/confirm/:token", UserSessionController, :confirm
     delete "/users/log-out", UserSessionController, :delete
+
+    get "/users/reset-password", UserResetPasswordController, :new
+    post "/users/reset-password", UserResetPasswordController, :create
+    get "/users/reset-password/:token", UserResetPasswordController, :edit
+    put "/users/reset-password/:token", UserResetPasswordController, :update
   end
 end

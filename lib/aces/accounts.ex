@@ -76,8 +76,15 @@ defmodule Aces.Accounts do
   """
   def register_user(attrs) do
     %User{}
-    |> User.email_changeset(attrs)
+    |> User.registration_changeset(attrs)
     |> Repo.insert()
+  end
+
+  @doc """
+  Returns a changeset for user registration.
+  """
+  def change_user_registration(attrs \\ %{}) do
+    User.registration_changeset(%User{}, attrs, hash_password: false, validate_unique: false)
   end
 
   ## Settings
@@ -246,6 +253,40 @@ defmodule Aces.Accounts do
     end
   end
 
+  @doc """
+  Confirms a user's email address using a confirmation token.
+
+  This is used during registration to verify email ownership.
+  Unlike `login_user_by_magic_link/1`, this only confirms the email
+  without logging the user in (they must use their password to log in).
+  """
+  def confirm_user_email(token) do
+    {:ok, query} = UserToken.verify_magic_link_token_query(token)
+
+    case Repo.one(query) do
+      {%User{confirmed_at: nil, hashed_password: hash} = user, token_record} when not is_nil(hash) ->
+        # User has a password set and hasn't confirmed yet - confirm them
+        result = user
+        |> User.confirm_changeset()
+        |> Repo.update()
+
+        case result do
+          {:ok, updated_user} ->
+            # Delete only the confirmation token, not session tokens
+            Repo.delete!(token_record)
+            {:ok, updated_user}
+          error -> error
+        end
+
+      {%User{confirmed_at: confirmed_at}, _token} when not is_nil(confirmed_at) ->
+        # Already confirmed
+        {:error, :already_confirmed}
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
+
   @doc ~S"""
   Delivers the update email instructions to the given user.
 
@@ -264,6 +305,16 @@ defmodule Aces.Accounts do
   end
 
   @doc """
+  Delivers email confirmation instructions to a newly registered user.
+  """
+  def deliver_user_confirmation_instructions(%User{} = user, confirmation_url_fun)
+      when is_function(confirmation_url_fun, 1) do
+    {encoded_token, user_token} = UserToken.build_email_token(user, "login")
+    Repo.insert!(user_token)
+    UserNotifier.deliver_confirmation_instructions(user, confirmation_url_fun.(encoded_token))
+  end
+
+  @doc """
   Delivers the magic link login instructions to the given user.
   """
   def deliver_login_instructions(%User{} = user, magic_link_url_fun)
@@ -271,6 +322,42 @@ defmodule Aces.Accounts do
     {encoded_token, user_token} = UserToken.build_email_token(user, "login")
     Repo.insert!(user_token)
     UserNotifier.deliver_login_instructions(user, magic_link_url_fun.(encoded_token))
+  end
+
+  @doc """
+  Delivers password reset instructions to the given user.
+  """
+  def deliver_user_reset_password_instructions(%User{} = user, reset_password_url_fun)
+      when is_function(reset_password_url_fun, 1) do
+    {encoded_token, user_token} = UserToken.build_email_token(user, "reset_password")
+    Repo.insert!(user_token)
+    UserNotifier.deliver_reset_password_instructions(user, reset_password_url_fun.(encoded_token))
+  end
+
+  @doc """
+  Gets the user by reset password token.
+  """
+  def get_user_by_reset_password_token(token) do
+    with {:ok, query} <- UserToken.verify_reset_password_token_query(token),
+         %User{} = user <- Repo.one(query) do
+      user
+    else
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Resets the user password using a reset token.
+  """
+  def reset_user_password(user, attrs) do
+    Ecto.Multi.new()
+    |> Ecto.Multi.update(:user, User.password_changeset(user, attrs))
+    |> Ecto.Multi.delete_all(:tokens, from(t in UserToken, where: t.user_id == ^user.id))
+    |> Repo.transaction()
+    |> case do
+      {:ok, %{user: user}} -> {:ok, user}
+      {:error, :user, changeset, _} -> {:error, changeset}
+    end
   end
 
   @doc """

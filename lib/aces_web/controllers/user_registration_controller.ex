@@ -5,7 +5,7 @@ defmodule AcesWeb.UserRegistrationController do
   alias Aces.Accounts.User
 
   def new(conn, _params) do
-    changeset = Accounts.change_user_email(%User{})
+    changeset = Accounts.change_user_registration()
     render(conn, :new, changeset: changeset)
   end
 
@@ -13,15 +13,15 @@ defmodule AcesWeb.UserRegistrationController do
     case Accounts.register_user(user_params) do
       {:ok, user} ->
         {:ok, _} =
-          Accounts.deliver_login_instructions(
+          Accounts.deliver_user_confirmation_instructions(
             user,
-            &url(~p"/users/log-in/#{&1}")
+            &url(~p"/users/confirm/#{&1}")
           )
 
         conn
         |> put_flash(
           :info,
-          "An email was sent to #{user.email}, please access it to confirm your account."
+          "Account created successfully! Please check your email to confirm your account."
         )
         |> redirect(to: ~p"/users/log-in")
 
