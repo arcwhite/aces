@@ -85,7 +85,7 @@ Integration with the Master Unit List (MUL) for unit data, balancing offline cap
 ```
 ┌─────────────────────────────────────────────┐
 │ User Interface (LiveView)                   │
-│ "I want to add a Timber Wolf to my roster" │
+│ "I want to add a Timber Wolf to my roster"  │
 └──────────────────┬──────────────────────────┘
                    │
                    ▼
