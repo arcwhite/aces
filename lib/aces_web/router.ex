@@ -59,6 +59,11 @@ defmodule AcesWeb.Router do
 
     live "/demo", DemoLive
 
+    # Company routes
+    live "/companies", CompanyLive.Index, :index
+    live "/companies/new", CompanyLive.New
+    live "/companies/:id", CompanyLive.Show, :show
+
     get "/users/settings", UserSettingsController, :edit
     put "/users/settings", UserSettingsController, :update
     get "/users/settings/confirm-email/:token", UserSettingsController, :confirm_email

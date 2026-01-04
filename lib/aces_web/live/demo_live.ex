@@ -85,20 +85,20 @@ defmodule AcesWeb.DemoLive do
             <div class="stats stats-vertical md:stats-horizontal shadow bg-base-100 text-base-content">
               <div class="stat">
                 <div class="stat-title">Total Interactions</div>
-                <div class="stat-value text-primary"><%= @interaction_count %></div>
+                <div class="stat-value text-primary">{@interaction_count}</div>
                 <div class="stat-desc">Across all users</div>
               </div>
               <div class="stat">
                 <div class="stat-title">Active Users</div>
-                <div class="stat-value text-secondary"><%= @active_users %></div>
+                <div class="stat-value text-secondary">{@active_users}</div>
                 <div class="stat-desc">Viewing this page</div>
               </div>
             </div>
           </div>
         </div>
       </div>
-
-      <!-- Main Content -->
+      
+    <!-- Main Content -->
       <div class="container mx-auto px-4 py-8">
         <!-- Tabs -->
         <div class="tabs tabs-boxed justify-center mb-8">
@@ -124,8 +124,8 @@ defmodule AcesWeb.DemoLive do
             Data Display
           </button>
         </div>
-
-        <!-- Components Tab -->
+        
+    <!-- Components Tab -->
         <div :if={@selected_tab == "components"} class="space-y-8">
           <!-- Buttons Section -->
           <div class="card bg-base-100 shadow-xl">
@@ -142,7 +142,7 @@ defmodule AcesWeb.DemoLive do
                 >
                   Primary
                   <span :if={Map.get(@button_clicks, "primary", 0) > 0} class="badge badge-secondary">
-                    <%= Map.get(@button_clicks, "primary") %>
+                    {Map.get(@button_clicks, "primary")}
                   </span>
                 </button>
                 <button
@@ -152,7 +152,7 @@ defmodule AcesWeb.DemoLive do
                 >
                   Secondary
                   <span :if={Map.get(@button_clicks, "secondary", 0) > 0} class="badge badge-primary">
-                    <%= Map.get(@button_clicks, "secondary") %>
+                    {Map.get(@button_clicks, "secondary")}
                   </span>
                 </button>
                 <button
@@ -162,7 +162,7 @@ defmodule AcesWeb.DemoLive do
                 >
                   Accent
                   <span :if={Map.get(@button_clicks, "accent", 0) > 0} class="badge badge-ghost">
-                    <%= Map.get(@button_clicks, "accent") %>
+                    {Map.get(@button_clicks, "accent")}
                   </span>
                 </button>
                 <button
@@ -187,8 +187,8 @@ defmodule AcesWeb.DemoLive do
               </div>
             </div>
           </div>
-
-          <!-- Badges & Alerts -->
+          
+    <!-- Badges & Alerts -->
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="card bg-base-100 shadow-xl">
               <div class="card-body">
@@ -245,8 +245,8 @@ defmodule AcesWeb.DemoLive do
               </div>
             </div>
           </div>
-
-          <!-- Modal Demo -->
+          
+    <!-- Modal Demo -->
           <div class="card bg-base-100 shadow-xl">
             <div class="card-body">
               <h2 class="card-title">Modal</h2>
@@ -255,8 +255,8 @@ defmodule AcesWeb.DemoLive do
               </button>
             </div>
           </div>
-
-          <!-- Cards with Images -->
+          
+    <!-- Cards with Images -->
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div class="card bg-base-100 shadow-xl">
               <div class="card-body">
@@ -295,8 +295,8 @@ defmodule AcesWeb.DemoLive do
             </div>
           </div>
         </div>
-
-        <!-- Forms Tab -->
+        
+    <!-- Forms Tab -->
         <div :if={@selected_tab == "forms"} class="space-y-8">
           <div class="card bg-base-100 shadow-xl">
             <div class="card-body">
@@ -369,8 +369,8 @@ defmodule AcesWeb.DemoLive do
             </div>
           </div>
         </div>
-
-        <!-- Data Display Tab -->
+        
+    <!-- Data Display Tab -->
         <div :if={@selected_tab == "data"} class="space-y-8">
           <div class="card bg-base-100 shadow-xl">
             <div class="card-body">
@@ -534,8 +534,8 @@ defmodule AcesWeb.DemoLive do
               </table>
             </div>
           </div>
-
-          <!-- Timeline -->
+          
+    <!-- Timeline -->
           <div class="card bg-base-100 shadow-xl">
             <div class="card-body">
               <h2 class="card-title">Campaign Timeline</h2>
@@ -608,8 +608,8 @@ defmodule AcesWeb.DemoLive do
             </div>
           </div>
         </div>
-
-        <!-- Loading States -->
+        
+    <!-- Loading States -->
         <div class="card bg-base-100 shadow-xl">
           <div class="card-body">
             <h2 class="card-title">Loading States</h2>
@@ -621,8 +621,7 @@ defmodule AcesWeb.DemoLive do
             </div>
             <div class="flex flex-wrap gap-4 mt-4">
               <button class="btn btn-primary">
-                <span class="loading loading-spinner"></span>
-                Processing...
+                <span class="loading loading-spinner"></span> Processing...
               </button>
               <button class="btn btn-secondary" disabled>
                 <span class="loading loading-dots"></span>
@@ -631,8 +630,8 @@ defmodule AcesWeb.DemoLive do
           </div>
         </div>
       </div>
-
-      <!-- Modal -->
+      
+    <!-- Modal -->
       <dialog :if={@show_modal} class="modal modal-open">
         <div class="modal-box">
           <h3 class="font-bold text-lg">Modal Demo</h3>
@@ -640,7 +639,7 @@ defmodule AcesWeb.DemoLive do
             This is a daisyUI modal! All interactions on this page are synced across connected users via Phoenix PubSub.
           </p>
           <p class="text-sm text-base-content/70">
-            Total interactions so far: <span class="badge badge-primary"><%= @interaction_count %></span>
+            Total interactions so far: <span class="badge badge-primary">{@interaction_count}</span>
           </p>
           <div class="modal-action">
             <button class="btn" phx-click="close_modal">Close</button>
@@ -651,10 +650,14 @@ defmodule AcesWeb.DemoLive do
           <button>close</button>
         </form>
       </dialog>
-
-      <!-- Bottom Navigation (Mobile) -->
+      
+    <!-- Bottom Navigation (Mobile) -->
       <div class="btm-nav md:hidden">
-        <button class={[@selected_tab == "components" && "active"]} phx-click="select_tab" phx-value-tab="components">
+        <button
+          class={[@selected_tab == "components" && "active"]}
+          phx-click="select_tab"
+          phx-value-tab="components"
+        >
           <svg
             xmlns="http://www.w3.org/2000/svg"
             class="h-5 w-5"
@@ -671,7 +674,11 @@ defmodule AcesWeb.DemoLive do
           </svg>
           <span class="btm-nav-label">Components</span>
         </button>
-        <button class={[@selected_tab == "forms" && "active"]} phx-click="select_tab" phx-value-tab="forms">
+        <button
+          class={[@selected_tab == "forms" && "active"]}
+          phx-click="select_tab"
+          phx-value-tab="forms"
+        >
           <svg
             xmlns="http://www.w3.org/2000/svg"
             class="h-5 w-5"
@@ -688,7 +695,11 @@ defmodule AcesWeb.DemoLive do
           </svg>
           <span class="btm-nav-label">Forms</span>
         </button>
-        <button class={[@selected_tab == "data" && "active"]} phx-click="select_tab" phx-value-tab="data">
+        <button
+          class={[@selected_tab == "data" && "active"]}
+          phx-click="select_tab"
+          phx-value-tab="data"
+        >
           <svg
             xmlns="http://www.w3.org/2000/svg"
             class="h-5 w-5"
