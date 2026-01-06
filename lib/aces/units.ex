@@ -114,7 +114,7 @@ defmodule Aces.Units do
                    ilike(u.variant, ^ilike_term) or
                    ilike(u.full_name, ^ilike_term))
     |> apply_filters(opts)
-    |> order_by([u], fragment("similarity(?, ?) DESC", u.name, ^search_term))
+    |> order_by([u], u.name)
     |> limit(50)
     |> Repo.all()
   end

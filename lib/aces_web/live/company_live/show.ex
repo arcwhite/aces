@@ -48,19 +48,26 @@ defmodule AcesWeb.CompanyLive.Show do
      |> assign(:search_loading, false)}
   end
 
-  def handle_event("search_units", %{"search" => search_term}, socket) do
+  def handle_event("search_units", %{"value" => search_term}, socket) do
     search_term = String.trim(search_term)
+    require Logger
+    Logger.debug("Search event received for term: '#{search_term}'")
 
     socket =
       if String.length(search_term) >= 2 do
-        socket
-        |> assign(:unit_search_term, search_term)
-        |> assign(:search_loading, true)
+        Logger.debug("Term length >= 2, starting search...")
+
+        socket =
+          socket
+          |> assign(:unit_search_term, search_term)
+          |> assign(:search_loading, true)
 
         # Perform search asynchronously
+        Logger.debug("Sending perform_search message to self()")
         send(self(), {:perform_search, search_term})
         socket
       else
+        Logger.debug("Term too short, clearing results")
         socket
         |> assign(:unit_search_term, search_term)
         |> assign(:search_results, [])
@@ -80,7 +87,7 @@ defmodule AcesWeb.CompanyLive.Show do
         {:ok, _company_unit} ->
           # Reload the company with updated stats
           updated_company = Companies.get_company_with_stats!(company.id)
-          
+
           {:noreply,
            socket
            |> assign(:company, updated_company)
@@ -104,11 +111,11 @@ defmodule AcesWeb.CompanyLive.Show do
 
         {:error, changeset} ->
           # Handle validation errors
-          error_message = 
+          error_message =
             changeset.errors
             |> Enum.map(fn {field, {msg, _}} -> "#{field}: #{msg}" end)
             |> Enum.join(", ")
-          
+
           {:noreply,
            socket
            |> put_flash(:error, "Failed to add unit: #{error_message}")}
@@ -139,15 +146,33 @@ defmodule AcesWeb.CompanyLive.Show do
 
   @impl true
   def handle_info({:perform_search, search_term}, socket) do
+    require Logger
+    Logger.debug("handle_info received perform_search for: '#{search_term}'")
+    Logger.debug("Current unit_search_term: '#{socket.assigns.unit_search_term}'")
+
     # Only perform search if the search term hasn't changed
     if socket.assigns.unit_search_term == search_term do
-      search_results = Units.search_units(search_term, unit_type: "battlemech")
+      Logger.debug("Search terms match, performing search...")
+      try do
+        search_results = Units.search_units(search_term, unit_type: "battlemech")
+        Logger.debug("Search returned #{length(search_results)} results")
 
-      {:noreply,
-       socket
-       |> assign(:search_results, search_results)
-       |> assign(:search_loading, false)}
+        {:noreply,
+         socket
+         |> assign(:search_results, search_results)
+         |> assign(:search_loading, false)}
+      rescue
+        error ->
+          Logger.error("Search failed for '#{search_term}': #{inspect(error)}")
+
+          {:noreply,
+           socket
+           |> assign(:search_results, [])
+           |> assign(:search_loading, false)
+           |> put_flash(:error, "Search failed. Please try again.")}
+      end
     else
+      Logger.debug("Search terms don't match, ignoring stale search")
       {:noreply, socket}
     end
   end
@@ -241,6 +266,7 @@ defmodule AcesWeb.CompanyLive.Show do
                   <th>Custom Name</th>
                   <th>Status</th>
                   <th>Cost (SP)</th>
+                  <th>PV</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -271,6 +297,7 @@ defmodule AcesWeb.CompanyLive.Show do
                       </div>
                     </td>
                     <td>{unit.purchase_cost_sp} SP</td>
+                    <td>{unit.master_unit.point_value}</td>
                     <td>
                       <button class="btn btn-ghost btn-xs">Edit</button>
                       <button class="btn btn-ghost btn-xs text-error">Remove</button>
@@ -328,15 +355,15 @@ defmodule AcesWeb.CompanyLive.Show do
             <div class="mb-4">
               <input
                 type="text"
+                name="search"
                 placeholder="Search for units (e.g. Atlas, Timber Wolf, Locust...)"
                 class="input input-bordered w-full"
                 value={@unit_search_term}
                 phx-keyup="search_units"
-                phx-value-search={@unit_search_term}
                 phx-debounce="300"
               />
               <p class="text-sm text-gray-600 mt-2">
-                Units are sourced from 
+                Units are sourced from
                 <a href="https://masterunitlist.info" target="_blank" class="link">Master Unit List</a>
                 with respect and attribution.
               </p>

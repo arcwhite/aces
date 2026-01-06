@@ -1,7 +1,6 @@
 defmodule AcesWeb.CompanyLive.New do
   use AcesWeb, :live_view
 
-  alias Aces.Companies
   alias Aces.Companies.{Authorization, Company}
 
   on_mount {AcesWeb.UserAuthLive, :default}

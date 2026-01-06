@@ -2,7 +2,6 @@ defmodule AcesWeb.CompanyLive.FormComponent do
   use AcesWeb, :live_component
 
   alias Aces.Companies
-  alias Aces.Companies.Company
 
   @impl true
   def update(assigns, socket) do

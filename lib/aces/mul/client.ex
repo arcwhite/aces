@@ -217,7 +217,7 @@ defmodule Aces.MUL.Client do
       name: api_data["Name"],
       variant: api_data["Variant"],
       full_name: build_full_name(api_data["Name"], api_data["Variant"]),
-      unit_type: map_unit_type(api_data["Type"]),
+      unit_type: map_unit_type(extract_type_name(api_data["Type"])),
       tonnage: api_data["Tonnage"],
       point_value: api_data["BFPointValue"],
       battle_value: api_data["BattleValue"],
@@ -257,6 +257,9 @@ defmodule Aces.MUL.Client do
   defp map_unit_type("Battle Armor"), do: "battle_armor"
   defp map_unit_type("Infantry"), do: "conventional_infantry"
   defp map_unit_type("ProtoMech"), do: "protomech"
+  defp map_unit_type("Mech"), do: "battlemech"
+  defp map_unit_type("BattleMechs"), do: "battlemech"
+  defp map_unit_type("Mechs"), do: "battlemech"
   defp map_unit_type(_), do: "other"
 
   # Parse factions data - handle various possible formats from the API
@@ -324,4 +327,9 @@ defmodule Aces.MUL.Client do
   defp extract_role(%{"Name" => name}), do: name
   defp extract_role(name) when is_binary(name), do: name
   defp extract_role(_), do: nil
+
+  # Extract type name from API response
+  defp extract_type_name(%{"Name" => name}), do: name
+  defp extract_type_name(name) when is_binary(name), do: name
+  defp extract_type_name(_), do: nil
 end
