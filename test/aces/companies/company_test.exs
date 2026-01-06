@@ -15,7 +15,8 @@ defmodule Aces.Companies.CompanyTest do
       attrs = %{
         name: "Test Company",
         description: "A great company",
-        warchest_balance: 5000
+        warchest_balance: 5000,
+        pv_budget: 600
       }
 
       changeset = Company.changeset(%Company{}, attrs)
@@ -47,6 +48,18 @@ defmodule Aces.Companies.CompanyTest do
 
       assert changeset.valid?
     end
+
+    test "validates pv_budget is non-negative" do
+      changeset = Company.changeset(%Company{}, %{name: "Test", pv_budget: -50})
+
+      assert "must be greater than or equal to 0" in errors_on(changeset).pv_budget
+    end
+
+    test "allows zero pv_budget" do
+      changeset = Company.changeset(%Company{}, %{name: "Test", pv_budget: 0})
+
+      assert changeset.valid?
+    end
   end
 
   describe "creation_changeset/2" do
@@ -63,6 +76,20 @@ defmodule Aces.Companies.CompanyTest do
 
       assert changeset.valid?
       assert Ecto.Changeset.get_field(changeset, :warchest_balance) == 5000
+    end
+
+    test "sets default pv_budget to 400 when not provided" do
+      changeset = Company.creation_changeset(%Company{}, %{name: "Test"})
+
+      assert changeset.valid?
+      assert Ecto.Changeset.get_field(changeset, :pv_budget) == 400
+    end
+
+    test "uses provided pv_budget" do
+      changeset = Company.creation_changeset(%Company{}, %{name: "Test", pv_budget: 600})
+
+      assert changeset.valid?
+      assert Ecto.Changeset.get_field(changeset, :pv_budget) == 600
     end
   end
 end

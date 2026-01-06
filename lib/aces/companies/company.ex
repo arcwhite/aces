@@ -11,6 +11,7 @@ defmodule Aces.Companies.Company do
     field :name, :string
     field :description, :string
     field :warchest_balance, :integer, default: 0
+    field :pv_budget, :integer, default: 400
 
     has_many :memberships, CompanyMembership
     has_many :users, through: [:memberships, :user]
@@ -22,28 +23,37 @@ defmodule Aces.Companies.Company do
   @doc false
   def changeset(company, attrs) do
     company
-    |> cast(attrs, [:name, :description, :warchest_balance])
+    |> cast(attrs, [:name, :description, :warchest_balance, :pv_budget])
     |> validate_required([:name])
     |> validate_length(:name, min: 1, max: 255)
     |> validate_length(:description, max: 2000)
     |> validate_number(:warchest_balance, greater_than_or_equal_to: 0)
+    |> validate_number(:pv_budget, greater_than_or_equal_to: 0)
   end
 
   @doc """
-  Changeset for creating a new company with default warchest
+  Changeset for creating a new company with default PV budget and warchest
   """
   def creation_changeset(company, attrs) do
     changeset =
       company
-      |> cast(attrs, [:name, :description, :warchest_balance])
+      |> cast(attrs, [:name, :description, :warchest_balance, :pv_budget])
       |> validate_required([:name])
       |> validate_length(:name, min: 1, max: 255)
       |> validate_length(:description, max: 2000)
       |> validate_number(:warchest_balance, greater_than_or_equal_to: 0)
+      |> validate_number(:pv_budget, greater_than_or_equal_to: 0)
 
-    # Set default warchest_balance to 0 only if not provided
-    case get_change(changeset, :warchest_balance) do
-      nil -> put_change(changeset, :warchest_balance, 0)
+    changeset =
+      # Set default warchest_balance to 0 only if not provided
+      case get_change(changeset, :warchest_balance) do
+        nil -> put_change(changeset, :warchest_balance, 0)
+        _ -> changeset
+      end
+
+    # Set default pv_budget to 400 only if not provided
+    case get_change(changeset, :pv_budget) do
+      nil -> put_change(changeset, :pv_budget, 400)
       _ -> changeset
     end
   end

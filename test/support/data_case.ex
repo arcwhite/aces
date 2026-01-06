@@ -24,6 +24,9 @@ defmodule Aces.DataCase do
       import Ecto.Changeset
       import Ecto.Query
       import Aces.DataCase
+      import Aces.AccountsFixtures
+      import Aces.CompaniesFixtures
+      import Aces.UnitsFixtures
     end
   end
 

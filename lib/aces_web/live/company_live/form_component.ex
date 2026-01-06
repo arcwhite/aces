@@ -80,6 +80,15 @@ defmodule AcesWeb.CompanyLive.FormComponent do
         />
         <p class="text-sm text-gray-600">Support Points available for purchasing units</p>
 
+        <.input
+          field={@form[:pv_budget]}
+          type="number"
+          label="Alpha Strike PV Budget"
+          placeholder="400"
+          min="0"
+        />
+        <p class="text-sm text-gray-600">Point Value budget for initial unit roster (default: 400 PV)</p>
+
         <div class="flex gap-4 justify-end">
           <.link
             navigate={@return_to || ~p"/companies"}

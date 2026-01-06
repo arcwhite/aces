@@ -83,4 +83,23 @@ defmodule Aces.Units.MasterUnit do
   Returns the list of valid unit types
   """
   def valid_unit_types, do: @valid_unit_types
+
+  @doc """
+  Returns a friendly display name for the unit
+  """
+  def display_name(%__MODULE__{name: name, variant: nil}), do: name
+  def display_name(%__MODULE__{name: name, variant: variant}), do: "#{name} #{variant}"
+
+  @doc """
+  Returns the MUL website URL for this unit
+  """
+  def mul_url(%__MODULE__{mul_id: mul_id}), do: "https://www.masterunitlist.info/Unit/Details/#{mul_id}"
+
+  @doc """
+  Returns the Sarna.net search URL for this unit
+  """
+  def sarna_url(%__MODULE__{name: name}) do
+    search_term = String.replace(name, " ", "%20")
+    "https://www.sarna.net/wiki/Special:Search?search=#{search_term}&go=Go"
+  end
 end

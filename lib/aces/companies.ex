@@ -9,6 +9,7 @@ defmodule Aces.Companies do
   alias Aces.Accounts.User
   alias Aces.Companies.{Company, CompanyMembership, CompanyUnit}
   alias Aces.Units.MasterUnit
+  alias Aces.Units
 
   ## Company CRUD
 
@@ -154,21 +155,90 @@ defmodule Aces.Companies do
   ## Company Units
 
   @doc """
-  Adds a unit to a company's roster
+  Adds a unit to a company's roster with PV budget checking
   """
   def add_unit_to_company(%Company{} = company, mul_id, attrs \\ %{}) do
-    # For now, we'll create a simple master_unit entry
-    # Later this will integrate with the MUL API
-    master_unit = get_or_create_master_unit(mul_id, attrs)
+    case Units.get_master_unit_by_mul_id(mul_id) do
+      {:ok, master_unit} ->
+        # Check if company has enough PV budget
+        current_pv_used = calculate_company_pv_usage(company)
+        unit_cost = master_unit.point_value || 0
+        
+        if current_pv_used + unit_cost <= company.pv_budget do
+          # Create the company unit
+          %CompanyUnit{}
+          |> CompanyUnit.changeset(
+            Map.merge(attrs, %{
+              company_id: company.id,
+              master_unit_id: master_unit.id
+            })
+          )
+          |> Repo.insert()
+        else
+          {:error, :insufficient_pv_budget, 
+           "Insufficient PV budget. Need #{unit_cost} PV, but only have #{company.pv_budget - current_pv_used} remaining."}
+        end
 
-    %CompanyUnit{}
-    |> CompanyUnit.changeset(
-      Map.merge(attrs, %{
-        company_id: company.id,
-        master_unit_id: master_unit.id
-      })
-    )
-    |> Repo.insert()
+      {:error, :not_found} ->
+        {:error, :unit_not_found, "Unit not found in Master Unit List"}
+
+      {:error, reason} ->
+        {:error, :unit_lookup_failed, "Failed to lookup unit: #{reason}"}
+    end
+  end
+
+  @doc """
+  Purchase a unit for a company (includes PV budget deduction)
+  """
+  def purchase_unit_for_company(%Company{} = company, mul_id, attrs \\ %{}) do
+    case Units.get_master_unit_by_mul_id(mul_id) do
+      {:ok, master_unit} ->
+        current_pv_used = calculate_company_pv_usage(company)
+        unit_cost = master_unit.point_value || 0
+        available_pv = company.pv_budget - current_pv_used
+
+        if unit_cost <= available_pv do
+          Ecto.Multi.new()
+          |> Ecto.Multi.insert(:company_unit, fn _ ->
+            %CompanyUnit{}
+            |> CompanyUnit.changeset(
+              Map.merge(attrs, %{
+                company_id: company.id,
+                master_unit_id: master_unit.id,
+                purchase_cost_sp: attrs[:purchase_cost_sp] || 0
+              })
+            )
+          end)
+          |> Repo.transaction()
+          |> case do
+            {:ok, %{company_unit: company_unit}} ->
+              # Reload the company unit with associations
+              reloaded_unit = 
+                company_unit
+                |> Repo.preload(:master_unit, force: true)
+              
+              {:ok, reloaded_unit}
+
+            {:error, :company_unit, changeset, _} ->
+              {:error, changeset}
+          end
+        else
+          {:error, 
+           %{
+             type: :insufficient_pv_budget,
+             message: "Insufficient PV budget",
+             required_pv: unit_cost,
+             available_pv: available_pv,
+             unit_name: MasterUnit.display_name(master_unit)
+           }}
+        end
+
+      {:error, :not_found} ->
+        {:error, %{type: :unit_not_found, message: "Unit not found in Master Unit List"}}
+
+      {:error, reason} ->
+        {:error, %{type: :unit_lookup_failed, message: "Failed to lookup unit: #{reason}"}}
+    end
   end
 
   @doc """
@@ -189,42 +259,36 @@ defmodule Aces.Companies do
 
   ## Helper Functions
 
+  @doc """
+  Calculate total PV usage for a company
+  """
+  def calculate_company_pv_usage(%Company{} = company) do
+    company.company_units
+    |> Enum.map(fn unit -> 
+      if unit.master_unit do
+        unit.master_unit.point_value || 0
+      else
+        0
+      end
+    end)
+    |> Enum.sum()
+  end
+
   defp add_company_stats(company) do
     unit_count = length(company.company_units)
+    pv_used = calculate_company_pv_usage(company)
+    pv_remaining = company.pv_budget - pv_used
 
     Map.merge(company, %{
       stats: %{
         unit_count: unit_count,
         warchest_balance: company.warchest_balance,
+        pv_used: pv_used,
+        pv_remaining: pv_remaining,
+        pv_budget: company.pv_budget,
         last_modified: company.updated_at
       }
     })
   end
 
-  defp get_or_create_master_unit(mul_id, attrs) do
-    case Repo.get_by(MasterUnit, mul_id: mul_id) do
-      nil ->
-        # Create a simple master unit entry
-        # In the future, this will fetch from MUL API
-        {:ok, master_unit} =
-          %MasterUnit{}
-          |> MasterUnit.changeset(
-            Map.merge(
-              %{
-                mul_id: mul_id,
-                name: attrs[:name] || "Unknown Unit",
-                unit_type: attrs[:unit_type] || "battlemech",
-                point_value: attrs[:point_value] || 0
-              },
-              attrs
-            )
-          )
-          |> Repo.insert()
-
-        master_unit
-
-      master_unit ->
-        master_unit
-    end
-  end
 end
