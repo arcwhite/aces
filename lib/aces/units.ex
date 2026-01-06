@@ -207,5 +207,21 @@ defmodule Aces.Units do
     |> apply_filters(rest)
   end
 
+  defp apply_filters(query, [{:faction, faction} | rest]) when is_binary(faction) do
+    # Use PostgreSQL JSON query to check if faction exists in the factions map
+    query
+    |> where([u], fragment("? \\? ?", u.factions, ^String.downcase(faction)))
+    |> apply_filters(rest)
+  end
+
+  defp apply_filters(query, [{:factions, factions} | rest]) when is_list(factions) do
+    # Check if unit is available to any of the specified factions
+    lowercase_factions = Enum.map(factions, &String.downcase/1)
+    
+    query
+    |> where([u], fragment("? \\?| ?", u.factions, ^lowercase_factions))
+    |> apply_filters(rest)
+  end
+
   defp apply_filters(query, [_ | rest]), do: apply_filters(query, rest)
 end

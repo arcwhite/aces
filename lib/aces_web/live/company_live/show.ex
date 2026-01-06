@@ -374,6 +374,16 @@ defmodule AcesWeb.CompanyLive.Show do
                               <%= if unit.role do %>
                                 <p class="text-sm text-gray-600 mt-1">Role: {unit.role}</p>
                               <% end %>
+                              <%= if unit.factions && map_size(unit.factions) > 0 do %>
+                                <div class="flex gap-1 mt-2">
+                                  <%= for faction <- Enum.take(Map.keys(unit.factions), 3) do %>
+                                    <div class="badge badge-ghost badge-xs">{String.capitalize(faction)}</div>
+                                  <% end %>
+                                  <%= if map_size(unit.factions) > 3 do %>
+                                    <div class="badge badge-ghost badge-xs">+{map_size(unit.factions) - 3}</div>
+                                  <% end %>
+                                </div>
+                              <% end %>
                             </div>
                             <div class="flex flex-col gap-2">
                               <%= if unit.point_value && unit.point_value <= @company.stats.pv_remaining do %>

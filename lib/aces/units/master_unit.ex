@@ -38,6 +38,7 @@ defmodule Aces.Units.MasterUnit do
     field :image_url, :string
     field :is_published, :boolean, default: false
     field :last_synced_at, :utc_datetime
+    field :factions, :map
 
     has_many :company_units, CompanyUnit
 
@@ -72,7 +73,8 @@ defmodule Aces.Units.MasterUnit do
       :bf_abilities,
       :image_url,
       :is_published,
-      :last_synced_at
+      :last_synced_at,
+      :factions
     ])
     |> validate_required([:mul_id, :name, :unit_type])
     |> validate_inclusion(:unit_type, @valid_unit_types)
@@ -101,5 +103,21 @@ defmodule Aces.Units.MasterUnit do
   def sarna_url(%__MODULE__{name: name}) do
     search_term = String.replace(name, " ", "%20")
     "https://www.sarna.net/wiki/Special:Search?search=#{search_term}&go=Go"
+  end
+
+  @doc """
+  Checks if a unit is available to a specific faction
+  """
+  def available_to_faction?(%__MODULE__{factions: nil}, _faction), do: false
+  def available_to_faction?(%__MODULE__{factions: factions}, faction) when is_map(factions) do
+    Map.has_key?(factions, faction)
+  end
+
+  @doc """
+  Returns a list of faction names the unit is available to
+  """
+  def available_factions(%__MODULE__{factions: nil}), do: []
+  def available_factions(%__MODULE__{factions: factions}) when is_map(factions) do
+    Map.keys(factions)
   end
 end

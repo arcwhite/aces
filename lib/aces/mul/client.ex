@@ -24,7 +24,7 @@ defmodule Aces.MUL.Client do
   def fetch_units(filters \\ %{}) do
     with :ok <- rate_limit_check(),
          {:ok, response} <- make_request("/Unit/QuickList", filters) do
-      units = parse_response(response)
+      units = parse_response(response, filters)
       {:ok, units}
     else
       {:error, :rate_limited} ->
@@ -128,19 +128,90 @@ defmodule Aces.MUL.Client do
     Enum.map_join(types, "&", fn t -> "Types=#{t}" end)
   end
 
+  defp encode_param(:factions, factions) when is_list(factions) do
+    factions
+    |> Enum.map(&faction_name_to_id/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map_join("&", fn id -> "Factions=#{id}" end)
+  end
+
   defp encode_param(:min_tons, tons), do: "MinTons=#{tons}"
   defp encode_param(:max_tons, tons), do: "MaxTons=#{tons}"
   defp encode_param(:name, name), do: "Name=#{URI.encode(name)}"
 
   defp encode_param(_, _), do: nil
 
-  defp parse_response(%{body: %{"Units" => units}}) when is_list(units) do
-    Enum.map(units, &normalize_unit/1)
+  # Faction name to ID mapping (extracted from https://masterunitlist.azurewebsites.net/Faction/Index)
+  @faction_mappings %{
+    # Key factions for mercenary play
+    "mercenary" => 34,
+    "mercenaries" => 34,  # Alias
+    
+    # Inner Sphere Great Powers
+    "capellan_confederation" => 5,
+    "draconis_combine" => 27,
+    "federated_suns" => 29,
+    "free_worlds_league" => 30,
+    "lyran_commonwealth" => 60,
+    "lyran_alliance" => 32,
+    "federated_commonwealth" => 84,
+    
+    # Republic Era
+    "republic_of_the_sphere" => 41,
+    
+    # Major Clans
+    "clan_wolf" => 24,
+    "clan_jade_falcon" => 15,
+    "clan_ghost_bear" => 11,
+    "clan_smoke_jaguar" => 20,
+    "clan_diamond_shark" => 8,
+    "clan_sea_fox" => 82,  # Successor to Diamond Shark
+    "clan_nova_cat" => 17,
+    "clan_snow_raven" => 21,
+    "clan_hell_horses" => 13,
+    "clan_ice_hellion" => 14,
+    "clan_goliath_scorpion" => 12,
+    "clan_fire_mandrill" => 10,
+    "clan_star_adder" => 19,
+    "clan_cloud_cobra" => 6,
+    "clan_coyote" => 7,
+    
+    # Other factions
+    "comstar" => 18,
+    "word_of_blake" => 23,
+    "free_rasalhague_republic" => 28,
+    "st_ives_compact" => 83,
+    "circinus_federation" => 9,
+    "mercenary_review_and_bonding_commission" => 35
+  }
+
+  defp faction_name_to_id(faction_name) when is_binary(faction_name) do
+    Map.get(@faction_mappings, String.downcase(faction_name))
   end
 
-  defp parse_response(_), do: []
+  defp faction_name_to_id(faction_id) when is_integer(faction_id), do: faction_id
 
-  defp normalize_unit(api_data) do
+  @doc """
+  Returns available faction names for filtering
+  """
+  def available_factions do
+    Map.keys(@faction_mappings)
+  end
+
+  @doc """
+  Returns the faction mapping for reference
+  """
+  def faction_mappings, do: @faction_mappings
+
+  defp parse_response(%{body: %{"Units" => units}}, filters) when is_list(units) do
+    # Extract faction names from filters to store with units
+    faction_context = build_faction_context(filters)
+    Enum.map(units, &normalize_unit(&1, faction_context))
+  end
+
+  defp parse_response(_, _), do: []
+
+  defp normalize_unit(api_data, faction_context \\ %{}) do
     %{
       mul_id: api_data["Id"],
       name: api_data["Name"],
@@ -150,22 +221,23 @@ defmodule Aces.MUL.Client do
       tonnage: api_data["Tonnage"],
       point_value: api_data["BFPointValue"],
       battle_value: api_data["BattleValue"],
-      technology_base: api_data["Technology"],
+      technology_base: extract_technology(api_data["Technology"]),
       rules_level: api_data["Rules"],
-      role: api_data["Role"],
+      role: extract_role(api_data["Role"]),
       cost: api_data["Cost"],
       date_introduced: api_data["DateIntroduced"],
       era_id: api_data["EraId"],
       bf_move: api_data["BFMove"],
       bf_armor: api_data["BFArmor"],
       bf_structure: api_data["BFStructure"],
-      bf_damage_short: api_data["BFDamageShort"],
-      bf_damage_medium: api_data["BFDamageMedium"],
-      bf_damage_long: api_data["BFDamageLong"],
+      bf_damage_short: to_string(api_data["BFDamageShort"] || ""),
+      bf_damage_medium: to_string(api_data["BFDamageMedium"] || ""),
+      bf_damage_long: to_string(api_data["BFDamageLong"] || ""),
       bf_overheat: api_data["BFOverheat"],
       bf_abilities: api_data["BFAbilities"],
       image_url: api_data["ImageUrl"],
       is_published: api_data["IsPublished"],
+      factions: merge_faction_data(parse_factions(api_data["Factions"]), faction_context),
       last_synced_at: DateTime.utc_now()
     }
   end
@@ -186,4 +258,70 @@ defmodule Aces.MUL.Client do
   defp map_unit_type("Infantry"), do: "conventional_infantry"
   defp map_unit_type("ProtoMech"), do: "protomech"
   defp map_unit_type(_), do: "other"
+
+  # Parse factions data - handle various possible formats from the API
+  defp parse_factions(nil), do: %{}
+  defp parse_factions([]), do: %{}
+  
+  defp parse_factions(factions) when is_list(factions) do
+    # If it's a list of faction objects or strings, convert to map
+    factions
+    |> Enum.reduce(%{}, fn faction, acc ->
+      case faction do
+        %{"name" => name} -> Map.put(acc, String.downcase(name), true)
+        %{"Name" => name} -> Map.put(acc, String.downcase(name), true)
+        name when is_binary(name) -> Map.put(acc, String.downcase(name), true)
+        _ -> acc
+      end
+    end)
+  end
+  
+  defp parse_factions(factions) when is_map(factions) do
+    # If it's already a map, ensure keys are lowercase
+    factions
+    |> Enum.reduce(%{}, fn {key, value}, acc ->
+      Map.put(acc, String.downcase(to_string(key)), value)
+    end)
+  end
+  
+  defp parse_factions(_), do: %{}
+
+  # Build faction context from filters to store with units
+  defp build_faction_context(filters) do
+    case Map.get(filters, :factions) do
+      factions when is_list(factions) ->
+        # Convert faction names to a map indicating availability
+        factions
+        |> Enum.reduce(%{}, fn faction, acc ->
+          Map.put(acc, String.downcase(faction), true)
+        end)
+      
+      _ -> %{}
+    end
+  end
+
+  # Merge API faction data with context from our request filters
+  defp merge_faction_data(api_factions, filter_context) when is_map(api_factions) and is_map(filter_context) do
+    Map.merge(api_factions, filter_context)
+  end
+
+  defp merge_faction_data(_api_factions, filter_context) when is_map(filter_context) do
+    filter_context
+  end
+
+  defp merge_faction_data(api_factions, _) when is_map(api_factions) do
+    api_factions
+  end
+
+  defp merge_faction_data(_, _), do: %{}
+
+  # Extract technology name from API response
+  defp extract_technology(%{"Name" => name}), do: name
+  defp extract_technology(name) when is_binary(name), do: name
+  defp extract_technology(_), do: nil
+
+  # Extract role name from API response  
+  defp extract_role(%{"Name" => name}), do: name
+  defp extract_role(name) when is_binary(name), do: name
+  defp extract_role(_), do: nil
 end

@@ -17,8 +17,11 @@ defmodule Mix.Tasks.SeedMasterUnits do
       # Seed specific tonnage ranges
       mix seed_master_units --era ilclan --min-tons 50 --max-tons 75
 
+      # Seed mercenary units only
+      mix seed_master_units --era ilclan --faction mercenary
+
       # Dry run to see what would be fetched
-      mix seed_master_units --era ilclan --dry-run
+      mix seed_master_units --era ilclan --faction mercenary --dry-run
   """
 
   use Mix.Task
@@ -44,6 +47,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
       switches: [
         era: :string,
         types: :keep,
+        faction: :string,
         min_tons: :integer,
         max_tons: :integer,
         dry_run: :boolean,
@@ -53,8 +57,9 @@ defmodule Mix.Tasks.SeedMasterUnits do
       aliases: [
         e: :era,
         t: :types,
+        f: :faction,
         d: :dry_run,
-        f: :force,
+        F: :force,
         l: :limit
       ]
     )
@@ -99,7 +104,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
   defp perform_seed(opts) do
     existing_count = Units.count_cached_units()
 
-    if existing_count > 0 and not opts[:force] do
+    if existing_count > 0 and not (opts[:force] || false) do
       IO.puts("⚠️  Database already contains #{existing_count} cached units.")
       IO.puts("Use --force to seed additional units or clear the database first.")
       System.halt(1)
@@ -140,6 +145,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
     %{}
     |> maybe_add_era(opts[:era])
     |> maybe_add_types(opts[:types])
+    |> maybe_add_faction(opts[:faction])
     |> maybe_add_tonnage(opts[:min_tons], opts[:max_tons])
   end
 
@@ -161,6 +167,11 @@ defmodule Mix.Tasks.SeedMasterUnits do
   end
   defp maybe_add_types(filters, type) when is_binary(type) do
     maybe_add_types(filters, [type])
+  end
+
+  defp maybe_add_faction(filters, nil), do: filters
+  defp maybe_add_faction(filters, faction) when is_binary(faction) do
+    Map.put(filters, :factions, [faction])
   end
 
   defp maybe_add_tonnage(filters, nil, nil), do: filters
@@ -193,6 +204,8 @@ defmodule Mix.Tasks.SeedMasterUnits do
             end
           end)
         IO.puts("  • Types: #{Enum.join(type_names, ", ")}")
+      {:factions, factions} -> 
+        IO.puts("  • Factions: #{Enum.join(factions, ", ")}")
       {:min_tons, tons} -> IO.puts("  • Min tonnage: #{tons}")
       {:max_tons, tons} -> IO.puts("  • Max tonnage: #{tons}")
       _ -> nil
