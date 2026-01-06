@@ -16,7 +16,7 @@ defmodule AcesWeb.CompanyLive.NewTest do
       assert html =~ "Starting Warchest"
     end
 
-    test "creates company with valid data", %{conn: conn, user: user} do
+    test "creates company with valid data and redirects to draft setup", %{conn: conn, user: user} do
       {:ok, new_live, _html} = live(conn, ~p"/companies/new")
 
       form_data = %{
@@ -32,15 +32,17 @@ defmodule AcesWeb.CompanyLive.NewTest do
         |> form("#company-form", form_data)
         |> render_submit()
 
-      # Should redirect to a company page
+      # Should redirect to draft setup page
       assert {:error, {:live_redirect, %{to: path}}} = result
-      assert String.starts_with?(path, "/companies")
+      assert String.contains?(path, "/draft")
 
-      # Verify the company was created with the correct warchest balance
+      # Verify the company was created in draft status
       company = Aces.Companies.list_user_companies(user) |> List.first()
       assert company.name == "New Mercenary Company"
       assert company.description == "A brand new company"
       assert company.warchest_balance == 3000
+      assert company.status == "draft"
+      assert company.pv_budget == 400
     end
 
     test "shows validation errors with invalid data", %{conn: conn} do

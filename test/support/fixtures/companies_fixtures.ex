@@ -20,6 +20,7 @@ defmodule Aces.CompaniesFixtures do
   def company_fixture(attrs \\ %{}) do
     attrs = Enum.into(attrs, %{})
     user = Map.get(attrs, :user) || AccountsFixtures.user_fixture()
+    status = Map.get(attrs, :status)
     attrs = Map.delete(attrs, :user)
 
     {:ok, company} =
@@ -27,7 +28,13 @@ defmodule Aces.CompaniesFixtures do
       |> valid_company_attributes()
       |> (&Companies.create_company(&1, user)).()
 
-    company
+    # If a specific status was requested and it's not draft, update it directly
+    if status && status != "draft" do
+      {:ok, updated} = Companies.update_company(company, %{status: status})
+      updated
+    else
+      company
+    end
   end
 
   def company_with_members_fixture(attrs \\ %{}) do

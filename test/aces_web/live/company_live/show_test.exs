@@ -8,8 +8,8 @@ defmodule AcesWeb.CompanyLive.ShowTest do
   setup :register_and_log_in_user
 
   describe "Show page" do
-    test "displays company information", %{conn: conn, user: user} do
-      company = company_fixture(user: user, name: "Test Company", description: "Test description")
+    test "displays active company information", %{conn: conn, user: user} do
+      company = company_fixture(user: user, name: "Test Company", description: "Test description", status: "active")
 
       {:ok, _show_live, html} = live(conn, ~p"/companies/#{company.id}")
 
@@ -17,8 +17,15 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       assert html =~ "Test description"
     end
 
+    test "redirects draft companies to draft setup page", %{conn: conn, user: user} do
+      company = company_fixture(user: user, name: "Draft Company", status: "draft")
+
+      assert {:error, {:redirect, %{to: path}}} = live(conn, ~p"/companies/#{company.id}")
+      assert path == ~p"/companies/#{company}/draft"
+    end
+
     test "displays company stats", %{conn: conn, user: user} do
-      company = company_fixture(user: user, warchest_balance: 7500)
+      company = company_fixture(user: user, warchest_balance: 7500, status: "active")
       company_unit_fixture(company: company)
       company_unit_fixture(company: company)
       company_unit_fixture(company: company)
@@ -32,7 +39,7 @@ defmodule AcesWeb.CompanyLive.ShowTest do
     end
 
     test "shows empty roster message when no units", %{conn: conn, user: user} do
-      company = company_fixture(user: user)
+      company = company_fixture(user: user, status: "active")
 
       {:ok, _show_live, html} = live(conn, ~p"/companies/#{company.id}")
 
@@ -41,7 +48,7 @@ defmodule AcesWeb.CompanyLive.ShowTest do
     end
 
     test "displays unit roster when units exist", %{conn: conn, user: user} do
-      company = company_fixture(user: user)
+      company = company_fixture(user: user, status: "active")
       master_unit = master_unit_fixture(name: "Atlas", variant: "AS7-D")
       company_unit_fixture(company: company, master_unit: master_unit, custom_name: "The Hammer")
 
@@ -52,7 +59,7 @@ defmodule AcesWeb.CompanyLive.ShowTest do
     end
 
     test "has back to companies link", %{conn: conn, user: user} do
-      company = company_fixture(user: user)
+      company = company_fixture(user: user, status: "active")
 
       {:ok, _show_live, html} = live(conn, ~p"/companies/#{company.id}")
 
@@ -60,24 +67,33 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       assert html =~ ~p"/companies"
     end
 
-    test "shows add unit button", %{conn: conn, user: user} do
-      company = company_fixture(user: user)
+    test "draft companies redirect to draft page", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      # This should redirect to draft page, not show the company page  
+      assert {:error, {:redirect, %{to: path}}} = live(conn, ~p"/companies/#{company.id}")
+      assert path == ~p"/companies/#{company}/draft"
+    end
+
+    test "hides add unit button for active companies", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
 
       {:ok, _show_live, html} = live(conn, ~p"/companies/#{company.id}")
 
-      assert html =~ "Add Unit"
+      refute html =~ "Add Unit"
+      assert html =~ "PV purchases disabled for finalized companies"
     end
 
     test "prevents access when user is not a member", %{conn: conn} do
       other_user = user_fixture()
-      company = company_fixture(user: other_user)
+      company = company_fixture(user: other_user, status: "active")
 
       assert {:error, {:redirect, %{flash: %{"error" => _}, to: "/companies"}}} =
                live(conn, ~p"/companies/#{company.id}")
     end
 
     test "allows viewer to view but not edit", %{conn: conn, user: user} do
-      %{company: company, viewer: _viewer} = company_with_members_fixture()
+      %{company: company, viewer: _viewer} = company_with_members_fixture(status: "active")
       Aces.Companies.add_member(company, user, "viewer")
 
       {:ok, _show_live, html} = live(conn, ~p"/companies/#{company.id}")
@@ -90,7 +106,7 @@ defmodule AcesWeb.CompanyLive.ShowTest do
     end
 
     test "prevents unauthorized access when not logged in", %{conn: conn, user: user} do
-      company = company_fixture(user: user)
+      company = company_fixture(user: user, status: "active")
       conn = conn |> log_out_user()
 
       {:error, {:redirect, %{to: path}}} = live(conn, ~p"/companies/#{company.id}")

@@ -12,6 +12,7 @@ defmodule Aces.Companies.Company do
     field :description, :string
     field :warchest_balance, :integer, default: 0
     field :pv_budget, :integer, default: 400
+    field :status, :string, default: "draft"
 
     has_many :memberships, CompanyMembership
     has_many :users, through: [:memberships, :user]
@@ -23,12 +24,13 @@ defmodule Aces.Companies.Company do
   @doc false
   def changeset(company, attrs) do
     company
-    |> cast(attrs, [:name, :description, :warchest_balance, :pv_budget])
+    |> cast(attrs, [:name, :description, :warchest_balance, :pv_budget, :status])
     |> validate_required([:name])
     |> validate_length(:name, min: 1, max: 255)
     |> validate_length(:description, max: 2000)
     |> validate_number(:warchest_balance, greater_than_or_equal_to: 0)
     |> validate_number(:pv_budget, greater_than_or_equal_to: 0)
+    |> validate_inclusion(:status, ["draft", "active"])
   end
 
   @doc """
@@ -51,10 +53,14 @@ defmodule Aces.Companies.Company do
         _ -> changeset
       end
 
-    # Set default pv_budget to 400 only if not provided
-    case get_change(changeset, :pv_budget) do
-      nil -> put_change(changeset, :pv_budget, 400)
-      _ -> changeset
-    end
+    changeset =
+      # Set default pv_budget to 400 only if not provided
+      case get_change(changeset, :pv_budget) do
+        nil -> put_change(changeset, :pv_budget, 400)
+        _ -> changeset
+      end
+
+    # Always start companies in draft status
+    put_change(changeset, :status, "draft")
   end
 end

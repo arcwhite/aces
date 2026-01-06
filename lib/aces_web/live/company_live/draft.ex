@@ -1,4 +1,4 @@
-defmodule AcesWeb.CompanyLive.Show do
+defmodule AcesWeb.CompanyLive.Draft do
   use AcesWeb, :live_view
 
   alias Aces.Companies
@@ -12,22 +12,22 @@ defmodule AcesWeb.CompanyLive.Show do
     company = Companies.get_company_with_stats!(id)
     user = socket.assigns.current_scope.user
 
-    unless Authorization.can?(:view_company, user, company) do
+    unless Authorization.can?(:edit_company, user, company) do
       {:ok,
        socket
-       |> put_flash(:error, "You don't have permission to view this company")
+       |> put_flash(:error, "You don't have permission to edit this company")
        |> redirect(to: ~p"/companies")}
     else
-      if company.status == "draft" do
+      if company.status != "draft" do
         {:ok,
          socket
-         |> put_flash(:info, "This company is still in draft status. Complete setup to activate it.")
-         |> redirect(to: ~p"/companies/#{company}/draft")}
+         |> put_flash(:error, "Company is no longer in draft status")
+         |> redirect(to: ~p"/companies/#{company}")}
       else
         {:ok,
          socket
          |> assign(:company, company)
-         |> assign(:page_title, company.name)
+         |> assign(:page_title, "Setup: #{company.name}")
          |> assign(:show_unit_search, false)
          |> assign(:unit_search_term, "")
          |> assign(:search_results, [])
@@ -43,15 +43,7 @@ defmodule AcesWeb.CompanyLive.Show do
 
   @impl true
   def handle_event("add_unit", _params, socket) do
-    company = socket.assigns.company
-    
-    if company.status == "active" do
-      {:noreply, 
-       socket
-       |> put_flash(:error, "Cannot add units with PV to finalized companies. Units must be purchased with SP.")}
-    else
-      {:noreply, assign(socket, :show_unit_search, true)}
-    end
+    {:noreply, assign(socket, :show_unit_search, true)}
   end
 
   def handle_event("close_unit_search", _params, socket) do
@@ -65,24 +57,17 @@ defmodule AcesWeb.CompanyLive.Show do
 
   def handle_event("search_units", %{"value" => search_term}, socket) do
     search_term = String.trim(search_term)
-    require Logger
-    Logger.debug("Search event received for term: '#{search_term}'")
 
     socket =
       if String.length(search_term) >= 2 do
-        Logger.debug("Term length >= 2, starting search...")
-
         socket =
           socket
           |> assign(:unit_search_term, search_term)
           |> assign(:search_loading, true)
 
-        # Perform search asynchronously
-        Logger.debug("Sending perform_search message to self()")
         send(self(), {:perform_search, search_term})
         socket
       else
-        Logger.debug("Term too short, clearing results")
         socket
         |> assign(:unit_search_term, search_term)
         |> assign(:search_results, [])
@@ -100,7 +85,6 @@ defmodule AcesWeb.CompanyLive.Show do
     if Authorization.can?(:edit_company, user, company) do
       case Companies.purchase_unit_for_company(company, mul_id) do
         {:ok, _company_unit} ->
-          # Reload the company with updated stats
           updated_company = Companies.get_company_with_stats!(company.id)
 
           {:noreply,
@@ -124,13 +108,7 @@ defmodule AcesWeb.CompanyLive.Show do
            socket
            |> put_flash(:error, "Failed to add unit: #{message}")}
 
-        {:error, %{type: :company_finalized, message: message}} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, message)}
-
         {:error, changeset} ->
-          # Handle validation errors
           error_message =
             changeset.errors
             |> Enum.map(fn {field, {msg, _}} -> "#{field}: #{msg}" end)
@@ -147,44 +125,42 @@ defmodule AcesWeb.CompanyLive.Show do
     end
   end
 
-  @impl true
-  def handle_event("delete_company", %{"id" => id}, socket) do
-    company = Companies.get_company!(id)
+  def handle_event("finalize_company", _params, socket) do
+    company = socket.assigns.company
     user = socket.assigns.current_scope.user
 
-    if Authorization.can?(:delete_company, user, company) do
-      {:ok, _} = Companies.delete_company(company)
+    if Authorization.can?(:edit_company, user, company) do
+      case Companies.finalize_company(company) do
+        {:ok, finalized_company} ->
+          {:noreply,
+           socket
+           |> put_flash(:info, "Company finalized successfully! Any unused PV has been converted to SP.")
+           |> redirect(to: ~p"/companies/#{finalized_company}")}
 
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> put_flash(:error, "Failed to finalize company: #{reason}")}
+      end
+    else
       {:noreply,
        socket
-       |> put_flash(:info, "Company deleted successfully")
-       |> redirect(to: ~p"/companies")}
-    else
-      {:noreply, put_flash(socket, :error, "You don't have permission to delete this company")}
+       |> put_flash(:error, "You don't have permission to finalize this company")}
     end
   end
 
   @impl true
   def handle_info({:perform_search, search_term}, socket) do
-    require Logger
-    Logger.debug("handle_info received perform_search for: '#{search_term}'")
-    Logger.debug("Current unit_search_term: '#{socket.assigns.unit_search_term}'")
-
-    # Only perform search if the search term hasn't changed
     if socket.assigns.unit_search_term == search_term do
-      Logger.debug("Search terms match, performing search...")
       try do
         search_results = Units.search_units(search_term, unit_type: "battlemech")
-        Logger.debug("Search returned #{length(search_results)} results")
 
         {:noreply,
          socket
          |> assign(:search_results, search_results)
          |> assign(:search_loading, false)}
       rescue
-        error ->
-          Logger.error("Search failed for '#{search_term}': #{inspect(error)}")
-
+        _error ->
           {:noreply,
            socket
            |> assign(:search_results, [])
@@ -192,7 +168,6 @@ defmodule AcesWeb.CompanyLive.Show do
            |> put_flash(:error, "Search failed. Please try again.")}
       end
     else
-      Logger.debug("Search terms don't match, ignoring stale search")
       {:noreply, socket}
     end
   end
@@ -208,19 +183,27 @@ defmodule AcesWeb.CompanyLive.Show do
           </.link>
         </div>
 
-        <h1 class="text-4xl font-bold mb-2">{@company.name}</h1>
+        <div class="flex items-center gap-4 mb-4">
+          <h1 class="text-4xl font-bold">Company Setup: {@company.name}</h1>
+          <div class="badge badge-warning badge-lg">DRAFT</div>
+        </div>
+
         <%= if @company.description do %>
           <p class="text-lg opacity-70">{@company.description}</p>
         <% end %>
+
+        <div class="alert alert-info mt-4">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <span>
+            You have <strong>{@company.stats.pv_budget} PV</strong> to build your company roster. 
+            Any unused PV will be converted to SP at a rate of <strong>1 PV = 40 SP</strong> when you finalize this company.
+          </span>
+        </div>
       </div>
 
-      <div class="grid gap-6 md:grid-cols-4 mb-8">
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Total Units</div>
-          <div class="stat-value text-primary">{@company.stats.unit_count}</div>
-          <div class="stat-desc">In roster</div>
-        </div>
-
+      <div class="grid gap-6 md:grid-cols-3 mb-8">
         <div class="stat bg-base-200 rounded-lg shadow">
           <div class="stat-title">PV Budget</div>
           <div class="stat-value text-accent">
@@ -230,17 +213,17 @@ defmodule AcesWeb.CompanyLive.Show do
         </div>
 
         <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Warchest</div>
-          <div class="stat-value text-secondary">{@company.stats.warchest_balance}</div>
-          <div class="stat-desc">Support Points available</div>
+          <div class="stat-title">Units Selected</div>
+          <div class="stat-value text-primary">{@company.stats.unit_count}</div>
+          <div class="stat-desc">In your roster</div>
         </div>
 
         <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Last Updated</div>
-          <div class="stat-value text-sm">
-            {Calendar.strftime(@company.stats.last_modified, "%b %d, %Y")}
+          <div class="stat-title">Future Warchest</div>
+          <div class="stat-value text-secondary">
+            {@company.stats.warchest_balance + (@company.stats.pv_remaining * 40)}
           </div>
-          <div class="stat-desc">{Calendar.strftime(@company.stats.last_modified, "%I:%M %p")}</div>
+          <div class="stat-desc">SP after finalization</div>
         </div>
       </div>
 
@@ -248,20 +231,14 @@ defmodule AcesWeb.CompanyLive.Show do
 
       <div class="mb-8">
         <div class="flex justify-between items-center mb-4">
-          <h2 class="text-2xl font-bold">Unit Roster</h2>
-          <%= if @company.status == "draft" do %>
-            <button
-              type="button"
-              phx-click="add_unit"
-              class="btn btn-primary"
-            >
-              Add Unit (PV)
-            </button>
-          <% else %>
-            <div class="text-sm opacity-70">
-              PV purchases disabled for finalized companies
-            </div>
-          <% end %>
+          <h2 class="text-2xl font-bold">Build Your Roster</h2>
+          <button
+            type="button"
+            phx-click="add_unit"
+            class="btn btn-primary"
+          >
+            Add Unit
+          </button>
         </div>
 
         <%= if @company.company_units == [] do %>
@@ -280,7 +257,7 @@ defmodule AcesWeb.CompanyLive.Show do
               >
               </path>
             </svg>
-            <span>No units in roster yet. Add your first unit to get started!</span>
+            <span>No units selected yet. Add your first unit to get started!</span>
           </div>
         <% else %>
           <div class="overflow-x-auto">
@@ -289,8 +266,6 @@ defmodule AcesWeb.CompanyLive.Show do
                 <tr>
                   <th>Unit Name</th>
                   <th>Type</th>
-                  <th>Custom Name</th>
-                  <th>Status</th>
                   <th>Cost (SP)</th>
                   <th>PV</th>
                   <th>Actions</th>
@@ -311,21 +286,9 @@ defmodule AcesWeb.CompanyLive.Show do
                         {if unit.master_unit, do: unit.master_unit.unit_type, else: "N/A"}
                       </div>
                     </td>
-                    <td>{unit.custom_name || "-"}</td>
-                    <td>
-                      <div class={[
-                        "badge",
-                        unit.status == "operational" && "badge-success",
-                        unit.status == "damaged" && "badge-warning",
-                        unit.status == "destroyed" && "badge-error"
-                      ]}>
-                        {unit.status}
-                      </div>
-                    </td>
                     <td>{unit.purchase_cost_sp} SP</td>
                     <td>{unit.master_unit.point_value}</td>
                     <td>
-                      <button class="btn btn-ghost btn-xs">Edit</button>
                       <button class="btn btn-ghost btn-xs text-error">Remove</button>
                     </td>
                   </tr>
@@ -339,24 +302,36 @@ defmodule AcesWeb.CompanyLive.Show do
       <div class="divider"></div>
 
       <div class="mb-8">
-        <h2 class="text-2xl font-bold mb-4">Company Settings</h2>
+        <h2 class="text-2xl font-bold mb-4">Finalize Company</h2>
 
         <div class="card bg-base-200 shadow-xl">
           <div class="card-body">
-            <h3 class="card-title">Danger Zone</h3>
-            <p class="text-sm opacity-70">
-              Deleting a company is permanent and cannot be undone.
+            <h3 class="card-title">Ready to Deploy?</h3>
+            <p class="text-sm opacity-70 mb-4">
+              Once you finalize this company, you won't be able to change the initial roster. 
+              Any unused PV ({@company.stats.pv_remaining} PV) will be converted to Support Points 
+              ({@company.stats.pv_remaining * 40} SP) and added to your warchest.
             </p>
 
-            <div class="card-actions justify-end mt-4">
+            <div class="bg-base-100 p-4 rounded-lg mb-4">
+              <h4 class="font-semibold mb-2">Summary:</h4>
+              <ul class="text-sm space-y-1">
+                <li>• Units in roster: {@company.stats.unit_count}</li>
+                <li>• PV used: {@company.stats.pv_used}/{@company.stats.pv_budget}</li>
+                <li>• Starting warchest: {@company.stats.warchest_balance} SP</li>
+                <li>• Bonus SP from unused PV: {@company.stats.pv_remaining * 40} SP</li>
+                <li><strong>• Total starting warchest: {@company.stats.warchest_balance + (@company.stats.pv_remaining * 40)} SP</strong></li>
+              </ul>
+            </div>
+
+            <div class="card-actions justify-end">
               <button
                 type="button"
-                phx-click="delete_company"
-                phx-value-id={@company.id}
-                data-confirm="Are you sure you want to delete this company? This action cannot be undone."
-                class="btn btn-error"
+                phx-click="finalize_company"
+                class="btn btn-success"
+                data-confirm="Are you sure you want to finalize this company? This action cannot be undone."
               >
-                Delete Company
+                Finalize Company
               </button>
             </div>
           </div>
@@ -427,16 +402,6 @@ defmodule AcesWeb.CompanyLive.Show do
                               <%= if unit.role do %>
                                 <p class="text-sm text-gray-600 mt-1">Role: {unit.role}</p>
                               <% end %>
-                              <%= if unit.factions && map_size(unit.factions) > 0 do %>
-                                <div class="flex gap-1 mt-2">
-                                  <%= for faction <- Enum.take(Map.keys(unit.factions), 3) do %>
-                                    <div class="badge badge-ghost badge-xs">{String.capitalize(faction)}</div>
-                                  <% end %>
-                                  <%= if map_size(unit.factions) > 3 do %>
-                                    <div class="badge badge-ghost badge-xs">+{map_size(unit.factions) - 3}</div>
-                                  <% end %>
-                                </div>
-                              <% end %>
                             </div>
                             <div class="flex flex-col gap-2">
                               <%= if unit.point_value && unit.point_value <= @company.stats.pv_remaining do %>
@@ -458,24 +423,6 @@ defmodule AcesWeb.CompanyLive.Show do
                                   Too Expensive
                                 </button>
                               <% end %>
-                              <div class="flex gap-1">
-                                <a
-                                  href={Aces.Units.MasterUnit.mul_url(unit)}
-                                  target="_blank"
-                                  class="btn btn-ghost btn-xs"
-                                  title="View on MasterUnitList.info"
-                                >
-                                  MUL ↗
-                                </a>
-                                <a
-                                  href={Aces.Units.MasterUnit.sarna_url(unit)}
-                                  target="_blank"
-                                  class="btn btn-ghost btn-xs"
-                                  title="Search on Sarna.net"
-                                >
-                                  Sarna ↗
-                                </a>
-                              </div>
                             </div>
                           </div>
                         </div>

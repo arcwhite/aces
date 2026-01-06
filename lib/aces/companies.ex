@@ -21,7 +21,35 @@ defmodule Aces.Companies do
       join: m in CompanyMembership,
       on: m.company_id == c.id,
       where: m.user_id == ^user.id,
-      preload: [:memberships, :company_units],
+      preload: [:memberships, company_units: :master_unit],
+      order_by: [desc: c.updated_at]
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  Returns the list of active companies for a given user
+  """
+  def list_user_active_companies(%User{} = user) do
+    from(c in Company,
+      join: m in CompanyMembership,
+      on: m.company_id == c.id,
+      where: m.user_id == ^user.id and c.status == "active",
+      preload: [:memberships, company_units: :master_unit],
+      order_by: [desc: c.updated_at]
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  Returns the list of draft companies for a given user
+  """
+  def list_user_draft_companies(%User{} = user) do
+    from(c in Company,
+      join: m in CompanyMembership,
+      on: m.company_id == c.id,
+      where: m.user_id == ^user.id and c.status == "draft",
+      preload: [:memberships, company_units: :master_unit],
       order_by: [desc: c.updated_at]
     )
     |> Repo.all()
@@ -91,6 +119,29 @@ defmodule Aces.Companies do
   end
 
   @doc """
+  Finalizes a company, converting unused PV to SP at a 1:40 ratio
+  and setting status to active
+  """
+  def finalize_company(%Company{status: "draft"} = company) do
+    company_with_stats = add_company_stats(company)
+    unused_pv = company_with_stats.stats.pv_remaining
+    bonus_sp = unused_pv * 40
+
+    attrs = %{
+      status: "active",
+      warchest_balance: company.warchest_balance + bonus_sp
+    }
+
+    company
+    |> Company.changeset(attrs)
+    |> Repo.update()
+  end
+
+  def finalize_company(%Company{status: status}) do
+    {:error, "Company is already #{status}, cannot finalize"}
+  end
+
+  @doc """
   Deletes a company.
   """
   def delete_company(%Company{} = company) do
@@ -156,14 +207,21 @@ defmodule Aces.Companies do
 
   @doc """
   Adds a unit to a company's roster with PV budget checking
+  Only available for draft companies
   """
-  def add_unit_to_company(%Company{} = company, mul_id, attrs \\ %{}) do
+  def add_unit_to_company(company, mul_id, attrs \\ %{})
+
+  def add_unit_to_company(%Company{status: "active"} = _company, _mul_id, _attrs) do
+    {:error, :company_finalized, "Cannot add units with PV to finalized companies. Use SP-based purchases instead."}
+  end
+
+  def add_unit_to_company(%Company{status: "draft"} = company, mul_id, attrs) do
     case Units.get_master_unit_by_mul_id(mul_id) do
       {:ok, master_unit} ->
         # Check if company has enough PV budget
         current_pv_used = calculate_company_pv_usage(company)
         unit_cost = master_unit.point_value || 0
-        
+
         if current_pv_used + unit_cost <= company.pv_budget do
           # Create the company unit
           %CompanyUnit{}
@@ -175,7 +233,7 @@ defmodule Aces.Companies do
           )
           |> Repo.insert()
         else
-          {:error, :insufficient_pv_budget, 
+          {:error, :insufficient_pv_budget,
            "Insufficient PV budget. Need #{unit_cost} PV, but only have #{company.pv_budget - current_pv_used} remaining."}
         end
 
@@ -189,8 +247,15 @@ defmodule Aces.Companies do
 
   @doc """
   Purchase a unit for a company (includes PV budget deduction)
+  Only available for draft companies
   """
-  def purchase_unit_for_company(%Company{} = company, mul_id, attrs \\ %{}) do
+  def purchase_unit_for_company(company, mul_id, attrs \\ %{})
+
+  def purchase_unit_for_company(%Company{status: "active"} = _company, _mul_id, _attrs) do
+    {:error, %{type: :company_finalized, message: "Cannot add units with PV to finalized companies. Use SP-based purchases instead."}}
+  end
+
+  def purchase_unit_for_company(%Company{status: "draft"} = company, mul_id, attrs) do
     case Units.get_master_unit_by_mul_id(mul_id) do
       {:ok, master_unit} ->
         current_pv_used = calculate_company_pv_usage(company)
@@ -213,17 +278,17 @@ defmodule Aces.Companies do
           |> case do
             {:ok, %{company_unit: company_unit}} ->
               # Reload the company unit with associations
-              reloaded_unit = 
+              reloaded_unit =
                 company_unit
                 |> Repo.preload(:master_unit, force: true)
-              
+
               {:ok, reloaded_unit}
 
             {:error, :company_unit, changeset, _} ->
               {:error, changeset}
           end
         else
-          {:error, 
+          {:error,
            %{
              type: :insufficient_pv_budget,
              message: "Insufficient PV budget",
@@ -264,7 +329,7 @@ defmodule Aces.Companies do
   """
   def calculate_company_pv_usage(%Company{} = company) do
     company.company_units
-    |> Enum.map(fn unit -> 
+    |> Enum.map(fn unit ->
       if unit.master_unit do
         unit.master_unit.point_value || 0
       else

@@ -86,9 +86,19 @@ defmodule Aces.CompaniesTest do
       assert company.name == "Test Company"
       assert company.description == "A test company"
       assert company.warchest_balance == 2000
+      assert company.status == "draft"
 
       # Verify owner membership was created
       assert Companies.get_user_role(company, user) == "owner"
+    end
+
+    test "creates company in draft status by default" do
+      user = user_fixture()
+      attrs = %{name: "Draft Company"}
+
+      assert {:ok, company} = Companies.create_company(attrs, user)
+      assert company.status == "draft"
+      assert company.pv_budget == 400
     end
 
     test "returns error changeset with invalid attributes" do
@@ -312,6 +322,162 @@ defmodule Aces.CompaniesTest do
 
       assert updated.custom_name == "New Name"
       assert updated.status == "damaged"
+    end
+  end
+
+  describe "list_user_active_companies/1" do
+    test "returns only active companies for a user" do
+      user = user_fixture()
+      draft_company = company_fixture(user: user, status: "draft")
+      active_company = company_fixture(user: user, status: "active")
+      _other_user_company = company_fixture(status: "active")
+
+      companies = Companies.list_user_active_companies(user)
+      company_ids = Enum.map(companies, & &1.id)
+
+      assert active_company.id in company_ids
+      refute draft_company.id in company_ids
+      assert length(companies) == 1
+    end
+
+    test "returns empty list when user has no active companies" do
+      user = user_fixture()
+      _draft_company = company_fixture(user: user, status: "draft")
+
+      assert Companies.list_user_active_companies(user) == []
+    end
+  end
+
+  describe "list_user_draft_companies/1" do
+    test "returns only draft companies for a user" do
+      user = user_fixture()
+      draft_company = company_fixture(user: user, status: "draft")
+      active_company = company_fixture(user: user, status: "active")
+      _other_user_company = company_fixture(status: "draft")
+
+      companies = Companies.list_user_draft_companies(user)
+      company_ids = Enum.map(companies, & &1.id)
+
+      assert draft_company.id in company_ids
+      refute active_company.id in company_ids
+      assert length(companies) == 1
+    end
+
+    test "returns empty list when user has no draft companies" do
+      user = user_fixture()
+      _active_company = company_fixture(user: user, status: "active")
+
+      assert Companies.list_user_draft_companies(user) == []
+    end
+  end
+
+  describe "finalize_company/1" do
+    test "converts draft company to active and converts unused PV to SP" do
+      company = company_fixture(
+        status: "draft",
+        pv_budget: 400,
+        warchest_balance: 1000
+      )
+
+      # Add a unit that uses 100 PV, leaving 300 PV unused
+      master_unit = master_unit_fixture(point_value: 100)
+      company_unit_fixture(company: company, master_unit: master_unit)
+
+      assert {:ok, finalized} = Companies.finalize_company(company)
+
+      assert finalized.status == "active"
+      # 1000 base + (300 unused PV * 40) = 1000 + 12000 = 13000
+      assert finalized.warchest_balance == 13_000
+    end
+
+    test "handles company with no unused PV" do
+      company = company_fixture(
+        status: "draft",
+        pv_budget: 100,
+        warchest_balance: 2000
+      )
+
+      # Add a unit that uses exactly all 100 PV
+      master_unit = master_unit_fixture(point_value: 100)
+      company_unit_fixture(company: company, master_unit: master_unit)
+
+      assert {:ok, finalized} = Companies.finalize_company(company)
+
+      assert finalized.status == "active"
+      # 2000 base + (0 unused PV * 40) = 2000
+      assert finalized.warchest_balance == 2000
+    end
+
+    test "handles company with no units (all PV unused)" do
+      company = company_fixture(
+        status: "draft",
+        pv_budget: 400,
+        warchest_balance: 500
+      )
+
+      assert {:ok, finalized} = Companies.finalize_company(company)
+
+      assert finalized.status == "active"
+      # 500 base + (400 unused PV * 40) = 500 + 16000 = 16500
+      assert finalized.warchest_balance == 16_500
+    end
+
+    test "returns error when company is already active" do
+      company = company_fixture(status: "active")
+
+      assert {:error, message} = Companies.finalize_company(company)
+      assert message == "Company is already active, cannot finalize"
+    end
+
+    test "returns error with unknown status" do
+      # This shouldn't happen in practice, but test edge case
+      company = company_fixture(status: "draft")
+      # Update directly in DB to bypass validation
+      Aces.Repo.query!("UPDATE companies SET status = 'unknown' WHERE id = $1", [company.id])
+      reloaded = Companies.get_company!(company.id)
+
+      assert {:error, message} = Companies.finalize_company(reloaded)
+      assert message == "Company is already unknown, cannot finalize"
+    end
+  end
+
+  describe "purchase_unit_for_company/3 with status checking" do
+    test "allows PV purchases for draft companies" do
+      company = company_fixture(status: "draft", pv_budget: 400)
+      master_unit = master_unit_fixture(point_value: 100)
+
+      assert {:ok, _company_unit} = 
+        Companies.purchase_unit_for_company(company, master_unit.mul_id)
+    end
+
+    test "prevents PV purchases for active companies" do
+      company = company_fixture(status: "active")
+      master_unit = master_unit_fixture(point_value: 100)
+
+      assert {:error, %{type: :company_finalized, message: message}} = 
+        Companies.purchase_unit_for_company(company, master_unit.mul_id)
+      
+      assert message =~ "Cannot add units with PV to finalized companies"
+    end
+  end
+
+  describe "add_unit_to_company/3 with status checking" do
+    test "allows unit addition for draft companies" do
+      company = company_fixture(status: "draft", pv_budget: 400)
+      master_unit = master_unit_fixture(point_value: 100)
+
+      assert {:ok, _company_unit} = 
+        Companies.add_unit_to_company(company, master_unit.mul_id)
+    end
+
+    test "prevents unit addition for active companies" do
+      company = company_fixture(status: "active")
+      master_unit = master_unit_fixture(point_value: 100)
+
+      assert {:error, :company_finalized, message} = 
+        Companies.add_unit_to_company(company, master_unit.mul_id)
+      
+      assert message =~ "Cannot add units with PV to finalized companies"
     end
   end
 end

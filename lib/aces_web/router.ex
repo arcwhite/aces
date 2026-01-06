@@ -62,6 +62,7 @@ defmodule AcesWeb.Router do
     # Company routes
     live "/companies", CompanyLive.Index, :index
     live "/companies/new", CompanyLive.New
+    live "/companies/:id/draft", CompanyLive.Draft, :draft
     live "/companies/:id", CompanyLive.Show, :show
 
     get "/users/settings", UserSettingsController, :edit

@@ -34,8 +34,8 @@ defmodule AcesWeb.CompanyLive.FormComponent do
       {:ok, company} ->
         {:noreply,
          socket
-         |> put_flash(:info, "Company created successfully")
-         |> push_navigate(to: socket.assigns.return_to || ~p"/companies/#{company}")}
+         |> put_flash(:info, "Company created successfully! Now build your roster.")
+         |> push_navigate(to: ~p"/companies/#{company}/draft")}
 
       {:error, %Ecto.Changeset{} = changeset} ->
         {:noreply, assign(socket, form: to_form(changeset))}
