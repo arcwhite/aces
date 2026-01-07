@@ -101,8 +101,9 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       # Can view
       assert html =~ company.name
 
-      # Add Unit button should still be visible (permission enforcement happens on action)
-      assert html =~ "Add Unit"
+      # Add Unit button should NOT be visible for active companies
+      refute html =~ "Add Unit"
+      assert html =~ "PV purchases disabled for finalized companies"
     end
 
     test "prevents unauthorized access when not logged in", %{conn: conn, user: user} do

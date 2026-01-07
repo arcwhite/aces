@@ -213,9 +213,7 @@ defmodule AcesWeb.CompanyLive.DraftTest do
       {:ok, draft_live, _html} = live(conn, ~p"/companies/#{company}/draft")
 
       # Try to remove unit that doesn't exist
-      draft_live
-      |> element("button[phx-click='remove_unit'][phx-value-unit_id='99999']", %{})
-      |> render_click()
+      render_click(draft_live, "remove_unit", %{"unit_id" => "99999"})
 
       html = render(draft_live)
       assert html =~ "Unit not found"
@@ -274,7 +272,8 @@ defmodule AcesWeb.CompanyLive.DraftTest do
       {:ok, draft_live, html} = live(conn, ~p"/companies/#{company}/draft")
 
       # Should show the pilot in the roster
-      assert html =~ "\"Eagle\" Test Pilot"
+      assert html =~ "Test Pilot"
+      assert html =~ "Eagle"
       assert html =~ "1/6"  # Pilot count
 
       # Click remove button

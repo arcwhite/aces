@@ -369,7 +369,7 @@ defmodule Aces.Companies do
       {:error, :pilot_limit_reached}
     else
       %Pilot{}
-      |> Pilot.changeset(Map.put(attrs, "company_id", company.id))
+      |> Pilot.changeset(Map.put(attrs, :company_id, company.id))
       |> Repo.insert()
     end
   end
