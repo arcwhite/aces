@@ -297,7 +297,7 @@ defmodule AcesWeb.CompanyLive.DraftTest do
 
       # Try to remove pilot that doesn't exist
       draft_live
-      |> element("button[phx-click='remove_pilot'][phx-value-pilot_id='99999']", %{})
+      |> element("button[phx-click='remove_pilot'][phx-value-pilot_id='99999']")
       |> render_click()
 
       html = render(draft_live)

@@ -444,16 +444,26 @@ defmodule Aces.CompaniesTest do
   describe "purchase_unit_for_company/3 with status checking" do
     test "allows PV purchases for draft companies" do
       company = company_fixture(status: "draft", pv_budget: 400)
-      master_unit = master_unit_fixture(point_value: 100)
+      master_unit = master_unit_fixture(
+        point_value: 100, 
+        mul_id: 123,
+        last_synced_at: DateTime.utc_now()  # Fresh cache to avoid HTTP call
+      )
 
+      # Now this should work without making HTTP calls since unit is cached
       assert {:ok, _company_unit} = 
         Companies.purchase_unit_for_company(company, master_unit.mul_id)
     end
 
     test "prevents PV purchases for active companies" do
       company = company_fixture(status: "active")
-      master_unit = master_unit_fixture(point_value: 100)
+      master_unit = master_unit_fixture(
+        point_value: 100,
+        mul_id: 456,
+        last_synced_at: DateTime.utc_now()  # Fresh cache to avoid HTTP call
+      )
 
+      # This should return an error for active companies
       assert {:error, %{type: :company_finalized, message: message}} = 
         Companies.purchase_unit_for_company(company, master_unit.mul_id)
       
