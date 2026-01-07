@@ -180,5 +180,128 @@ defmodule AcesWeb.CompanyLive.DraftTest do
       html = render(draft_live)
       assert html =~ "Add Unit to Roster"
     end
+
+    test "allows removing units and restores PV points", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft", pv_budget: 400)
+      master_unit = master_unit_fixture(name: "Locust", variant: "LCT-1V", point_value: 25)
+      company_unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      {:ok, draft_live, html} = live(conn, ~p"/companies/#{company}/draft")
+
+      # Should show the unit in the roster
+      assert html =~ "Locust LCT-1V"
+      assert html =~ "375/400"  # 400 - 25 PV used
+      assert html =~ "25 PV used"
+
+      # Click remove button
+      draft_live
+      |> element("button[phx-click='remove_unit'][phx-value-unit_id='#{company_unit.id}']")
+      |> render_click()
+
+      # Should show confirmation and unit should be removed
+      html = render(draft_live)
+      assert html =~ "Unit removed from roster!"
+      refute html =~ "Locust LCT-1V"
+      assert html =~ "400/400"  # Full PV restored
+      assert html =~ "0 PV used"
+      assert html =~ "No units selected yet"
+    end
+
+    test "shows error when trying to remove non-existent unit", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      {:ok, draft_live, _html} = live(conn, ~p"/companies/#{company}/draft")
+
+      # Try to remove unit that doesn't exist
+      draft_live
+      |> element("button[phx-click='remove_unit'][phx-value-unit_id='99999']", %{})
+      |> render_click()
+
+      html = render(draft_live)
+      assert html =~ "Unit not found"
+    end
+
+    test "prevents unauthorized users from removing units", %{conn: conn} do
+      other_user = user_fixture()
+      company = company_fixture(user: other_user, status: "draft")
+
+      # Try to access as unauthorized user
+      assert {:error, {:redirect, %{to: "/companies"}}} = live(conn, ~p"/companies/#{company}/draft")
+    end
+
+    test "displays pilot form modal when add pilot clicked", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      {:ok, draft_live, _html} = live(conn, ~p"/companies/#{company}/draft")
+
+      # Click add pilot button
+      draft_live
+      |> element("button[phx-click='add_pilot']")
+      |> render_click()
+
+      # Check modal is displayed
+      html = render(draft_live)
+      assert html =~ "Add Pilot to Company"
+      assert html =~ "Add New Pilot"
+    end
+
+    test "displays no pilots message when no pilots exist", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      {:ok, _draft_live, html} = live(conn, ~p"/companies/#{company}/draft")
+
+      assert html =~ "No pilots recruited yet"
+      assert html =~ "Add skilled pilots to operate your units!"
+    end
+
+    test "displays pilots in roster cards", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+      pilot = pilot_fixture(company: company, name: "Jane Doe", callsign: "Phoenix")
+
+      {:ok, _draft_live, html} = live(conn, ~p"/companies/#{company}/draft")
+
+      assert html =~ "\"Phoenix\" Jane Doe"
+      assert html =~ "Skill 4"
+      assert html =~ "Edge 2"
+      assert html =~ "Active"
+      refute html =~ "No pilots recruited yet"
+    end
+
+    test "allows removing pilots from company", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+      pilot = pilot_fixture(company: company, name: "Test Pilot", callsign: "Eagle")
+
+      {:ok, draft_live, html} = live(conn, ~p"/companies/#{company}/draft")
+
+      # Should show the pilot in the roster
+      assert html =~ "\"Eagle\" Test Pilot"
+      assert html =~ "1/6"  # Pilot count
+
+      # Click remove button
+      draft_live
+      |> element("button[phx-click='remove_pilot'][phx-value-pilot_id='#{pilot.id}']")
+      |> render_click()
+
+      # Should show confirmation and pilot should be removed
+      html = render(draft_live)
+      assert html =~ "Pilot removed from company!"
+      refute html =~ "\"Eagle\" Test Pilot"
+      assert html =~ "0/6"  # Pilot count reduced
+      assert html =~ "No pilots recruited yet"
+    end
+
+    test "shows error when trying to remove non-existent pilot", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      {:ok, draft_live, _html} = live(conn, ~p"/companies/#{company}/draft")
+
+      # Try to remove pilot that doesn't exist
+      draft_live
+      |> element("button[phx-click='remove_pilot'][phx-value-pilot_id='99999']", %{})
+      |> render_click()
+
+      html = render(draft_live)
+      assert html =~ "Pilot not found"
+    end
   end
 end

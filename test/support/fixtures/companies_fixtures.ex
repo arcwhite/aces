@@ -77,13 +77,42 @@ defmodule Aces.CompaniesFixtures do
     company = Map.get(attrs, :company) || company_fixture()
     master_unit = Map.get(attrs, :master_unit) || master_unit_fixture()
 
+    # Create the company unit directly without making HTTP calls
     {:ok, company_unit} =
-      Companies.add_unit_to_company(company, master_unit.mul_id, %{
+      Aces.Repo.insert(%Aces.Companies.CompanyUnit{
+        company_id: company.id,
+        master_unit_id: master_unit.id,
         custom_name: Map.get(attrs, :custom_name),
         purchase_cost_sp: Map.get(attrs, :purchase_cost_sp, 1920)
       })
 
     # Reload to get the master_unit association
     Aces.Repo.preload(company_unit, :master_unit, force: true)
+  end
+
+  def valid_pilot_attributes(attrs \\ %{}) do
+    Enum.into(attrs, %{
+      name: "John Smith",
+      callsign: "Ace",
+      skill_level: 4,
+      edge_tokens: 2,
+      status: "active",
+      wounds: 0,
+      sp_earned: 0,
+      mvp_awards: 0
+    })
+  end
+
+  def pilot_fixture(attrs \\ %{}) do
+    attrs = Enum.into(attrs, %{})
+    company = Map.get(attrs, :company) || company_fixture()
+    attrs = Map.delete(attrs, :company)
+
+    {:ok, pilot} =
+      attrs
+      |> valid_pilot_attributes()
+      |> (&Companies.create_pilot(company, &1)).()
+
+    pilot
   end
 end

@@ -135,6 +135,76 @@ defmodule AcesWeb.CompanyLive.Draft do
     {:noreply, assign(socket, :show_pilot_form, false)}
   end
 
+  def handle_event("remove_unit", %{"unit_id" => unit_id_str}, socket) do
+    unit_id = String.to_integer(unit_id_str)
+    company = socket.assigns.company
+    user = socket.assigns.current_scope.user
+
+    if Authorization.can?(:edit_company, user, company) do
+      company_unit = Enum.find(company.company_units, &(&1.id == unit_id))
+      
+      if company_unit do
+        case Companies.remove_unit_from_company(company_unit) do
+          {:ok, _} ->
+            updated_company = Companies.get_company_with_stats!(company.id)
+
+            {:noreply,
+             socket
+             |> assign(:company, updated_company)
+             |> put_flash(:info, "Unit removed from roster!")}
+
+          {:error, _changeset} ->
+            {:noreply,
+             socket
+             |> put_flash(:error, "Failed to remove unit")}
+        end
+      else
+        {:noreply,
+         socket
+         |> put_flash(:error, "Unit not found")}
+      end
+    else
+      {:noreply,
+       socket
+       |> put_flash(:error, "You don't have permission to remove units from this company")}
+    end
+  end
+
+  def handle_event("remove_pilot", %{"pilot_id" => pilot_id_str}, socket) do
+    pilot_id = String.to_integer(pilot_id_str)
+    company = socket.assigns.company
+    user = socket.assigns.current_scope.user
+
+    if Authorization.can?(:edit_company, user, company) do
+      pilot = Enum.find(company.pilots, &(&1.id == pilot_id))
+      
+      if pilot do
+        case Companies.delete_pilot(pilot) do
+          {:ok, _} ->
+            updated_company = Companies.get_company_with_stats!(company.id)
+
+            {:noreply,
+             socket
+             |> assign(:company, updated_company)
+             |> put_flash(:info, "Pilot removed from company!")}
+
+          {:error, _changeset} ->
+            {:noreply,
+             socket
+             |> put_flash(:error, "Failed to remove pilot")}
+        end
+      else
+        {:noreply,
+         socket
+         |> put_flash(:error, "Pilot not found")}
+      end
+    else
+      {:noreply,
+       socket
+       |> put_flash(:error, "You don't have permission to remove pilots from this company")}
+    end
+  end
+
   def handle_event("finalize_company", _params, socket) do
     company = socket.assigns.company
     user = socket.assigns.current_scope.user
@@ -309,7 +379,14 @@ defmodule AcesWeb.CompanyLive.Draft do
                   </div>
                   
                   <div class="card-actions justify-end">
-                    <button class="btn btn-ghost btn-xs text-error">Remove</button>
+                    <button 
+                      class="btn btn-ghost btn-xs text-error"
+                      phx-click="remove_pilot"
+                      phx-value-pilot_id={pilot.id}
+                      data-confirm="Are you sure you want to remove this pilot from the company?"
+                    >
+                      Remove
+                    </button>
                   </div>
                 </div>
               </div>
@@ -380,7 +457,14 @@ defmodule AcesWeb.CompanyLive.Draft do
                     <td>{unit.purchase_cost_sp} SP</td>
                     <td>{unit.master_unit.point_value}</td>
                     <td>
-                      <button class="btn btn-ghost btn-xs text-error">Remove</button>
+                      <button 
+                        class="btn btn-ghost btn-xs text-error"
+                        phx-click="remove_unit"
+                        phx-value-unit_id={unit.id}
+                        data-confirm="Are you sure you want to remove this unit from the roster? This will restore the PV to your budget."
+                      >
+                        Remove
+                      </button>
                     </td>
                   </tr>
                 <% end %>

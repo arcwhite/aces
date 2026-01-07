@@ -14,7 +14,8 @@ defmodule Aces.AccountsFixtures do
 
   def valid_user_attributes(attrs \\ %{}) do
     Enum.into(attrs, %{
-      email: unique_user_email()
+      email: unique_user_email(),
+      password: valid_user_password()
     })
   end
 
@@ -30,15 +31,14 @@ defmodule Aces.AccountsFixtures do
   def user_fixture(attrs \\ %{}) do
     user = unconfirmed_user_fixture(attrs)
 
-    token =
-      extract_user_token(fn url ->
-        Accounts.deliver_login_instructions(user, url)
-      end)
+    # Confirm the user manually and set a password
+    user = 
+      user
+      |> Ecto.Changeset.change(%{confirmed_at: DateTime.utc_now() |> DateTime.truncate(:second)})
+      |> Aces.Repo.update!()
 
-    {:ok, {user, _expired_tokens}} =
-      Accounts.login_user_by_magic_link(token)
-
-    user
+    # Set password for testing
+    set_password(user)
   end
 
   def user_scope_fixture do
