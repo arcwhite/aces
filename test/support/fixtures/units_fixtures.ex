@@ -34,7 +34,7 @@ defmodule Aces.UnitsFixtures do
         bf_abilities: "AC1/1/1",
         image_url: "/Unit/QuickImage/123",
         is_published: true,
-        last_synced_at: DateTime.utc_now()
+        last_synced_at: DateTime.truncate(DateTime.utc_now(), :second)
       })
       |> Units.create_or_update_master_unit()
 

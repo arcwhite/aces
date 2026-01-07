@@ -47,7 +47,10 @@ defmodule Aces.MUL.Client do
          {:ok, response} <- make_request("/Unit/Details/#{mul_id}") do
       case response.status do
         200 ->
-          {:ok, parse_unit_details(response.body)}
+          case parse_unit_details(response.body) do
+            {:error, reason} -> {:error, reason}
+            unit -> {:ok, unit}
+          end
 
         404 ->
           {:error, :not_found}
@@ -211,7 +214,11 @@ defmodule Aces.MUL.Client do
 
   defp parse_response(_, _), do: []
 
-  defp normalize_unit(api_data, faction_context \\ %{}) do
+  defp normalize_unit(api_data, faction_context \\ %{})
+
+  defp normalize_unit(nil, _faction_context), do: nil
+
+  defp normalize_unit(api_data, faction_context) do
     %{
       mul_id: api_data["Id"],
       name: api_data["Name"],
@@ -245,7 +252,10 @@ defmodule Aces.MUL.Client do
   defp parse_unit_details(body) do
     # For now, assume the details API has similar structure
     # This would need to be updated based on actual API response
-    normalize_unit(body)
+    case normalize_unit(body) do
+      nil -> {:error, :invalid_response}
+      unit -> unit
+    end
   end
 
   defp build_full_name(name, nil), do: name

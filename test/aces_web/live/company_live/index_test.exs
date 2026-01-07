@@ -80,7 +80,7 @@ defmodule AcesWeb.CompanyLive.IndexTest do
     end
 
     test "displays company stats", %{conn: conn, user: user} do
-      company = company_fixture(user: user, warchest_balance: 5000)
+      company = company_fixture(user: user, warchest_balance: 5000, status: "active")
       company_unit_fixture(company: company)
       company_unit_fixture(company: company)
 
@@ -129,7 +129,7 @@ defmodule AcesWeb.CompanyLive.IndexTest do
     end
 
     test "can navigate to company show page", %{conn: conn, user: user} do
-      company = company_fixture(user: user)
+      company = company_fixture(user: user, status: "active")
 
       {:ok, index_live, _html} = live(conn, ~p"/companies")
 

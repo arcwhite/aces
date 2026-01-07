@@ -59,7 +59,8 @@ defmodule Aces.CompaniesFixtures do
       variant: "AS7-D",
       unit_type: "battlemech",
       point_value: 48,
-      tonnage: 100
+      tonnage: 100,
+      last_synced_at: DateTime.truncate(DateTime.utc_now(), :second)
     })
   end
 

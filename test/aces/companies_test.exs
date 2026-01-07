@@ -383,7 +383,9 @@ defmodule Aces.CompaniesTest do
       master_unit = master_unit_fixture(point_value: 100)
       company_unit_fixture(company: company, master_unit: master_unit)
 
-      assert {:ok, finalized} = Companies.finalize_company(company)
+      # Reload company with its units before finalizing
+      company_with_units = Companies.get_company!(company.id)
+      assert {:ok, finalized} = Companies.finalize_company(company_with_units)
 
       assert finalized.status == "active"
       # 1000 base + (300 unused PV * 40) = 1000 + 12000 = 13000
@@ -401,7 +403,9 @@ defmodule Aces.CompaniesTest do
       master_unit = master_unit_fixture(point_value: 100)
       company_unit_fixture(company: company, master_unit: master_unit)
 
-      assert {:ok, finalized} = Companies.finalize_company(company)
+      # Reload company with its units before finalizing
+      company_with_units = Companies.get_company!(company.id)
+      assert {:ok, finalized} = Companies.finalize_company(company_with_units)
 
       assert finalized.status == "active"
       # 2000 base + (0 unused PV * 40) = 2000
@@ -447,7 +451,7 @@ defmodule Aces.CompaniesTest do
       master_unit = master_unit_fixture(
         point_value: 100, 
         mul_id: 123,
-        last_synced_at: DateTime.utc_now()  # Fresh cache to avoid HTTP call
+        last_synced_at: DateTime.truncate(DateTime.utc_now(), :second)  # Fresh cache to avoid HTTP call
       )
 
       # Now this should work without making HTTP calls since unit is cached
@@ -460,7 +464,7 @@ defmodule Aces.CompaniesTest do
       master_unit = master_unit_fixture(
         point_value: 100,
         mul_id: 456,
-        last_synced_at: DateTime.utc_now()  # Fresh cache to avoid HTTP call
+        last_synced_at: DateTime.truncate(DateTime.utc_now(), :second)  # Fresh cache to avoid HTTP call
       )
 
       # This should return an error for active companies
