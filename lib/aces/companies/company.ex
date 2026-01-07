@@ -5,7 +5,7 @@ defmodule Aces.Companies.Company do
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias Aces.Companies.{CompanyMembership, CompanyUnit}
+  alias Aces.Companies.{CompanyMembership, CompanyUnit, Pilot}
 
   schema "companies" do
     field :name, :string
@@ -17,6 +17,7 @@ defmodule Aces.Companies.Company do
     has_many :memberships, CompanyMembership
     has_many :users, through: [:memberships, :user]
     has_many :company_units, CompanyUnit
+    has_many :pilots, Pilot
 
     timestamps(type: :utc_datetime)
   end

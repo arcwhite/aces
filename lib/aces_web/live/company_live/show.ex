@@ -31,7 +31,8 @@ defmodule AcesWeb.CompanyLive.Show do
          |> assign(:show_unit_search, false)
          |> assign(:unit_search_term, "")
          |> assign(:search_results, [])
-         |> assign(:search_loading, false)}
+         |> assign(:search_loading, false)
+         |> assign(:show_pilot_form, false)}
       end
     end
   end
@@ -147,6 +148,14 @@ defmodule AcesWeb.CompanyLive.Show do
     end
   end
 
+  def handle_event("hire_pilot", _params, socket) do
+    {:noreply, assign(socket, :show_pilot_form, true)}
+  end
+
+  def handle_event("close_pilot_form", _params, socket) do
+    {:noreply, assign(socket, :show_pilot_form, false)}
+  end
+
   @impl true
   def handle_event("delete_company", %{"id" => id}, socket) do
     company = Companies.get_company!(id)
@@ -165,6 +174,22 @@ defmodule AcesWeb.CompanyLive.Show do
   end
 
   @impl true
+  def handle_info({AcesWeb.CompanyLive.PilotFormComponent, {:saved, _pilot}}, socket) do
+    updated_company = Companies.get_company_with_stats!(socket.assigns.company.id)
+    
+    {:noreply,
+     socket
+     |> assign(:company, updated_company)
+     |> assign(:show_pilot_form, false)}
+  end
+
+  def handle_info({AcesWeb.CompanyLive.PilotHireComponent, {:saved, _pilot, updated_company}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:company, Companies.get_company_with_stats!(updated_company.id))
+     |> assign(:show_pilot_form, false)}
+  end
+
   def handle_info({:perform_search, search_term}, socket) do
     require Logger
     Logger.debug("handle_info received perform_search for: '#{search_term}'")
@@ -214,11 +239,17 @@ defmodule AcesWeb.CompanyLive.Show do
         <% end %>
       </div>
 
-      <div class="grid gap-6 md:grid-cols-4 mb-8">
+      <div class="grid gap-6 md:grid-cols-5 mb-8">
         <div class="stat bg-base-200 rounded-lg shadow">
           <div class="stat-title">Total Units</div>
           <div class="stat-value text-primary">{@company.stats.unit_count}</div>
           <div class="stat-desc">In roster</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+          <div class="stat-title">Pilots</div>
+          <div class="stat-value text-info">{@company.stats.pilot_count}</div>
+          <div class="stat-desc">Recruited</div>
         </div>
 
         <div class="stat bg-base-200 rounded-lg shadow">
@@ -242,6 +273,93 @@ defmodule AcesWeb.CompanyLive.Show do
           </div>
           <div class="stat-desc">{Calendar.strftime(@company.stats.last_modified, "%I:%M %p")}</div>
         </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="mb-8">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-2xl font-bold">Pilot Roster</h2>
+          <%= if @company.status == "active" do %>
+            <button
+              type="button"
+              phx-click="hire_pilot"
+              class="btn btn-primary"
+              disabled={@company.warchest_balance < 150}
+              title="Hire pilot for 150 SP"
+            >
+              Hire Pilot (150 SP)
+            </button>
+          <% end %>
+        </div>
+
+        <%= if @company.pilots == [] do %>
+          <div class="alert alert-info">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              class="stroke-current shrink-0 w-6 h-6"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              >
+              </path>
+            </svg>
+            <span>No pilots in your company yet. <%= if @company.status == "active", do: "Hire pilots to operate your units!", else: "Pilots are added during company creation." %></span>
+          </div>
+        <% else %>
+          <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <%= for pilot <- @company.pilots do %>
+              <div class="card bg-base-100 shadow-xl">
+                <div class="card-body">
+                  <h3 class="card-title">
+                    <%= if pilot.callsign && String.trim(pilot.callsign) != "" do %>
+                      "<%= pilot.callsign %>" <%= pilot.name %>
+                    <% else %>
+                      <%= pilot.name %>
+                    <% end %>
+                  </h3>
+                  
+                  <%= if pilot.description && String.trim(pilot.description) != "" do %>
+                    <p class="text-sm opacity-70"><%= pilot.description %></p>
+                  <% end %>
+                  
+                  <div class="flex flex-wrap gap-2 mt-2">
+                    <div class="badge badge-primary">Skill {pilot.skill_level}</div>
+                    <div class="badge badge-secondary">Edge {pilot.edge_tokens}</div>
+                    <div class={[
+                      "badge",
+                      pilot.status == "active" && "badge-success",
+                      pilot.status == "wounded" && "badge-warning",
+                      pilot.status == "deceased" && "badge-error"
+                    ]}>
+                      {String.capitalize(pilot.status)}
+                    </div>
+                  </div>
+
+                  <div class="mt-2 text-sm opacity-70">
+                    <div>SP Earned: {pilot.sp_earned}</div>
+                    <div>Sorties: {pilot.sorties_participated}</div>
+                    <%= if pilot.mvp_awards > 0 do %>
+                      <div>MVP Awards: {pilot.mvp_awards}</div>
+                    <% end %>
+                    <%= if pilot.wounds > 0 do %>
+                      <div class="text-warning">Wounds: {pilot.wounds}</div>
+                    <% end %>
+                  </div>
+                  
+                  <div class="card-actions justify-end">
+                    <button class="btn btn-ghost btn-xs">Edit</button>
+                  </div>
+                </div>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
       </div>
 
       <div class="divider"></div>
@@ -498,6 +616,31 @@ defmodule AcesWeb.CompanyLive.Show do
                 <% end %>
               <% end %>
             </div>
+          </div>
+        </div>
+      <% end %>
+
+      <!-- Pilot Hiring Modal -->
+      <%= if @show_pilot_form do %>
+        <div class="modal modal-open">
+          <div class="modal-box w-11/12 max-w-2xl">
+            <div class="flex justify-between items-center mb-4">
+              <h3 class="font-bold text-lg">Hire New Pilot</h3>
+              <button
+                type="button"
+                phx-click="close_pilot_form"
+                class="btn btn-sm btn-circle btn-ghost"
+              >
+                ✕
+              </button>
+            </div>
+
+            <.live_component
+              module={AcesWeb.CompanyLive.PilotHireComponent}
+              id={:hire_pilot}
+              company={@company}
+              patch={~p"/companies/#{@company}"}
+            />
           </div>
         </div>
       <% end %>

@@ -31,7 +31,9 @@ defmodule AcesWeb.CompanyLive.Draft do
          |> assign(:show_unit_search, false)
          |> assign(:unit_search_term, "")
          |> assign(:search_results, [])
-         |> assign(:search_loading, false)}
+         |> assign(:search_loading, false)
+         |> assign(:show_pilot_form, false)
+         |> assign(:pilot_form_action, :new)}
       end
     end
   end
@@ -125,6 +127,14 @@ defmodule AcesWeb.CompanyLive.Draft do
     end
   end
 
+  def handle_event("add_pilot", _params, socket) do
+    {:noreply, assign(socket, :show_pilot_form, true)}
+  end
+
+  def handle_event("close_pilot_form", _params, socket) do
+    {:noreply, assign(socket, :show_pilot_form, false)}
+  end
+
   def handle_event("finalize_company", _params, socket) do
     company = socket.assigns.company
     user = socket.assigns.current_scope.user
@@ -150,6 +160,15 @@ defmodule AcesWeb.CompanyLive.Draft do
   end
 
   @impl true
+  def handle_info({AcesWeb.CompanyLive.PilotFormComponent, {:saved, _pilot}}, socket) do
+    updated_company = Companies.get_company_with_stats!(socket.assigns.company.id)
+    
+    {:noreply,
+     socket
+     |> assign(:company, updated_company)
+     |> assign(:show_pilot_form, false)}
+  end
+
   def handle_info({:perform_search, search_term}, socket) do
     if socket.assigns.unit_search_term == search_term do
       try do
@@ -203,7 +222,7 @@ defmodule AcesWeb.CompanyLive.Draft do
         </div>
       </div>
 
-      <div class="grid gap-6 md:grid-cols-3 mb-8">
+      <div class="grid gap-6 md:grid-cols-4 mb-8">
         <div class="stat bg-base-200 rounded-lg shadow">
           <div class="stat-title">PV Budget</div>
           <div class="stat-value text-accent">
@@ -219,12 +238,84 @@ defmodule AcesWeb.CompanyLive.Draft do
         </div>
 
         <div class="stat bg-base-200 rounded-lg shadow">
+          <div class="stat-title">Pilots Recruited</div>
+          <div class="stat-value text-info">{@company.stats.pilot_count}/6</div>
+          <div class="stat-desc">Max 6 during setup</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
           <div class="stat-title">Future Warchest</div>
           <div class="stat-value text-secondary">
             {@company.stats.warchest_balance + (@company.stats.pv_remaining * 40)}
           </div>
           <div class="stat-desc">SP after finalization</div>
         </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="mb-8">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-2xl font-bold">Recruit Your Pilots</h2>
+          <button
+            type="button"
+            phx-click="add_pilot"
+            class="btn btn-primary"
+            disabled={length(@company.pilots) >= 6}
+          >
+            Add Pilot
+          </button>
+        </div>
+
+        <%= if @company.pilots == [] do %>
+          <div class="alert alert-info">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              class="stroke-current shrink-0 w-6 h-6"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              >
+              </path>
+            </svg>
+            <span>No pilots recruited yet. Add skilled pilots to operate your units!</span>
+          </div>
+        <% else %>
+          <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <%= for pilot <- @company.pilots do %>
+              <div class="card bg-base-100 shadow-xl">
+                <div class="card-body">
+                  <h3 class="card-title">
+                    <%= if pilot.callsign && String.trim(pilot.callsign) != "" do %>
+                      "<%= pilot.callsign %>" <%= pilot.name %>
+                    <% else %>
+                      <%= pilot.name %>
+                    <% end %>
+                  </h3>
+                  
+                  <%= if pilot.description && String.trim(pilot.description) != "" do %>
+                    <p class="text-sm opacity-70"><%= pilot.description %></p>
+                  <% end %>
+                  
+                  <div class="flex flex-wrap gap-2 mt-2">
+                    <div class="badge badge-primary">Skill {pilot.skill_level}</div>
+                    <div class="badge badge-secondary">Edge {pilot.edge_tokens}</div>
+                    <div class="badge badge-success">{String.capitalize(pilot.status)}</div>
+                  </div>
+                  
+                  <div class="card-actions justify-end">
+                    <button class="btn btn-ghost btn-xs text-error">Remove</button>
+                  </div>
+                </div>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
       </div>
 
       <div class="divider"></div>
@@ -445,6 +536,34 @@ defmodule AcesWeb.CompanyLive.Draft do
                 <% end %>
               <% end %>
             </div>
+          </div>
+        </div>
+      <% end %>
+
+      <!-- Pilot Form Modal -->
+      <%= if @show_pilot_form do %>
+        <div class="modal modal-open">
+          <div class="modal-box w-11/12 max-w-2xl">
+            <div class="flex justify-between items-center mb-4">
+              <h3 class="font-bold text-lg">Add Pilot to Company</h3>
+              <button
+                type="button"
+                phx-click="close_pilot_form"
+                class="btn btn-sm btn-circle btn-ghost"
+              >
+                ✕
+              </button>
+            </div>
+
+            <.live_component
+              module={AcesWeb.CompanyLive.PilotFormComponent}
+              id={:new_pilot}
+              title="Add New Pilot"
+              action={@pilot_form_action}
+              pilot={%Aces.Companies.Pilot{}}
+              company={@company}
+              patch={~p"/companies/#{@company}/draft"}
+            />
           </div>
         </div>
       <% end %>
