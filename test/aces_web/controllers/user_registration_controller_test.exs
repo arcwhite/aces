@@ -33,7 +33,7 @@ defmodule AcesWeb.UserRegistrationControllerTest do
       assert redirected_to(conn) == ~p"/users/log-in"
 
       assert conn.assigns.flash["info"] =~
-               ~r/An email was sent to .*, please access it to confirm your account/
+               "Account created successfully! Please check your email to confirm your account."
     end
 
     test "render errors for invalid data", %{conn: conn} do
