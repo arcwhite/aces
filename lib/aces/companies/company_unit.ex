@@ -8,7 +8,38 @@ defmodule Aces.Companies.CompanyUnit do
   alias Aces.Companies.Company
   alias Aces.Units.MasterUnit
 
+  defmodule ValidationErrors do
+    @moduledoc """
+    Centralized error messages for validation consistency
+    """
+
+    def company_not_draft(status), do: "Cannot add units to #{status} companies"
+    def company_not_found, do: "Company not found"
+    def master_unit_not_found, do: "Master unit not found"
+
+    def unit_type_not_allowed(allowed_types) do
+      formatted_types = allowed_types
+        |> Enum.map(&String.replace(&1, "_", " "))
+        |> Enum.map(&String.split(&1, " "))
+        |> Enum.map(fn words -> Enum.map(words, &String.capitalize/1) end)
+        |> Enum.map(&Enum.join(&1, " "))
+        |> Enum.join(", ")
+      "Only types #{formatted_types} are allowed"
+    end
+
+    def insufficient_pv_budget(needed, available) do
+      "Insufficient PV budget. Need #{needed} PV, but only #{available} remaining"
+    end
+
+    def max_chassis_exceeded, do: "Cannot add more than 2 Battlemechs of the same chassis"
+    def duplicate_variant, do: "Cannot add duplicate Battlemech variants of the same chassis"
+    def max_identical_units_exceeded, do: "Cannot add more than 2 identical units of the same type"
+  end
+
   @valid_statuses ~w(operational damaged destroyed salvaged)
+  @allowed_unit_types ~w(battlemech battle_armor combat_vehicle conventional_infantry)
+  @max_chassis_count 2
+  @max_identical_units 2
 
   schema "company_units" do
     field :custom_name, :string
@@ -44,50 +75,43 @@ defmodule Aces.Companies.CompanyUnit do
     |> validate_unit_composition_limits()
   end
 
+  # Higher-order function to eliminate repetitive validation pattern
+  defp validate_when_valid(changeset, validation_fn) do
+    if changeset.valid?, do: validation_fn.(changeset), else: changeset
+  end
+
   defp validate_company_is_draft(changeset) do
-    if changeset.valid? do
-      case get_field(changeset, :company_id) do
-        nil -> changeset # Will be caught by validate_required
-        company_id ->
-          case Aces.Repo.get(Company, company_id) do
-            %Company{status: "draft"} ->
-              changeset
+    validate_when_valid(changeset, fn changeset ->
+      case get_company(changeset) do
+        %Company{status: "draft"} ->
+          changeset
 
-            %Company{status: status} ->
-              add_error(changeset, :company_id, "Cannot add units to #{status} companies")
+        %Company{status: status} ->
+          add_error(changeset, :company_id, ValidationErrors.company_not_draft(status))
 
-            nil ->
-              add_error(changeset, :company_id, "Company not found")
-          end
+        nil ->
+          add_error(changeset, :company_id, ValidationErrors.company_not_found())
       end
-    else
-      changeset
-    end
+    end)
   end
 
   defp validate_unit_type_allowed(changeset) do
-    if changeset.valid? do
+    validate_when_valid(changeset, fn changeset ->
       case get_master_unit(changeset) do
-        %MasterUnit{} = master_unit ->
-          allowed_types = ["battlemech", "battle_armor", "combat_vehicle", "conventional_infantry"]
+        %MasterUnit{unit_type: unit_type} when unit_type in @allowed_unit_types ->
+          changeset
 
-          if master_unit.unit_type in allowed_types do
-            changeset
-          else
-            add_error(changeset, :master_unit_id,
-              "Only Battlemechs, Battle Armor, Combat Vehicles, and Conventional Infantry are allowed")
-          end
+        %MasterUnit{} ->
+          add_error(changeset, :master_unit_id, ValidationErrors.unit_type_not_allowed(@allowed_unit_types))
 
         nil ->
-          add_error(changeset, :master_unit_id, "Master unit not found")
+          add_error(changeset, :master_unit_id, ValidationErrors.master_unit_not_found())
       end
-    else
-      changeset
-    end
+    end)
   end
 
   defp validate_pv_budget(changeset) do
-    if changeset.valid? do
+    validate_when_valid(changeset, fn changeset ->
       with %Company{} = company <- get_company(changeset),
            %MasterUnit{} = master_unit <- get_master_unit(changeset) do
 
@@ -99,68 +123,55 @@ defmodule Aces.Companies.CompanyUnit do
           changeset
         else
           add_error(changeset, :master_unit_id,
-            "Insufficient PV budget. Need #{unit_cost} PV, but only #{available_pv} remaining")
+            ValidationErrors.insufficient_pv_budget(unit_cost, available_pv))
         end
       else
         _ -> changeset  # Errors will be caught by other validations
       end
-    else
-      changeset
-    end
+    end)
   end
 
   defp validate_unit_composition_limits(changeset) do
-    if changeset.valid? do
+    validate_when_valid(changeset, fn changeset ->
       with %Company{} = company <- get_company(changeset),
-           %MasterUnit{unit_type: "battlemech"} = master_unit <- get_master_unit(changeset) do
-        
-        # Battlemech-specific validation: max 2 of same chassis, different variants
-        existing_battlemechs = get_existing_units_by_chassis(company, master_unit)
-        
-        cond do
-          length(existing_battlemechs) >= 2 ->
-            add_error(changeset, :master_unit_id, "Cannot add more than 2 Battlemechs of the same chassis")
-          
-          Enum.any?(existing_battlemechs, &(&1.master_unit.variant == master_unit.variant)) ->
-            add_error(changeset, :master_unit_id, "Cannot add duplicate Battlemech variants of the same chassis")
-          
-          true ->
-            changeset
+           %MasterUnit{} = master_unit <- get_master_unit(changeset) do
+        case master_unit.unit_type do
+          "battlemech" -> validate_battlemech_limits(changeset, company, master_unit)
+          _ -> validate_non_battlemech_limits(changeset, company, master_unit)
         end
       else
-        %MasterUnit{} = master_unit ->
-          # Non-battlemech validation: max 2 identical units
-          company = get_company(changeset)
-          identical_units = get_identical_units(company, master_unit)
-          
-          if length(identical_units) >= 2 do
-            add_error(changeset, :master_unit_id, "Cannot add more than 2 identical units of the same type")
-          else
-            changeset
-          end
-        
-        _ -> changeset  # Errors will be caught by other validations
+        _ -> changeset  # Errors caught by other validations
       end
+    end)
+  end
+
+  defp validate_battlemech_limits(changeset, company, master_unit) do
+    existing_battlemechs = get_existing_units_by_chassis(company, master_unit)
+
+    cond do
+      length(existing_battlemechs) >= @max_chassis_count ->
+        add_error(changeset, :master_unit_id, ValidationErrors.max_chassis_exceeded())
+
+      has_duplicate_variant?(existing_battlemechs, master_unit) ->
+        add_error(changeset, :master_unit_id, ValidationErrors.duplicate_variant())
+
+      true ->
+        changeset
+    end
+  end
+
+  defp validate_non_battlemech_limits(changeset, company, master_unit) do
+    identical_units = get_identical_units(company, master_unit)
+
+    if length(identical_units) >= @max_identical_units do
+      add_error(changeset, :master_unit_id, ValidationErrors.max_identical_units_exceeded())
     else
       changeset
     end
   end
 
-  # Helper functions for validation
-  defp get_existing_units_by_chassis(%Company{} = company, %MasterUnit{} = master_unit) do
-    company.company_units
-    |> Enum.filter(&(&1.master_unit && &1.master_unit.unit_type == "battlemech"))
-    |> Enum.filter(&(&1.master_unit.name == master_unit.name))
-  end
-
-  defp get_identical_units(%Company{} = company, %MasterUnit{} = master_unit) do
-    company.company_units
-    |> Enum.filter(fn cu ->
-      cu.master_unit &&
-      cu.master_unit.name == master_unit.name &&
-      cu.master_unit.variant == master_unit.variant &&
-      cu.master_unit.unit_type == master_unit.unit_type
-    end)
+  defp has_duplicate_variant?(existing_battlemechs, master_unit) do
+    Enum.any?(existing_battlemechs, &(&1.master_unit.variant == master_unit.variant))
   end
 
   defp get_company(changeset) do
@@ -171,6 +182,38 @@ defmodule Aces.Companies.CompanyUnit do
   defp get_master_unit(changeset) do
     master_unit_id = get_field(changeset, :master_unit_id)
     if master_unit_id, do: Aces.Repo.get(MasterUnit, master_unit_id), else: nil
+  end
+
+  # Optimized helper functions for validation
+  defp get_existing_units_by_chassis(%Company{company_units: units}, %MasterUnit{variant: variant}) do
+    target_chassis = extract_chassis_from_variant(variant)
+
+    Enum.filter(units, fn unit ->
+      unit.master_unit &&
+      unit.master_unit.unit_type == "battlemech" &&
+      extract_chassis_from_variant(unit.master_unit.variant) == target_chassis
+    end)
+  end
+
+  defp extract_chassis_from_variant(variant) when is_binary(variant) do
+    case String.split(variant, "-", parts: 2) do
+      [chassis, _] -> chassis
+      [chassis] -> chassis
+    end
+  end
+
+  defp extract_chassis_from_variant(_), do: nil
+
+  defp get_identical_units(%Company{company_units: units}, %MasterUnit{} = master_unit) do
+    Enum.filter(units, fn unit ->
+      unit.master_unit && units_match?(unit.master_unit, master_unit)
+    end)
+  end
+
+  defp units_match?(%MasterUnit{} = unit1, %MasterUnit{} = unit2) do
+    unit1.name == unit2.name &&
+    unit1.variant == unit2.variant &&
+    unit1.unit_type == unit2.unit_type
   end
 
   @doc """
