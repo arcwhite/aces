@@ -33,6 +33,7 @@ defmodule AcesWeb.CompanyLive.Draft do
          |> assign(:unit_search_term, "")
          |> assign(:search_results, [])
          |> assign(:search_loading, false)
+         |> assign(:unit_add_error, nil)
          |> assign(:show_pilot_form, false)
          |> assign(:pilot_form_action, :new)}
       end
@@ -46,7 +47,7 @@ defmodule AcesWeb.CompanyLive.Draft do
 
   @impl true
   def handle_event("add_unit", _params, socket) do
-    {:noreply, assign(socket, :show_unit_search, true)}
+    {:noreply, assign(socket, :show_unit_search, true) |> assign(:unit_add_error, nil)}
   end
 
   def handle_event("close_unit_search", _params, socket) do
@@ -55,7 +56,8 @@ defmodule AcesWeb.CompanyLive.Draft do
      |> assign(:show_unit_search, false)
      |> assign(:unit_search_term, "")
      |> assign(:search_results, [])
-     |> assign(:search_loading, false)}
+     |> assign(:search_loading, false)
+     |> assign(:unit_add_error, nil)}
   end
 
   def handle_event("search_units", %{"value" => search_term}, socket) do
@@ -67,6 +69,7 @@ defmodule AcesWeb.CompanyLive.Draft do
           socket
           |> assign(:unit_search_term, search_term)
           |> assign(:search_loading, true)
+          |> assign(:unit_add_error, nil)
 
         send(self(), {:perform_search, search_term})
         socket
@@ -75,6 +78,7 @@ defmodule AcesWeb.CompanyLive.Draft do
         |> assign(:unit_search_term, search_term)
         |> assign(:search_results, [])
         |> assign(:search_loading, false)
+        |> assign(:unit_add_error, nil)
       end
 
     {:noreply, socket}
@@ -94,32 +98,19 @@ defmodule AcesWeb.CompanyLive.Draft do
            socket
            |> assign(:company, updated_company)
            |> put_flash(:info, "Unit successfully added to roster!")
-           |> assign(:show_unit_search, false)}
+           |> assign(:show_unit_search, false)
+           |> assign(:unit_add_error, nil)}
 
-        {:error, %{type: :insufficient_pv_budget, message: message, required_pv: required, available_pv: available, unit_name: unit_name}} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, "Cannot add #{unit_name}: #{message}. Need #{required} PV, but only #{available} PV remaining.")}
+        # Handle validation errors from changesets
+        {:error, %Ecto.Changeset{} = changeset} ->
+          error_message = extract_changeset_error_message(changeset)
+          {:noreply, assign(socket, :unit_add_error, error_message)}
 
         {:error, %{type: :unit_not_found, message: message}} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, message)}
+          {:noreply, assign(socket, :unit_add_error, message)}
 
         {:error, %{type: :unit_lookup_failed, message: message}} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, "Failed to add unit: #{message}")}
-
-        {:error, changeset} ->
-          error_message =
-            changeset.errors
-            |> Enum.map(fn {field, {msg, _}} -> "#{field}: #{msg}" end)
-            |> Enum.join(", ")
-
-          {:noreply,
-           socket
-           |> put_flash(:error, "Failed to add unit: #{error_message}")}
+          {:noreply, assign(socket, :unit_add_error, "Failed to add unit: #{message}")}
       end
     else
       {:noreply,
@@ -259,6 +250,24 @@ defmodule AcesWeb.CompanyLive.Draft do
       end
     else
       {:noreply, socket}
+    end
+  end
+
+  # Extract a user-friendly error message from changeset
+  defp extract_changeset_error_message(%Ecto.Changeset{} = changeset) do
+    # Look for our custom validation errors first
+    case Enum.find(changeset.errors, fn {field, _} -> field == :master_unit_id end) do
+      {_, {message, _}} -> message
+      nil ->
+        # Check for company errors
+        case Enum.find(changeset.errors, fn {field, _} -> field == :company_id end) do
+          {_, {message, _}} -> message
+          nil ->
+            # Fallback for other errors
+            changeset.errors
+            |> Enum.map(fn {_field, {msg, _}} -> msg end)
+            |> Enum.join(", ")
+        end
     end
   end
 
@@ -546,6 +555,16 @@ defmodule AcesWeb.CompanyLive.Draft do
                 with respect and attribution.
               </p>
             </div>
+
+            <!-- Error Display -->
+            <%= if @unit_add_error do %>
+              <div class="alert alert-error mb-4">
+                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{@unit_add_error}</span>
+              </div>
+            <% end %>
 
             <div class="divider"></div>
 

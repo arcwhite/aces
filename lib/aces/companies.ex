@@ -8,7 +8,6 @@ defmodule Aces.Companies do
 
   alias Aces.Accounts.User
   alias Aces.Companies.{Company, CompanyMembership, CompanyUnit, Pilot}
-  alias Aces.Units.MasterUnit
   alias Aces.Units
 
   ## Company CRUD
@@ -215,28 +214,24 @@ defmodule Aces.Companies do
     {:error, :company_finalized, "Cannot add units with PV to finalized companies. Use SP-based purchases instead."}
   end
 
-  def add_unit_to_company(%Company{status: "draft"} = company, mul_id, attrs) do
-    case Units.get_master_unit_by_mul_id(mul_id) do
-      {:ok, master_unit} ->
-        # Check if company has enough PV budget
-        current_pv_used = calculate_company_pv_usage(company)
-        unit_cost = master_unit.point_value || 0
+  def add_unit_to_company(%Company{} = company, mul_id, attrs) do
+    with {:ok, master_unit} <- Units.get_master_unit_by_mul_id(mul_id) do
+      unit_attrs = Map.merge(attrs, %{
+        company_id: company.id,
+        master_unit_id: master_unit.id
+      })
 
-        if current_pv_used + unit_cost <= company.pv_budget do
-          # Create the company unit
-          %CompanyUnit{}
-          |> CompanyUnit.changeset(
-            Map.merge(attrs, %{
-              company_id: company.id,
-              master_unit_id: master_unit.id
-            })
-          )
-          |> Repo.insert()
-        else
-          {:error, :insufficient_pv_budget,
-           "Insufficient PV budget. Need #{unit_cost} PV, but only have #{company.pv_budget - current_pv_used} remaining."}
-        end
+      %CompanyUnit{}
+      |> CompanyUnit.draft_company_changeset(unit_attrs)
+      |> Repo.insert()
+      |> case do
+        {:ok, company_unit} ->
+          {:ok, company_unit}
 
+        {:error, changeset} ->
+          {:error, changeset}
+      end
+    else
       {:error, :not_found} ->
         {:error, :unit_not_found, "Unit not found in Master Unit List"}
 
@@ -255,49 +250,25 @@ defmodule Aces.Companies do
     {:error, %{type: :company_finalized, message: "Cannot add units with PV to finalized companies. Use SP-based purchases instead."}}
   end
 
-  def purchase_unit_for_company(%Company{status: "draft"} = company, mul_id, attrs) do
-    case Units.get_master_unit_by_mul_id(mul_id) do
-      {:ok, master_unit} ->
-        current_pv_used = calculate_company_pv_usage(company)
-        unit_cost = master_unit.point_value || 0
-        available_pv = company.pv_budget - current_pv_used
+  def purchase_unit_for_company(%Company{} = company, mul_id, attrs) do
+    with {:ok, master_unit} <- Units.get_master_unit_by_mul_id(mul_id) do
+      unit_attrs = Map.merge(attrs, %{
+        company_id: company.id,
+        master_unit_id: master_unit.id,
+        purchase_cost_sp: attrs[:purchase_cost_sp] || 0
+      })
 
-        if unit_cost <= available_pv do
-          Ecto.Multi.new()
-          |> Ecto.Multi.insert(:company_unit, fn _ ->
-            %CompanyUnit{}
-            |> CompanyUnit.changeset(
-              Map.merge(attrs, %{
-                company_id: company.id,
-                master_unit_id: master_unit.id,
-                purchase_cost_sp: attrs[:purchase_cost_sp] || 0
-              })
-            )
-          end)
-          |> Repo.transaction()
-          |> case do
-            {:ok, %{company_unit: company_unit}} ->
-              # Reload the company unit with associations
-              reloaded_unit =
-                company_unit
-                |> Repo.preload(:master_unit, force: true)
+      %CompanyUnit{}
+      |> CompanyUnit.draft_company_changeset(unit_attrs)
+      |> Repo.insert()
+      |> case do
+        {:ok, company_unit} ->
+          {:ok, Repo.preload(company_unit, :master_unit)}
 
-              {:ok, reloaded_unit}
-
-            {:error, :company_unit, changeset, _} ->
-              {:error, changeset}
-          end
-        else
-          {:error,
-           %{
-             type: :insufficient_pv_budget,
-             message: "Insufficient PV budget",
-             required_pv: unit_cost,
-             available_pv: available_pv,
-             unit_name: MasterUnit.display_name(master_unit)
-           }}
-        end
-
+        {:error, changeset} ->
+          {:error, changeset}
+      end
+    else
       {:error, :not_found} ->
         {:error, %{type: :unit_not_found, message: "Unit not found in Master Unit List"}}
 

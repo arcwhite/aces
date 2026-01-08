@@ -475,4 +475,64 @@ defmodule Aces.CompaniesTest do
       assert message =~ "Cannot add units with PV to finalized companies"
     end
   end
+
+
+  describe "integration tests for validation with purchase_unit_for_company" do
+    test "purchase_unit_for_company respects unit type restrictions" do
+      company = company_fixture(status: "draft", pv_budget: 400)
+      protomech = master_unit_fixture(unit_type: "protomech", point_value: 50)
+
+      assert {:error, %Ecto.Changeset{valid?: false} = changeset} = 
+        Companies.purchase_unit_for_company(company, protomech.mul_id)
+      
+      assert "Only Battlemechs, Battle Armor, Combat Vehicles, and Conventional Infantry are allowed" in errors_on(changeset).master_unit_id
+    end
+
+    test "purchase_unit_for_company respects battlemech chassis limits" do
+      company = company_fixture(status: "draft", pv_budget: 400)
+      warhammer1 = master_unit_fixture(unit_type: "battlemech", name: "Warhammer", variant: "WHM-6R", point_value: 50)
+      warhammer2 = master_unit_fixture(unit_type: "battlemech", name: "Warhammer", variant: "WHM-6D", point_value: 50)
+      warhammer3 = master_unit_fixture(unit_type: "battlemech", name: "Warhammer", variant: "WHM-7M", point_value: 50)
+
+      # Add two different Warhammer variants
+      assert {:ok, _} = Companies.purchase_unit_for_company(company, warhammer1.mul_id)
+      assert {:ok, _} = Companies.purchase_unit_for_company(company, warhammer2.mul_id)
+      
+      # Third should fail
+      assert {:error, %Ecto.Changeset{valid?: false} = changeset} = 
+        Companies.purchase_unit_for_company(company, warhammer3.mul_id)
+      
+      assert "Cannot add more than 2 Battlemechs of the same chassis" in errors_on(changeset).master_unit_id
+    end
+
+    test "purchase_unit_for_company respects variant duplication rules for battlemechs" do
+      company = company_fixture(status: "draft", pv_budget: 400) 
+      warhammer1 = master_unit_fixture(unit_type: "battlemech", name: "Warhammer", variant: "WHM-6R", point_value: 50)
+      warhammer2 = master_unit_fixture(unit_type: "battlemech", name: "Warhammer", variant: "WHM-6R", point_value: 50)
+
+      # Add one variant
+      assert {:ok, _} = Companies.purchase_unit_for_company(company, warhammer1.mul_id)
+      
+      # Same variant should fail
+      assert {:error, %Ecto.Changeset{valid?: false} = changeset} = 
+        Companies.purchase_unit_for_company(company, warhammer2.mul_id)
+      
+      assert "Cannot add duplicate Battlemech variants of the same chassis" in errors_on(changeset).master_unit_id
+    end
+
+    test "purchase_unit_for_company respects unit limits for non-battlemech types" do
+      company = company_fixture(status: "draft", pv_budget: 400)
+      maxim = master_unit_fixture(unit_type: "combat_vehicle", name: "Maxim", variant: "Standard", point_value: 50)
+
+      # Add two identical units
+      assert {:ok, _} = Companies.purchase_unit_for_company(company, maxim.mul_id)
+      assert {:ok, _} = Companies.purchase_unit_for_company(company, maxim.mul_id)
+      
+      # Third should fail
+      assert {:error, %Ecto.Changeset{valid?: false} = changeset} = 
+        Companies.purchase_unit_for_company(company, maxim.mul_id)
+      
+      assert "Cannot add more than 2 identical units of the same type" in errors_on(changeset).master_unit_id
+    end
+  end
 end
