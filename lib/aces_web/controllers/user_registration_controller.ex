@@ -2,7 +2,6 @@ defmodule AcesWeb.UserRegistrationController do
   use AcesWeb, :controller
 
   alias Aces.Accounts
-  alias Aces.Accounts.User
 
   def new(conn, _params) do
     changeset = Accounts.change_user_registration()

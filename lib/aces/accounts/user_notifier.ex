@@ -2,7 +2,6 @@ defmodule Aces.Accounts.UserNotifier do
   import Swoosh.Email
 
   alias Aces.Mailer
-  alias Aces.Accounts.User
 
   # Delivers the email using the application mailer.
   defp deliver(recipient, subject, body) do

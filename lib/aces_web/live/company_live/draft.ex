@@ -4,6 +4,7 @@ defmodule AcesWeb.CompanyLive.Draft do
   alias Aces.Companies
   alias Aces.Companies.Authorization
   alias Aces.Units
+  alias AcesWeb.Layouts
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
@@ -264,6 +265,7 @@ defmodule AcesWeb.CompanyLive.Draft do
   @impl true
   def render(assigns) do
     ~H"""
+    <Layouts.flash_group flash={@flash} />
     <div class="container mx-auto px-4 py-8">
       <div class="mb-8">
         <div class="flex items-center gap-4 mb-4">

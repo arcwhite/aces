@@ -99,7 +99,20 @@ defmodule Aces.MUL.Client do
 
     Logger.debug("Making MUL API request to: #{url}")
 
-    Req.get(url, receive_timeout: @request_timeout)
+    case Req.get(url, receive_timeout: @request_timeout) do
+      {:ok, response} ->
+        # Ensure consistent body parsing - decode JSON if it's a string
+        body = case response.body do
+          body when is_binary(body) ->
+            case Jason.decode(body) do
+              {:ok, json} -> json
+              {:error, _} -> body  # Keep as string if not valid JSON
+            end
+          body -> body  # Already parsed or other format
+        end
+        {:ok, %{response | body: body}}
+      error -> error
+    end
   end
 
   defp get_last_request_time do
@@ -212,6 +225,12 @@ defmodule Aces.MUL.Client do
     Enum.map(units, &normalize_unit(&1, faction_context))
   end
 
+  defp parse_response(%{body: body}, _filters) when is_binary(body) do
+    # Received HTML or other non-JSON response
+    Logger.warning("MUL API returned non-JSON response for unit search")
+    []
+  end
+
   defp parse_response(_, _), do: []
 
   defp normalize_unit(api_data, faction_context \\ %{})
@@ -250,11 +269,20 @@ defmodule Aces.MUL.Client do
   end
 
   defp parse_unit_details(body) do
-    # For now, assume the details API has similar structure
-    # This would need to be updated based on actual API response
-    case normalize_unit(body) do
-      nil -> {:error, :invalid_response}
-      unit -> unit
+    # Body may already be parsed by make_request, or it might be raw HTML/string
+    case body do
+      data when is_map(data) ->
+        # Already parsed JSON
+        case normalize_unit(data) do
+          nil -> {:error, :invalid_response}
+          unit -> unit
+        end
+      data when is_binary(data) ->
+        # Raw string - likely HTML error page if we reach this point
+        Logger.warning("MUL API returned non-JSON response (likely HTML error page)")
+        {:error, :service_unavailable}
+      _ ->
+        {:error, :invalid_response}
     end
   end
 

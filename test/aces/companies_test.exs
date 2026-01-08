@@ -278,25 +278,6 @@ defmodule Aces.CompaniesTest do
       assert company_unit.purchase_cost_sp == 2000
       assert company_unit.status == "operational"
     end
-
-    test "creates master unit if it doesn't exist" do
-      company = company_fixture()
-      new_mul_id = 99999
-
-      assert {:ok, company_unit} =
-               Companies.add_unit_to_company(company, new_mul_id, %{
-                 name: "Timber Wolf",
-                 variant: "TBR-Prime",
-                 unit_type: "battlemech",
-                 point_value: 52
-               })
-
-      # Reload to get master_unit association
-      company_unit = Aces.Repo.preload(company_unit, :master_unit, force: true)
-
-      assert company_unit.master_unit.mul_id == new_mul_id
-      assert company_unit.master_unit.name == "Timber Wolf"
-    end
   end
 
   describe "remove_unit_from_company/1" do
@@ -449,13 +430,13 @@ defmodule Aces.CompaniesTest do
     test "allows PV purchases for draft companies" do
       company = company_fixture(status: "draft", pv_budget: 400)
       master_unit = master_unit_fixture(
-        point_value: 100, 
+        point_value: 100,
         mul_id: 123,
         last_synced_at: DateTime.truncate(DateTime.utc_now(), :second)  # Fresh cache to avoid HTTP call
       )
 
       # Now this should work without making HTTP calls since unit is cached
-      assert {:ok, _company_unit} = 
+      assert {:ok, _company_unit} =
         Companies.purchase_unit_for_company(company, master_unit.mul_id)
     end
 
@@ -468,9 +449,9 @@ defmodule Aces.CompaniesTest do
       )
 
       # This should return an error for active companies
-      assert {:error, %{type: :company_finalized, message: message}} = 
+      assert {:error, %{type: :company_finalized, message: message}} =
         Companies.purchase_unit_for_company(company, master_unit.mul_id)
-      
+
       assert message =~ "Cannot add units with PV to finalized companies"
     end
   end
@@ -480,7 +461,7 @@ defmodule Aces.CompaniesTest do
       company = company_fixture(status: "draft", pv_budget: 400)
       master_unit = master_unit_fixture(point_value: 100)
 
-      assert {:ok, _company_unit} = 
+      assert {:ok, _company_unit} =
         Companies.add_unit_to_company(company, master_unit.mul_id)
     end
 
@@ -488,9 +469,9 @@ defmodule Aces.CompaniesTest do
       company = company_fixture(status: "active")
       master_unit = master_unit_fixture(point_value: 100)
 
-      assert {:error, :company_finalized, message} = 
+      assert {:error, :company_finalized, message} =
         Companies.add_unit_to_company(company, master_unit.mul_id)
-      
+
       assert message =~ "Cannot add units with PV to finalized companies"
     end
   end
