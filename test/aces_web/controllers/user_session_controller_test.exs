@@ -2,7 +2,6 @@ defmodule AcesWeb.UserSessionControllerTest do
   use AcesWeb.ConnCase, async: true
 
   import Aces.AccountsFixtures
-  alias Aces.Accounts
 
   setup do
     %{unconfirmed_user: unconfirmed_user_fixture(), user: user_fixture()}

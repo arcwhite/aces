@@ -2,7 +2,6 @@ defmodule AcesWeb.CompanyLive.IndexTest do
   use AcesWeb.ConnCase
 
   import Phoenix.LiveViewTest
-  import Aces.AccountsFixtures
   import Aces.CompaniesFixtures
 
   setup :register_and_log_in_user
@@ -22,8 +21,8 @@ defmodule AcesWeb.CompanyLive.IndexTest do
     end
 
     test "separates draft and active companies", %{conn: conn, user: user} do
-      draft_company = company_fixture(user: user, name: "Draft Corp", status: "draft")
-      active_company = company_fixture(user: user, name: "Active Corp", status: "active")
+      _draft_company = company_fixture(user: user, name: "Draft Corp", status: "draft")
+      _active_company = company_fixture(user: user, name: "Active Corp", status: "active")
 
       {:ok, _index_live, html} = live(conn, ~p"/companies")
 
@@ -36,7 +35,7 @@ defmodule AcesWeb.CompanyLive.IndexTest do
     end
 
     test "shows draft companies with continue setup button", %{conn: conn, user: user} do
-      company = company_fixture(user: user, name: "Draft Company", status: "draft")
+      _company = company_fixture(user: user, name: "Draft Company", status: "draft")
 
       {:ok, _index_live, html} = live(conn, ~p"/companies")
 
@@ -46,7 +45,7 @@ defmodule AcesWeb.CompanyLive.IndexTest do
     end
 
     test "shows active companies with view details button", %{conn: conn, user: user} do
-      company = company_fixture(user: user, name: "Active Company", status: "active")
+      _company = company_fixture(user: user, name: "Active Company", status: "active")
 
       {:ok, _index_live, html} = live(conn, ~p"/companies")
 

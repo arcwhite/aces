@@ -2,7 +2,6 @@ defmodule AcesWeb.CompanyLive.NewTest do
   use AcesWeb.ConnCase
 
   import Phoenix.LiveViewTest
-  import Aces.AccountsFixtures
 
   setup :register_and_log_in_user
 
