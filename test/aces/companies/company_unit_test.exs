@@ -173,12 +173,20 @@ defmodule Aces.Companies.CompanyUnitTest do
         point_value: 67
       })
 
+      mad_5s = CompaniesFixtures.master_unit_fixture(%{
+        name: "Marauder MAD-5S",
+        variant: "MAD-5S",
+        unit_type: "battlemech",
+        point_value: 70
+      })
+
       %{
         company: company,
         blr_4s: blr_4s,
         blr_m3: blr_m3,
         blr_3m: blr_3m,
-        mad_4r: mad_4r
+        mad_4r: mad_4r,
+        mad_5s: mad_5s
       }
     end
 
@@ -256,8 +264,40 @@ defmodule Aces.Companies.CompanyUnitTest do
       assert "Cannot add duplicate Battlemech variants of the same chassis" in errors_on(changeset).master_unit_id
     end
 
-    test "allows different chassis after reaching limit on one chassis", %{company: company, blr_4s: blr_4s, blr_m3: blr_m3, mad_4r: mad_4r} do
-      # Add two BLR units (max for BLR chassis)
+    test "prevents completing a second pair when one pair already exists", %{company: company, blr_4s: blr_4s, blr_m3: blr_m3, mad_4r: mad_4r, mad_5s: mad_5s} do
+      # Add two BLR units (max for BLR chassis, creating a pair)
+      CompaniesFixtures.company_unit_fixture(%{
+        company: company,
+        master_unit: blr_4s
+      })
+
+      CompaniesFixtures.company_unit_fixture(%{
+        company: company,
+        master_unit: blr_m3
+      })
+
+      # Add one MAD unit
+      CompaniesFixtures.company_unit_fixture(%{
+        company: company,
+        master_unit: mad_4r
+      })
+
+      # Reload company to get updated associations
+      company = Aces.Companies.get_company!(company.id)
+
+      # Should NOT be able to add second MAD unit (would complete second pair)
+      attrs = %{
+        company_id: company.id,
+        master_unit_id: mad_5s.id
+      }
+
+      changeset = CompanyUnit.draft_company_changeset(%CompanyUnit{}, attrs)
+      refute changeset.valid?
+      assert "Cannot add more than one pair of Mechs with the same chassis. Company already has a paired chassis." in errors_on(changeset).master_unit_id
+    end
+
+    test "allows adding single mech of new chassis even when pair exists", %{company: company, blr_4s: blr_4s, blr_m3: blr_m3, mad_4r: mad_4r} do
+      # Add two BLR units (creating a pair)
       CompaniesFixtures.company_unit_fixture(%{
         company: company,
         master_unit: blr_4s
@@ -271,10 +311,35 @@ defmodule Aces.Companies.CompanyUnitTest do
       # Reload company to get updated associations
       company = Aces.Companies.get_company!(company.id)
 
-      # Should still be able to add MAD-4R (different chassis)
+      # Should be able to add single MAD unit (first of new chassis)
       attrs = %{
         company_id: company.id,
         master_unit_id: mad_4r.id
+      }
+
+      changeset = CompanyUnit.draft_company_changeset(%CompanyUnit{}, attrs)
+      assert changeset.valid?
+    end
+
+    test "allows completing a pair with different chassis", %{company: company, blr_4s: blr_4s, mad_4r: mad_4r, mad_5s: mad_5s} do
+      # Add one BLR unit and one MAD unit (no pairs yet)
+      CompaniesFixtures.company_unit_fixture(%{
+        company: company,
+        master_unit: blr_4s
+      })
+
+      CompaniesFixtures.company_unit_fixture(%{
+        company: company,
+        master_unit: mad_4r
+      })
+
+      # Reload company to get updated associations
+      company = Aces.Companies.get_company!(company.id)
+
+      # Should be able to complete the MAD pair (first pair in company)
+      attrs = %{
+        company_id: company.id,
+        master_unit_id: mad_5s.id
       }
 
       changeset = CompanyUnit.draft_company_changeset(%CompanyUnit{}, attrs)

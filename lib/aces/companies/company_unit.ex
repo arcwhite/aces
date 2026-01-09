@@ -147,13 +147,22 @@ defmodule Aces.Companies.CompanyUnit do
 
   defp validate_battlemech_limits(changeset, company, master_unit) do
     existing_battlemechs = get_existing_units_by_chassis(company, master_unit)
+    all_battlemechs = get_all_battlemechs(company)
+    paired_chassis = get_paired_chassis(all_battlemechs)
+
+    target_chassis = extract_chassis_from_variant(master_unit.variant)
 
     cond do
+      has_duplicate_variant?(existing_battlemechs, master_unit) ->
+        add_error(changeset, :master_unit_id, ValidationErrors.duplicate_variant())
+
       length(existing_battlemechs) >= @max_chassis_count ->
         add_error(changeset, :master_unit_id, ValidationErrors.max_chassis_exceeded())
 
-      has_duplicate_variant?(existing_battlemechs, master_unit) ->
-        add_error(changeset, :master_unit_id, ValidationErrors.duplicate_variant())
+      # Check if adding this would create a second paired chassis:
+      # Only prevent when we already have 1 mech of this chassis AND there's already a paired chassis in the company
+      length(existing_battlemechs) == 1 and length(paired_chassis) > 0 and target_chassis not in paired_chassis ->
+        add_error(changeset, :master_unit_id, "Cannot add more than one pair of Mechs with the same chassis. Company already has a paired chassis.")
 
       true ->
         changeset
@@ -203,6 +212,21 @@ defmodule Aces.Companies.CompanyUnit do
   end
 
   defp extract_chassis_from_variant(_), do: nil
+
+  defp get_all_battlemechs(%Company{company_units: units}) do
+    Enum.filter(units, fn unit ->
+      unit.master_unit && unit.master_unit.unit_type == "battlemech"
+    end)
+  end
+
+  defp get_paired_chassis(battlemechs) do
+    battlemechs
+    |> Enum.group_by(fn unit -> 
+      extract_chassis_from_variant(unit.master_unit.variant) 
+    end)
+    |> Enum.filter(fn {_chassis, units} -> length(units) >= 2 end)
+    |> Enum.map(fn {chassis, _units} -> chassis end)
+  end
 
   defp get_identical_units(%Company{company_units: units}, %MasterUnit{} = master_unit) do
     Enum.filter(units, fn unit ->
