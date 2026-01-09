@@ -242,13 +242,38 @@ Create mix task: `lib/mix/tasks/seed_master_units.ex`
 ## Critical Business Logic
 
 ### Skill Progression Costs
-```elixir
-@skill_costs %{
-  0 => 60, 1 => 180, 2 => 360, 3 => 600,
-  4 => 900, 5 => 1100, 6 => 1900, 7 => 3400,
-  8 => 6000, 9 => 10000, 10 => 15000
-}
-```
+
+Pilots gain SP as they participate in Sorties, up to an amount specified by the Sortie (this needs to be entered by players after the Sortie finishes). Pilots that did not participate in the Sortie get half this amount. The SP to "pay" the pilots comes out of the Sortie rewards, and must be paid, or the amount pulled from the Detachment's Warchest.
+
+Pilots can then have their SP allocated to Skill, Edge Tokens, or Edge Abilities. The SP earned can be allocated any way the player desires between these three pools.
+
+Pilots must start at skill 4. In Alpha Strike, lower skill is better.
+Going to skill 3 requires 400 SP allocated to Skill.
+Going to skill 2 requires 900 SP allocated to Skill.
+Going to skill 1 requires 1900 SP allocated to skill.
+Going to skill 0 requires 3400 SP allocated to Skill.
+Pilots cannot go below Skill 0.
+
+Pilots allocating points to Edge Tokens at the end of a Sortie follow the following progression:
+2 - 60 SP
+3 - 120 SP
+4 - 200 SP
+5 - 300 SP
+6 - 420 SP
+7 - 560 SP
+8 - 720 SP
+9 - 900 SP
+10 - 1100 SP
+
+Pilots allocating points to Edge Abilities get the following number of Edge Abilities at each threshold:
+1 - 60 SP
+2 - 180 SP
+3 - 360 SP
+4 - 600 SP
+5 - 900 SP
+
+Pilots start with 150 SP and must immediately allocate their SP to the three pools, above. Pilots start at Skill 4, 1 Edge Token, and 0 Edge Abilities.
+
 
 ### Unit Purchase Cost
 ```elixir
