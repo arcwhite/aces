@@ -92,15 +92,23 @@ defmodule Aces.CompaniesFixtures do
   end
 
   def valid_pilot_attributes(attrs \\ %{}) do
+    # Default pilot with proper SP allocation for 2 edge tokens
+    edge_tokens = Map.get(attrs, :edge_tokens, 2)
+    sp_for_tokens = if edge_tokens > 1, do: 60, else: 0  # 2 tokens requires 60 SP
+    
     Enum.into(attrs, %{
       name: "John Smith",
       callsign: "Ace",
       skill_level: 4,
-      edge_tokens: 2,
+      edge_tokens: edge_tokens,
       status: "active",
       wounds: 0,
       sp_earned: 0,
-      mvp_awards: 0
+      mvp_awards: 0,
+      sp_allocated_to_skill: 0,
+      sp_allocated_to_edge_tokens: sp_for_tokens,
+      sp_allocated_to_edge_abilities: 0,
+      sp_available: 150 - sp_for_tokens
     })
   end
 

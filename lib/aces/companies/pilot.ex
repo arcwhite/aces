@@ -9,15 +9,44 @@ defmodule Aces.Companies.Pilot do
   alias Aces.Companies.Company
 
   @status_values ~w(active wounded deceased)
-  @max_skill_level 10
+  @max_skill_level 4
+  @min_skill_level 0
   @default_skill_level 4
 
-  # Skill progression costs based on Battletech: Aces rules
-  @skill_costs %{
-    0 => 60, 1 => 180, 2 => 360, 3 => 600,
-    4 => 900, 5 => 1100, 6 => 1900, 7 => 3400,
-    8 => 6000, 9 => 10000, 10 => 15000
+  # Skill progression costs based on Battletech: Aces rules (cumulative SP required to reach level)
+  @skill_progression_costs %{
+    4 => 0,     # Starting skill level
+    3 => 400,   # 400 SP to reach skill 3
+    2 => 900,   # 900 SP to reach skill 2  
+    1 => 1900,  # 1900 SP to reach skill 1
+    0 => 3400   # 3400 SP to reach skill 0
   }
+
+  # Edge token progression costs (cumulative SP required to reach token count)
+  @edge_token_costs %{
+    1 => 0,     # Starting with 1 token
+    2 => 60,    # 60 SP for 2nd token
+    3 => 120,   # 120 SP for 3rd token
+    4 => 200,   # 200 SP for 4th token
+    5 => 300,   # 300 SP for 5th token
+    6 => 420,   # 420 SP for 6th token
+    7 => 560,   # 560 SP for 7th token
+    8 => 720,   # 720 SP for 8th token
+    9 => 900,   # 900 SP for 9th token
+    10 => 1100  # 1100 SP for 10th token
+  }
+
+  # Edge abilities progression costs (cumulative SP required to reach ability count)
+  @edge_ability_costs %{
+    0 => 0,     # Starting with 0 abilities
+    1 => 60,    # 60 SP for 1st ability
+    2 => 180,   # 180 SP for 2nd ability
+    3 => 360,   # 360 SP for 3rd ability
+    4 => 600,   # 600 SP for 4th ability
+    5 => 900    # 900 SP for 5th ability
+  }
+
+  @starting_sp 150
 
   schema "pilots" do
     field :name, :string
@@ -32,6 +61,12 @@ defmodule Aces.Companies.Pilot do
     field :sp_earned, :integer, default: 0
     field :mvp_awards, :integer, default: 0
     field :sorties_participated, :integer, default: 0
+    
+    # SP allocation tracking
+    field :sp_allocated_to_skill, :integer, default: 0
+    field :sp_allocated_to_edge_tokens, :integer, default: 0  # Start with 1 token for free
+    field :sp_allocated_to_edge_abilities, :integer, default: 0
+    field :sp_available, :integer, default: 150  # 150 starting SP
 
     belongs_to :company, Company
 
@@ -43,21 +78,28 @@ defmodule Aces.Companies.Pilot do
     pilot
     |> cast(attrs, [:name, :callsign, :description, :portrait_url, :skill_level, 
                     :edge_tokens, :edge_abilities, :status, :wounds, :sp_earned, 
-                    :mvp_awards, :sorties_participated, :company_id])
+                    :mvp_awards, :sorties_participated, :company_id,
+                    :sp_allocated_to_skill, :sp_allocated_to_edge_tokens, 
+                    :sp_allocated_to_edge_abilities, :sp_available])
     |> validate_required([:name, :company_id])
     |> update_change(:name, &String.trim/1)
     |> update_change(:callsign, fn val -> if val, do: String.trim(val), else: val end)
     |> update_change(:description, fn val -> if val && String.trim(val) == "", do: nil, else: val end)
     |> validate_inclusion(:status, @status_values)
-    |> validate_number(:skill_level, greater_than_or_equal_to: 0, less_than_or_equal_to: @max_skill_level)
-    |> validate_number(:edge_tokens, greater_than_or_equal_to: 0)
+    |> validate_number(:skill_level, greater_than_or_equal_to: @min_skill_level, less_than_or_equal_to: @max_skill_level)
+    |> validate_number(:edge_tokens, greater_than_or_equal_to: 1)
     |> validate_number(:wounds, greater_than_or_equal_to: 0)
     |> validate_number(:sp_earned, greater_than_or_equal_to: 0)
     |> validate_number(:mvp_awards, greater_than_or_equal_to: 0)
     |> validate_number(:sorties_participated, greater_than_or_equal_to: 0)
+    |> validate_number(:sp_allocated_to_skill, greater_than_or_equal_to: 0)
+    |> validate_number(:sp_allocated_to_edge_tokens, greater_than_or_equal_to: 0)
+    |> validate_number(:sp_allocated_to_edge_abilities, greater_than_or_equal_to: 0)
+    |> validate_number(:sp_available, greater_than_or_equal_to: 0)
     |> validate_length(:name, min: 1, max: 100)
     |> validate_length(:callsign, max: 50)
     |> validate_portrait_url()
+    |> validate_sp_allocation_consistency()
     |> unique_constraint([:company_id, :callsign], 
                         message: "Callsign must be unique within the company")
     |> foreign_key_constraint(:company_id)
@@ -75,31 +117,70 @@ defmodule Aces.Companies.Pilot do
     |> put_change(:skill_level, @default_skill_level)
     |> put_change(:edge_tokens, 1)
     |> put_change(:status, "active")
+    |> put_change(:sp_allocated_to_skill, 0)
+    |> put_change(:sp_allocated_to_edge_tokens, 0)  # 1 edge token for free
+    |> put_change(:sp_allocated_to_edge_abilities, 0)
+    |> put_change(:sp_available, 150)  # 150 starting SP
   end
 
   @doc """
-  Calculate the SP cost to upgrade a pilot's skill from one level to another
+  Calculate the total SP required to reach a specific skill level
   """
-  def calculate_skill_upgrade_cost(from_level, to_level) when from_level < to_level do
-    if from_level >= 0 and to_level <= @max_skill_level do
-      (from_level + 1)..to_level
-      |> Enum.map(&Map.get(@skill_costs, &1, 0))
-      |> Enum.sum()
-    else
-      {:error, :invalid_skill_levels}
-    end
+  def skill_sp_required(skill_level) when skill_level >= @min_skill_level and skill_level <= @max_skill_level do
+    Map.get(@skill_progression_costs, skill_level, 0)
   end
 
-  def calculate_skill_upgrade_cost(_from, _to), do: 0
+  def skill_sp_required(_), do: {:error, :invalid_skill_level}
 
   @doc """
-  Get the SP cost for a specific skill level
+  Calculate skill level from allocated SP
   """
-  def skill_level_cost(level) when level >= 0 and level <= @max_skill_level do
-    Map.get(@skill_costs, level, 0)
+  def calculate_skill_from_sp(sp_allocated) do
+    @skill_progression_costs
+    |> Enum.filter(fn {_level, required_sp} -> sp_allocated >= required_sp end)
+    |> Enum.min_by(fn {_level, sp} -> sp end, fn -> {@default_skill_level, 0} end)
+    |> elem(0)
   end
 
-  def skill_level_cost(_), do: 0
+  @doc """
+  Calculate edge tokens from allocated SP (includes free starting token)
+  """
+  def calculate_edge_tokens_from_sp(sp_allocated) do
+    # Always get at least 1 token for free
+    base_tokens = 1
+    
+    # Find additional tokens from SP allocation
+    additional_tokens = @edge_token_costs
+    |> Enum.filter(fn {tokens, required_sp} -> tokens > 1 and sp_allocated >= required_sp end)
+    |> Enum.max_by(fn {_tokens, sp} -> sp end, fn -> {1, 0} end)
+    |> elem(0)
+    
+    max(base_tokens, additional_tokens)
+  end
+
+  @doc """
+  Calculate edge abilities count from allocated SP
+  """
+  def calculate_edge_abilities_from_sp(sp_allocated) do
+    @edge_ability_costs
+    |> Enum.filter(fn {_count, required_sp} -> sp_allocated >= required_sp end)
+    |> Enum.max_by(fn {_count, sp} -> sp end, fn -> {0, 0} end)
+    |> elem(0)
+  end
+
+  @doc """
+  Get SP required for specific edge token count
+  """
+  def edge_tokens_sp_required(token_count) do
+    Map.get(@edge_token_costs, token_count, {:error, :invalid_token_count})
+  end
+
+  @doc """
+  Get SP required for specific edge ability count
+  """
+  def edge_abilities_sp_required(ability_count) do
+    Map.get(@edge_ability_costs, ability_count, {:error, :invalid_ability_count})
+  end
 
   @doc """
   Apply wounds to a pilot
@@ -129,7 +210,87 @@ defmodule Aces.Companies.Pilot do
     end
   end
 
+  @doc """
+  Allocate SP to a specific category and update derived fields
+  """
+  def allocate_sp(pilot, sp_amount, category) when category in [:skill, :edge_tokens, :edge_abilities] do
+    case category do
+      :skill ->
+        new_sp_skill = pilot.sp_allocated_to_skill + sp_amount
+        new_skill_level = calculate_skill_from_sp(new_sp_skill)
+        new_sp_available = pilot.sp_available - sp_amount
+        
+        %{pilot | 
+          sp_allocated_to_skill: new_sp_skill,
+          skill_level: new_skill_level,
+          sp_available: new_sp_available}
+
+      :edge_tokens ->
+        new_sp_tokens = pilot.sp_allocated_to_edge_tokens + sp_amount
+        new_edge_tokens = calculate_edge_tokens_from_sp(new_sp_tokens)
+        new_sp_available = pilot.sp_available - sp_amount
+        
+        %{pilot | 
+          sp_allocated_to_edge_tokens: new_sp_tokens,
+          edge_tokens: new_edge_tokens,
+          sp_available: new_sp_available}
+
+      :edge_abilities ->
+        new_sp_abilities = pilot.sp_allocated_to_edge_abilities + sp_amount
+        new_sp_available = pilot.sp_available - sp_amount
+        
+        # Keep existing edge abilities list, just track the SP allocation
+        %{pilot | 
+          sp_allocated_to_edge_abilities: new_sp_abilities,
+          sp_available: new_sp_available}
+    end
+  end
+
   # Private helper functions
+  defp validate_sp_allocation_consistency(changeset) do
+    changeset
+    |> validate_change(:sp_available, fn :sp_available, sp_available ->
+      skill_sp = get_field(changeset, :sp_allocated_to_skill) || 0
+      tokens_sp = get_field(changeset, :sp_allocated_to_edge_tokens) || 0
+      abilities_sp = get_field(changeset, :sp_allocated_to_edge_abilities) || 0
+      sp_earned = get_field(changeset, :sp_earned) || 0
+      
+      total_allocated = skill_sp + tokens_sp + abilities_sp
+      total_sp = @starting_sp + sp_earned
+      
+      if total_allocated + sp_available != total_sp do
+        [sp_available: "SP allocation doesn't add up correctly"]
+      else
+        []
+      end
+    end)
+    |> validate_derived_fields()
+  end
+
+  defp validate_derived_fields(changeset) do
+    changeset
+    |> validate_change(:skill_level, fn :skill_level, skill_level ->
+      sp_allocated = get_field(changeset, :sp_allocated_to_skill) || 0
+      expected_skill = calculate_skill_from_sp(sp_allocated)
+      
+      if skill_level != expected_skill do
+        [skill_level: "Skill level doesn't match allocated SP"]
+      else
+        []
+      end
+    end)
+    |> validate_change(:edge_tokens, fn :edge_tokens, edge_tokens ->
+      sp_allocated = get_field(changeset, :sp_allocated_to_edge_tokens) || 0
+      expected_tokens = calculate_edge_tokens_from_sp(sp_allocated)
+      
+      if edge_tokens != expected_tokens do
+        [edge_tokens: "Edge tokens don't match allocated SP"]
+      else
+        []
+      end
+    end)
+  end
+
   defp validate_portrait_url(changeset) do
     changeset
     |> validate_change(:portrait_url, fn :portrait_url, url ->

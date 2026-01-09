@@ -481,31 +481,28 @@ defmodule Aces.Companies do
   Award SP to a pilot
   """
   def award_sp(%Pilot{} = pilot, sp_amount) when is_integer(sp_amount) and sp_amount > 0 do
-    update_pilot(pilot, %{sp_earned: pilot.sp_earned + sp_amount})
+    update_pilot(pilot, %{
+      sp_earned: pilot.sp_earned + sp_amount,
+      sp_available: pilot.sp_available + sp_amount
+    })
   end
 
   @doc """
-  Upgrade pilot skill level (spending SP)
+  Allocate pilot SP to skill, edge tokens, or edge abilities
   """
-  def upgrade_pilot_skill(%Pilot{} = pilot, target_level) when is_integer(target_level) do
-    cost = Pilot.calculate_skill_upgrade_cost(pilot.skill_level, target_level)
-    
-    case cost do
-      {:error, reason} ->
-        {:error, reason}
-      
-      valid_cost when is_integer(valid_cost) and valid_cost > 0 ->
-        if pilot.sp_earned >= valid_cost do
-          update_pilot(pilot, %{
-            skill_level: target_level,
-            sp_earned: pilot.sp_earned - valid_cost
-          })
-        else
-          {:error, :insufficient_sp}
-        end
-      
-      0 ->
-        {:error, :invalid_upgrade}
+  def allocate_pilot_sp(%Pilot{} = pilot, sp_amount, category) when category in [:skill, :edge_tokens, :edge_abilities] do
+    if pilot.sp_available >= sp_amount do
+      updated_pilot = Pilot.allocate_sp(pilot, sp_amount, category)
+      update_pilot(pilot, %{
+        sp_allocated_to_skill: updated_pilot.sp_allocated_to_skill,
+        sp_allocated_to_edge_tokens: updated_pilot.sp_allocated_to_edge_tokens,
+        sp_allocated_to_edge_abilities: updated_pilot.sp_allocated_to_edge_abilities,
+        sp_available: updated_pilot.sp_available,
+        skill_level: updated_pilot.skill_level,
+        edge_tokens: updated_pilot.edge_tokens
+      })
+    else
+      {:error, :insufficient_sp}
     end
   end
 
