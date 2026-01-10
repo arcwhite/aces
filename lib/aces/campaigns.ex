@@ -40,6 +40,17 @@ defmodule Aces.Campaigns do
   end
 
   @doc """
+  Lists all campaigns for given company IDs
+  """
+  def list_campaigns_by_company_ids(company_ids) when is_list(company_ids) do
+    Campaign
+    |> where([c], c.company_id in ^company_ids)
+    |> preload([:company, :sorties])
+    |> order_by([c], desc: c.updated_at)
+    |> Repo.all()
+  end
+
+  @doc """
   Creates a campaign for a company
   """
   def create_campaign(%Company{} = company, attrs \\ %{}) do

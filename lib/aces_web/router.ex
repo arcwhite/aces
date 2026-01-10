@@ -66,6 +66,7 @@ defmodule AcesWeb.Router do
     live "/companies/:id", CompanyLive.Show, :show
 
     # Campaign routes
+    live "/campaigns", CampaignLive.Index, :index
     live "/companies/:company_id/campaigns/new", CampaignLive.New, :new
     live "/companies/:company_id/campaigns/:id", CampaignLive.Show, :show
 
