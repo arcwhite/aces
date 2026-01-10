@@ -84,7 +84,7 @@ defmodule Aces.Companies.Sortie do
     |> cast(attrs, [:force_commander_id, :started_at])
     |> validate_required([:force_commander_id])
     |> put_change(:status, "in_progress")
-    |> put_change(:started_at, DateTime.utc_now())
+    |> put_change(:started_at, DateTime.truncate(DateTime.utc_now(), :second))
     |> foreign_key_constraint(:force_commander_id)
   end
 
@@ -102,7 +102,7 @@ defmodule Aces.Companies.Sortie do
     |> validate_number(:rearming_cost, greater_than_or_equal_to: 0)
     |> validate_number(:sp_per_participating_pilot, greater_than_or_equal_to: 0)
     |> put_completed_status()
-    |> put_change(:completed_at, DateTime.utc_now())
+    |> put_change(:completed_at, DateTime.truncate(DateTime.utc_now(), :second))
     |> calculate_totals()
     |> foreign_key_constraint(:mvp_pilot_id)
   end

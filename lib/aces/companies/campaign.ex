@@ -7,7 +7,7 @@ defmodule Aces.Companies.Campaign do
 
   alias Aces.Companies.{Company, Sortie, CampaignEvent, PilotCampaignStats}
 
-  @difficulty_levels ~w(rookie standard veteran elite)
+  @difficulty_levels ~w(rookie standard veteran elite legendary)
   @campaign_status ~w(active completed failed)
 
   schema "campaigns" do
@@ -50,7 +50,7 @@ defmodule Aces.Companies.Campaign do
     |> validate_inclusion(:difficulty_level, @difficulty_levels)
     |> validate_number(:warchest_balance, greater_than_or_equal_to: 0)
     |> put_change(:status, "active")
-    |> put_change(:started_at, DateTime.utc_now())
+    |> put_change(:started_at, DateTime.truncate(DateTime.utc_now(), :second))
     |> update_modifiers_based_on_difficulty()
     |> foreign_key_constraint(:company_id)
     |> unique_constraint([:company_id], name: :campaigns_company_active_unique, message: "Company can only have one active campaign")
@@ -83,6 +83,11 @@ defmodule Aces.Companies.Campaign do
 
       "elite" ->
         changeset
+        |> put_change(:pv_limit_modifier, 0.8)
+        |> put_change(:reward_modifier, 0.8)
+
+      "legendary" ->
+        changeset
         |> put_change(:pv_limit_modifier, 0.7)
         |> put_change(:reward_modifier, 0.7)
 
@@ -93,7 +98,7 @@ defmodule Aces.Companies.Campaign do
 
   defp maybe_set_started_at(changeset) do
     if get_change(changeset, :status) == "active" and get_field(changeset, :started_at) == nil do
-      put_change(changeset, :started_at, DateTime.utc_now())
+      put_change(changeset, :started_at, DateTime.truncate(DateTime.utc_now(), :second))
     else
       changeset
     end
@@ -103,7 +108,7 @@ defmodule Aces.Companies.Campaign do
     case get_change(changeset, :status) do
       status when status in ["completed", "failed"] ->
         if get_field(changeset, :completed_at) == nil do
-          put_change(changeset, :completed_at, DateTime.utc_now())
+          put_change(changeset, :completed_at, DateTime.truncate(DateTime.utc_now(), :second))
         else
           changeset
         end

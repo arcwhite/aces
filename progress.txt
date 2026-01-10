@@ -1,5 +1,13 @@
 # High-priority items
-- [ ] Think hard and plan data structures for Campaigns and Sorties and their events, reading @specs/CAMPAIGNS.md
+- [x] Think hard and plan data structures for Campaigns and Sorties and their events, reading @specs/CAMPAIGNS.md
+  - COMPLETED: Implemented comprehensive campaign and sortie data structures
+  - Created database migration with campaigns, sorties, deployments, campaign_events, and pilot_campaign_stats tables
+  - Added Campaign, Sortie, Deployment, CampaignEvent, and PilotCampaignStats Ecto schemas with proper validations
+  - Implemented Campaigns context with business logic for campaign/sortie management
+  - Includes post-battle processing, SP allocation, expense calculations, and event tracking
+  - Supports real-time damage tracking during sorties and multi-step post-battle workflow
+  - All existing tests passing, schemas ready for UI implementation
+  - Commit: 5a0b257
 - [ ] Implement any UI required for the player to start a Campaign
 - [ ] Implement any UI required for a player to start a Sortie
 - [ ] Implement any UI required for a player to log the outcome of their Sortie as they're playing it (e.g mark units as destroyed, crippled, damaged, the units crew as wounded/killed, etc.)

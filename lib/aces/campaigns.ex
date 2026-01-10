@@ -48,9 +48,9 @@ defmodule Aces.Campaigns do
 
     attrs_with_company = 
       attrs
-      |> Map.put(:company_id, company.id)
-      |> Map.put(:experience_modifier, experience_modifier)
-      |> Map.put(:warchest_balance, company.warchest_balance)
+      |> Map.put("company_id", company.id)
+      |> Map.put("experience_modifier", experience_modifier)
+      |> Map.put_new("warchest_balance", company.warchest_balance)
 
     Ecto.Multi.new()
     |> Ecto.Multi.insert(:campaign, Campaign.creation_changeset(%Campaign{}, attrs_with_company))
@@ -274,8 +274,8 @@ defmodule Aces.Campaigns do
         %{
           pilot_id: pilot.id,
           campaign_id: campaign.id,
-          inserted_at: DateTime.utc_now(),
-          updated_at: DateTime.utc_now()
+          inserted_at: DateTime.truncate(DateTime.utc_now(), :second),
+          updated_at: DateTime.truncate(DateTime.utc_now(), :second)
         }
       end)
     
@@ -291,8 +291,8 @@ defmodule Aces.Campaigns do
         %{
           pilot_id: pilot_id,
           campaign_id: campaign.id,
-          inserted_at: DateTime.utc_now(),
-          updated_at: DateTime.utc_now()
+          inserted_at: DateTime.truncate(DateTime.utc_now(), :second),
+          updated_at: DateTime.truncate(DateTime.utc_now(), :second)
         }
       end)
     

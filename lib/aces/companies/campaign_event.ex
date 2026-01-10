@@ -40,7 +40,7 @@ defmodule Aces.Companies.CampaignEvent do
     |> cast(attrs, [:campaign_id, :event_type, :event_data, :description])
     |> validate_required([:campaign_id, :event_type, :description])
     |> validate_inclusion(:event_type, @event_types)
-    |> put_change(:occurred_at, DateTime.utc_now())
+    |> put_change(:occurred_at, DateTime.truncate(DateTime.utc_now(), :second))
     |> foreign_key_constraint(:campaign_id)
   end
 

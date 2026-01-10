@@ -1,7 +1,7 @@
 defmodule AcesWeb.CompanyLive.Show do
   use AcesWeb, :live_view
 
-  alias Aces.Companies
+  alias Aces.{Companies, Campaigns}
   alias Aces.Companies.Authorization
   alias Aces.Units
 
@@ -24,9 +24,12 @@ defmodule AcesWeb.CompanyLive.Show do
          |> put_flash(:info, "This company is still in draft status. Complete setup to activate it.")
          |> redirect(to: ~p"/companies/#{company}/draft")}
       else
+        active_campaign = Campaigns.get_active_campaign(company)
+        
         {:ok,
          socket
          |> assign(:company, company)
+         |> assign(:active_campaign, active_campaign)
          |> assign(:page_title, company.name)
          |> assign(:show_unit_search, false)
          |> assign(:unit_search_term, "")
@@ -400,6 +403,89 @@ defmodule AcesWeb.CompanyLive.Show do
                 </div>
               </div>
             <% end %>
+          </div>
+        <% end %>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Active Campaign Section -->
+      <div class="mb-8">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-2xl font-bold">Active Campaign</h2>
+          <%= if @active_campaign do %>
+            <.link 
+              navigate={~p"/companies/#{@company.id}/campaigns/#{@active_campaign.id}"}
+              class="btn btn-primary"
+            >
+              View Campaign Details
+            </.link>
+          <% else %>
+            <%= if @company.status == "active" do %>
+              <.link 
+                navigate={~p"/companies/#{@company.id}/campaigns/new"}
+                class="btn btn-primary"
+              >
+                Start New Campaign
+              </.link>
+            <% end %>
+          <% end %>
+        </div>
+
+        <%= if @active_campaign do %>
+          <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+              <h3 class="card-title">{@active_campaign.name}</h3>
+              <%= if @active_campaign.description do %>
+                <p class="opacity-70">{@active_campaign.description}</p>
+              <% end %>
+              
+              <div class="grid gap-4 md:grid-cols-4 mt-4">
+                <div class="stat bg-base-200 rounded-lg">
+                  <div class="stat-title text-xs">Difficulty</div>
+                  <div class="stat-value text-lg">{String.capitalize(@active_campaign.difficulty_level)}</div>
+                </div>
+                
+                <div class="stat bg-base-200 rounded-lg">
+                  <div class="stat-title text-xs">Warchest</div>
+                  <div class="stat-value text-lg text-secondary">{@active_campaign.warchest_balance} SP</div>
+                </div>
+                
+                <div class="stat bg-base-200 rounded-lg">
+                  <div class="stat-title text-xs">Sorties</div>
+                  <div class="stat-value text-lg text-info">{length(@active_campaign.sorties)}</div>
+                </div>
+                
+                <div class="stat bg-base-200 rounded-lg">
+                  <div class="stat-title text-xs">Status</div>
+                  <div class="stat-value text-lg">
+                    <div class="badge badge-success">{String.capitalize(@active_campaign.status)}</div>
+                  </div>
+                </div>
+              </div>
+              
+              <%= if @active_campaign.keywords && length(@active_campaign.keywords) > 0 do %>
+                <div class="flex gap-2 flex-wrap mt-4">
+                  <%= for keyword <- @active_campaign.keywords do %>
+                    <div class="badge badge-outline badge-sm">{keyword}</div>
+                  <% end %>
+                </div>
+              <% end %>
+            </div>
+          </div>
+        <% else %>
+          <div class="alert alert-info">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <span>
+              No active campaign. 
+              <%= if @company.status == "active" do %>
+                Start a new campaign to begin deploying your company on missions!
+              <% else %>
+                Complete company setup to start campaigns.
+              <% end %>
+            </span>
           </div>
         <% end %>
       </div>
