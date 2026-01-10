@@ -48,6 +48,29 @@ defmodule Aces.Companies.Pilot do
 
   @starting_sp 150
 
+  # Available edge abilities for pilots
+  @available_edge_abilities [
+    "Accurate",
+    "Assassin",
+    "Cluster Fighter",
+    "Dodge",
+    "Evasive",
+    "Fast Climb",
+    "Gunnery",
+    "Jumper",
+    "Marksman",
+    "Multi-Target",
+    "Overrun",
+    "Predator",
+    "Recon",
+    "Sharpshooter",
+    "Steady",
+    "Sure Shot",
+    "Tactician",
+    "Tough",
+    "Weapon Specialist"
+  ]
+
   schema "pilots" do
     field :name, :string
     field :callsign, :string
@@ -77,10 +100,11 @@ defmodule Aces.Companies.Pilot do
   def changeset(pilot, attrs) do
     pilot
     |> cast(attrs, [:name, :callsign, :description, :portrait_url, :skill_level, 
-                    :edge_tokens, :edge_abilities, :status, :wounds, :sp_earned, 
+                    :edge_tokens, :status, :wounds, :sp_earned, 
                     :mvp_awards, :sorties_participated, :company_id,
                     :sp_allocated_to_skill, :sp_allocated_to_edge_tokens, 
                     :sp_allocated_to_edge_abilities, :sp_available])
+    |> cast_edge_abilities_manually(attrs)
     |> validate_required([:name, :company_id])
     |> update_change(:name, &String.trim/1)
     |> update_change(:callsign, fn val -> if val, do: String.trim(val), else: val end)
@@ -92,12 +116,11 @@ defmodule Aces.Companies.Pilot do
     |> validate_number(:sp_earned, greater_than_or_equal_to: 0)
     |> validate_number(:mvp_awards, greater_than_or_equal_to: 0)
     |> validate_number(:sorties_participated, greater_than_or_equal_to: 0)
-    |> validate_number(:sp_allocated_to_skill, greater_than_or_equal_to: 0)
-    |> validate_number(:sp_allocated_to_edge_tokens, greater_than_or_equal_to: 0)
-    |> validate_number(:sp_allocated_to_edge_abilities, greater_than_or_equal_to: 0)
+    |> validate_sp_allocation_limits()
     |> validate_number(:sp_available, greater_than_or_equal_to: 0)
     |> validate_length(:name, min: 1, max: 100)
     |> validate_length(:callsign, max: 50)
+    |> validate_edge_abilities()
     |> validate_portrait_url()
     |> validate_sp_allocation_consistency()
     |> unique_constraint([:company_id, :callsign], 
@@ -138,7 +161,7 @@ defmodule Aces.Companies.Pilot do
   def calculate_skill_from_sp(sp_allocated) do
     @skill_progression_costs
     |> Enum.filter(fn {_level, required_sp} -> sp_allocated >= required_sp end)
-    |> Enum.min_by(fn {_level, sp} -> sp end, fn -> {@default_skill_level, 0} end)
+    |> Enum.max_by(fn {_level, sp} -> sp end, fn -> {@default_skill_level, 0} end)
     |> elem(0)
   end
 
@@ -180,6 +203,13 @@ defmodule Aces.Companies.Pilot do
   """
   def edge_abilities_sp_required(ability_count) do
     Map.get(@edge_ability_costs, ability_count, {:error, :invalid_ability_count})
+  end
+
+  @doc """
+  Get list of available edge abilities
+  """
+  def available_edge_abilities do
+    @available_edge_abilities
   end
 
   @doc """
@@ -247,6 +277,63 @@ defmodule Aces.Companies.Pilot do
   end
 
   # Private helper functions
+  defp cast_edge_abilities_manually(changeset, attrs) do
+    case Map.get(attrs, :edge_abilities) || Map.get(attrs, "edge_abilities") do
+      nil -> changeset
+      abilities when is_list(abilities) -> 
+        put_change(changeset, :edge_abilities, abilities)
+      json_string when is_binary(json_string) ->
+        case Jason.decode(json_string) do
+          {:ok, abilities} when is_list(abilities) ->
+            put_change(changeset, :edge_abilities, abilities)
+          _ ->
+            add_error(changeset, :edge_abilities, "invalid JSON format")
+        end
+      _ ->
+        add_error(changeset, :edge_abilities, "must be a list or JSON string")
+    end
+  end
+
+  defp validate_sp_allocation_limits(changeset) do
+    changeset
+    |> validate_number(:sp_allocated_to_skill, greater_than_or_equal_to: 0)
+    |> validate_number(:sp_allocated_to_edge_tokens, greater_than_or_equal_to: 0)
+    |> validate_number(:sp_allocated_to_edge_abilities, greater_than_or_equal_to: 0)
+    |> validate_individual_sp_limit(:sp_allocated_to_skill)
+    |> validate_individual_sp_limit(:sp_allocated_to_edge_tokens)
+    |> validate_individual_sp_limit(:sp_allocated_to_edge_abilities)
+    |> validate_total_sp_allocation()
+  end
+
+  defp validate_individual_sp_limit(changeset, field) do
+    validate_change(changeset, field, fn ^field, sp_value ->
+      sp_earned = get_field(changeset, :sp_earned) || 0
+      max_sp = @starting_sp + sp_earned
+      
+      if sp_value > max_sp do
+        [{field, "cannot exceed total available SP (#{max_sp})"}]
+      else
+        []
+      end
+    end)
+  end
+
+  defp validate_total_sp_allocation(changeset) do
+    skill_sp = get_field(changeset, :sp_allocated_to_skill) || 0
+    tokens_sp = get_field(changeset, :sp_allocated_to_edge_tokens) || 0
+    abilities_sp = get_field(changeset, :sp_allocated_to_edge_abilities) || 0
+    sp_earned = get_field(changeset, :sp_earned) || 0
+    
+    total_allocated = skill_sp + tokens_sp + abilities_sp
+    total_available = @starting_sp + sp_earned
+    
+    if total_allocated > total_available do
+      add_error(changeset, :base, "Total SP allocation (#{total_allocated}) exceeds available SP (#{total_available})")
+    else
+      changeset
+    end
+  end
+
   defp validate_sp_allocation_consistency(changeset) do
     changeset
     |> validate_change(:sp_available, fn :sp_available, sp_available ->
@@ -287,6 +374,32 @@ defmodule Aces.Companies.Pilot do
         [edge_tokens: "Edge tokens don't match allocated SP"]
       else
         []
+      end
+    end)
+  end
+
+
+  defp validate_edge_abilities(changeset) do
+    changeset
+    |> validate_change(:edge_abilities, fn :edge_abilities, abilities ->
+      cond do
+        !is_list(abilities) ->
+          [edge_abilities: "must be a list"]
+        
+        # Check if all abilities are valid
+        true ->
+          invalid_abilities = Enum.reject(abilities, fn ability -> ability in @available_edge_abilities end)
+          cond do
+            length(invalid_abilities) > 0 ->
+              [edge_abilities: "contains invalid abilities: #{Enum.join(invalid_abilities, ", ")}"]
+
+            # Check if abilities count matches allocated SP
+            length(abilities) > calculate_edge_abilities_from_sp(get_field(changeset, :sp_allocated_to_edge_abilities) || 0) ->
+              [edge_abilities: "too many abilities selected for allocated SP"]
+
+            true ->
+              []
+          end
       end
     end)
   end

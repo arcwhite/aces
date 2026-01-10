@@ -281,24 +281,12 @@ cost_sp = master_unit.point_value * 40
 ```
 
 ### Repair Cost Calculation
-```elixir
-size_multiplier = case unit.unit_type do
-  :battlemech -> unit.tonnage / 10
-  :combat_vehicle -> unit.tonnage / 20
-  :battle_armor -> 1
-  :infantry -> 1
-end
+If a unit was Destroyed it requires SP equal to its Size * 100 to repair.
+If a unit was crippled it costs Size * 60 SP to repair.
+If a unit has any other amount of internal structure damage or critical hits: Size * 40 SP.
+If a unit only has armour damage, Size * 20 SP to repair.
 
-base_cost = case deployment.damage_status do
-  :destroyed -> 100
-  :crippled -> 60
-  :structure_damage -> 40
-  :armor_only -> 20
-  :none -> 0
-end
-
-total_cost_sp = round(base_cost * size_multiplier)
-```
+Combst Vehicles, Battle Armour, and Conventional Infantry count as half their size for the purposes of repair costs (e.g. divide their Size by 2 first, and do not round off! Repairing a crippled size 3 tank costs 1.5 * 60 SP)
 
 ### Sortie Earnings
 ```elixir

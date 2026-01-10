@@ -358,7 +358,7 @@ defmodule Aces.Companies do
           pilots_attrs
           |> Enum.with_index()
           |> Enum.map(fn {attrs, index} ->
-            changeset = Pilot.creation_changeset(%Pilot{}, Map.put(attrs, "company_id", company.id))
+            changeset = Pilot.changeset(%Pilot{}, Map.put(attrs, :company_id, company.id))
             {:"pilot_#{index}", changeset}
           end)
 
@@ -439,7 +439,7 @@ defmodule Aces.Companies do
     
     if company.warchest_balance >= hiring_cost do
       Ecto.Multi.new()
-      |> Ecto.Multi.insert(:pilot, Pilot.changeset(%Pilot{}, Map.put(attrs, "company_id", company.id)))
+      |> Ecto.Multi.insert(:pilot, Pilot.changeset(%Pilot{}, Map.put(attrs, :company_id, company.id)))
       |> Ecto.Multi.update(:company, Company.changeset(company, %{warchest_balance: company.warchest_balance - hiring_cost}))
       |> Repo.transaction()
       |> case do

@@ -25,11 +25,43 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/aces"
 import topbar from "../vendor/topbar"
 
+// Custom hooks for form validation
+const Hooks = {}
+
+Hooks.ValidateSP = {
+  mounted() {
+    const input = this.el
+    const maxSP = parseInt(input.dataset.maxSp)
+    
+    const validateInput = () => {
+      const value = parseInt(input.value) || 0
+      // Only set browser validation state, let LiveView handle CSS classes
+      if (value > maxSP) {
+        input.setCustomValidity(`Cannot exceed ${maxSP} SP`)
+      } else {
+        input.setCustomValidity("")
+      }
+    }
+    
+    const validateAndSync = () => {
+      validateInput()
+      // Only trigger Phoenix change event on blur, not on every change
+      input.dispatchEvent(new Event("change", { bubbles: true }))
+    }
+    
+    // Validate on change (covers spinner buttons) - no Phoenix sync
+    input.addEventListener("change", validateInput)
+    
+    // Validate and sync on blur (focus lost) - with Phoenix sync
+    input.addEventListener("blur", validateAndSync)
+  }
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks},
+  hooks: {...colocatedHooks, ...Hooks},
 })
 
 // Show progress bar on live navigation and form submits
