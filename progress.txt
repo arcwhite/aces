@@ -1,15 +1,19 @@
 # High-priority items
-- [ ] Implement Campaigns
-- [ ] Implement Detachments, which is taking a subset of a Company and using them in a Campaign (based on some PV limit, typically this will be the whole company, but the player may need to choose a subset if they play multiple campaigns)
-- [ ] Plan timelines and event handling, we should record events when users do things, so that we can show a full log of activities that have occurred on and around their company
+- [ ] Think hard and plan data structures for Campaigns and Sorties and their events, reading @specs/CAMPAIGNS.md
+- [ ] Implement any UI required for the player to start a Campaign
+- [ ] Implement any UI required for a player to start a Sortie
+- [ ] Implement any UI required for a player to log the outcome of their Sortie as they're playing it (e.g mark units as destroyed, crippled, damaged, the units crew as wounded/killed, etc.)
+- [ ] Implement UI to finish a Sortie
+- [ ] Add UI to show timelines of events on a Campaign, including Sortie outcomes, unit purchases, new pilots hired, units sold, etc.
 
 # Medium-priority items
-- [ ] All units have a skill rating. If a named pilot is assigned to a unit, it's skill rating is equal to the pilot's. Otherwise it's 4.
 - [ ] Figure out how to compute code coverage
 
 # Low-priority items
 
 # Completed Items
+- [x] All units have a skill rating. If a named pilot is assigned to a unit, it's skill rating is equal to the pilot's. Otherwise it's 4.
+
 - [x] Pilot skill progression is not right, it should be brought into line with the Skill Progression section of the PLAN.md file
   - COMPLETED: Fixed pilot skill progression to match PLAN.md requirements
   - Updated skill level range to 0-4 (Alpha Strike rules: lower is better)
