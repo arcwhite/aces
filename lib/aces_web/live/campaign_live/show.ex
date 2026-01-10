@@ -237,12 +237,7 @@ defmodule AcesWeb.CampaignLive.Show do
                       <% end %>
                     </td>
                     <td>
-                      <.link 
-                        navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{sortie.id}"}
-                        class="btn btn-ghost btn-xs"
-                      >
-                        View
-                      </.link>
+                      <span class="text-sm opacity-70">View coming soon</span>
                     </td>
                   </tr>
                 <% end %>

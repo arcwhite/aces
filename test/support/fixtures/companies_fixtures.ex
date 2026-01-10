@@ -124,4 +124,24 @@ defmodule Aces.CompaniesFixtures do
 
     pilot
   end
+
+  def unique_campaign_name, do: "Campaign #{System.unique_integer()}"
+
+  def valid_campaign_attributes(attrs \\ %{}) do
+    Enum.into(attrs, %{
+      "name" => unique_campaign_name(),
+      "description" => "A test campaign", 
+      "difficulty_level" => "standard",
+      "warchest_balance" => 5000
+    })
+  end
+
+  def campaign_fixture(company, attrs \\ %{}) do
+    {:ok, campaign} =
+      attrs
+      |> valid_campaign_attributes()
+      |> (&Aces.Campaigns.create_campaign(company, &1)).()
+
+    campaign
+  end
 end

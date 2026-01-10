@@ -130,12 +130,9 @@ defmodule Aces.Campaigns do
   Creates a sortie for a campaign
   """
   def create_sortie(%Campaign{} = campaign, attrs \\ %{}) do
-    next_mission_number = get_next_mission_number(campaign)
-    
     attrs_with_campaign = 
       attrs
-      |> Map.put(:campaign_id, campaign.id)
-      |> Map.put(:mission_number, next_mission_number)
+      |> Map.put("campaign_id", campaign.id)
 
     %Sortie{}
     |> Sortie.creation_changeset(attrs_with_campaign)
@@ -230,13 +227,6 @@ defmodule Aces.Campaigns do
   end
 
   ## Helper Functions
-
-  defp get_next_mission_number(%Campaign{id: campaign_id}) do
-    case Repo.one(from(s in Sortie, where: s.campaign_id == ^campaign_id, select: max(s.mission_number))) do
-      nil -> 1
-      max_number -> max_number + 1
-    end
-  end
 
   defp has_required_deployments?(%Sortie{deployments: deployments}) do
     length(deployments) > 0 and

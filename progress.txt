@@ -1,3 +1,12 @@
+# Reminders
+
+- Always add adequate test coverage for new code you write
+- This should include tests for Phoenix LiveViews, to assert that forms are working as expected
+- When adding significant amounts of code, invoke the elixir-expert agent to check over it
+- If you have any feedback or suggestions for subsequent runs of this script, add them to 'Learnings'. Aim to improve this process by noting any significant causes of failure or things that could be done better.
+
+# Learnings
+
 # High-priority items
 - [x] Think hard and plan data structures for Campaigns and Sorties and their events, reading @specs/CAMPAIGNS.md
   - COMPLETED: Implemented comprehensive campaign and sortie data structures
@@ -8,7 +17,18 @@
   - Supports real-time damage tracking during sorties and multi-step post-battle workflow
   - All existing tests passing, schemas ready for UI implementation
   - Commit: 5a0b257
-- [ ] Implement any UI required for the player to start a Campaign
+- [x] Implement any UI required for the player to start a Campaign
+  - COMPLETED: Implemented comprehensive campaign creation and management UI
+  - Created CampaignLive.New with form for campaign name, description, difficulty, and starting warchest
+  - Created CampaignLive.Show with campaign overview, sortie history, and pilot performance stats
+  - Added active campaign section to company show page with quick access
+  - Added campaign routes: /companies/:company_id/campaigns/new and /companies/:company_id/campaigns/:id
+  - Updated difficulty levels to include Legendary with proper modifiers
+  - Fixed datetime microseconds compatibility issues throughout campaign/sortie schemas
+  - Removed keywords from creation form (keywords are gained from sorties, not set at creation)
+  - Integrated with existing Campaigns context and business logic
+  - All compilation warnings resolved except for future sortie routes
+  - Commit: 9f3f133
 - [ ] Implement any UI required for a player to start a Sortie
 - [ ] Implement any UI required for a player to log the outcome of their Sortie as they're playing it (e.g mark units as destroyed, crippled, damaged, the units crew as wounded/killed, etc.)
 - [ ] Implement UI to finish a Sortie

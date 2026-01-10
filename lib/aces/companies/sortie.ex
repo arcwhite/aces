@@ -10,13 +10,14 @@ defmodule Aces.Companies.Sortie do
   @sortie_status ~w(setup in_progress success failed completed)
 
   schema "sorties" do
-    field :mission_number, :integer
+    field :mission_number, :string
     field :name, :string
     field :description, :string
     field :pv_limit, :integer
     field :status, :string, default: "setup"
 
     # Recon options
+    field :recon_notes, :string
     field :recon_options, {:array, :map}, default: []
     field :recon_total_cost, :integer, default: 0
 
@@ -49,7 +50,7 @@ defmodule Aces.Companies.Sortie do
     sortie
     |> cast(attrs, [
       :name, :description, :pv_limit, :status, :force_commander_id,
-      :recon_options, :recon_total_cost, :was_successful,
+      :recon_notes, :recon_options, :recon_total_cost, :was_successful,
       :primary_objective_income, :secondary_objectives_income, :waypoints_income,
       :rearming_cost, :total_income, :total_expenses, :net_earnings,
       :sp_per_participating_pilot, :keywords_gained, :mvp_pilot_id,
@@ -68,10 +69,11 @@ defmodule Aces.Companies.Sortie do
 
   def creation_changeset(sortie, attrs) do
     sortie
-    |> cast(attrs, [:campaign_id, :mission_number, :name, :description, :pv_limit, :force_commander_id, :recon_options])
+    |> cast(attrs, [:campaign_id, :mission_number, :name, :description, :pv_limit, :force_commander_id, :recon_notes, :recon_options, :recon_total_cost])
     |> validate_required([:campaign_id, :mission_number, :name, :pv_limit])
-    |> validate_number(:mission_number, greater_than: 0)
+    |> validate_format(:mission_number, ~r/^[0-9]+[A-Z]?$/, message: "must be a number, optionally followed by a letter (e.g., 1, 2A, 3B)")
     |> validate_number(:pv_limit, greater_than: 0)
+    |> validate_number(:recon_total_cost, greater_than_or_equal_to: 0)
     |> put_change(:status, "setup")
     |> maybe_calculate_recon_total_cost()
     |> unique_constraint([:campaign_id, :mission_number])
@@ -114,8 +116,9 @@ defmodule Aces.Companies.Sortie do
   end
 
   defp maybe_calculate_recon_total_cost(changeset) do
-    case get_change(changeset, :recon_options) do
-      recon_options when is_list(recon_options) ->
+    # Only auto-calculate if recon_total_cost was not explicitly provided
+    case {get_change(changeset, :recon_total_cost), get_change(changeset, :recon_options)} do
+      {nil, recon_options} when is_list(recon_options) ->
         total_cost = 
           recon_options
           |> Enum.map(&Map.get(&1, "cost_sp", 0))
