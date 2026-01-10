@@ -7,6 +7,7 @@ defmodule Aces.Companies.Pilot do
   import Ecto.Changeset
 
   alias Aces.Companies.Company
+  alias Aces.Companies.CompanyUnit
 
   @status_values ~w(active wounded deceased)
   @max_skill_level 4
@@ -92,6 +93,7 @@ defmodule Aces.Companies.Pilot do
     field :sp_available, :integer, default: 150  # 150 starting SP
 
     belongs_to :company, Company
+    has_one :assigned_unit, CompanyUnit
 
     timestamps(type: :utc_datetime)
   end

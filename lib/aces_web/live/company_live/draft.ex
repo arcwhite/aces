@@ -35,7 +35,9 @@ defmodule AcesWeb.CompanyLive.Draft do
          |> assign(:search_loading, false)
          |> assign(:unit_add_error, nil)
          |> assign(:show_pilot_form, false)
-         |> assign(:pilot_form_action, :new)}
+         |> assign(:pilot_form_action, :new)
+         |> assign(:show_unit_edit, false)
+         |> assign(:editing_unit, nil)}
       end
     end
   end
@@ -125,6 +127,29 @@ defmodule AcesWeb.CompanyLive.Draft do
 
   def handle_event("close_pilot_form", _params, socket) do
     {:noreply, assign(socket, :show_pilot_form, false)}
+  end
+
+  def handle_event("edit_unit", %{"unit_id" => unit_id_str}, socket) do
+    unit_id = String.to_integer(unit_id_str)
+    company = socket.assigns.company
+    
+    case Enum.find(company.company_units, &(&1.id == unit_id)) do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Unit not found")}
+      
+      unit ->
+        {:noreply, 
+         socket
+         |> assign(:show_unit_edit, true)
+         |> assign(:editing_unit, unit)}
+    end
+  end
+
+  def handle_event("close_unit_edit", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_unit_edit, false)
+     |> assign(:editing_unit, nil)}
   end
 
   def handle_event("remove_unit", %{"unit_id" => unit_id_str}, socket) do
@@ -229,6 +254,16 @@ defmodule AcesWeb.CompanyLive.Draft do
      socket
      |> assign(:company, updated_company)
      |> assign(:show_pilot_form, false)}
+  end
+
+  def handle_info({AcesWeb.CompanyLive.UnitEditComponent, {:saved, _unit}}, socket) do
+    updated_company = Companies.get_company_with_stats!(socket.assigns.company.id)
+    
+    {:noreply,
+     socket
+     |> assign(:company, updated_company)
+     |> assign(:show_unit_edit, false)
+     |> assign(:editing_unit, nil)}
   end
 
   def handle_info({:perform_search, search_term}, socket) do
@@ -388,6 +423,16 @@ defmodule AcesWeb.CompanyLive.Draft do
                     <div class="badge badge-secondary">Edge {pilot.edge_tokens}</div>
                     <div class="badge badge-success">{String.capitalize(pilot.status)}</div>
                   </div>
+
+                  <div class="mt-2 text-sm opacity-70">
+                    <%= if pilot.assigned_unit do %>
+                      <div class="text-info">
+                        Assigned: {Aces.Units.MasterUnit.display_name(pilot.assigned_unit.master_unit)}
+                      </div>
+                    <% else %>
+                      <div class="text-gray-500">Unassigned</div>
+                    <% end %>
+                  </div>
                   
                   <div class="card-actions justify-end">
                     <button 
@@ -443,10 +488,14 @@ defmodule AcesWeb.CompanyLive.Draft do
             <table class="table table-zebra w-full">
               <thead>
                 <tr>
-                  <th>Unit Name</th>
-                  <th>Type</th>
+                  <th>Unit Details</th>
+                  <th>Custom Name</th>
+                  <th>Status</th>
+                  <th>Pilot</th>
+                  <th>Skill</th>
                   <th>Cost (SP)</th>
-                  <th>PV</th>
+                  <th class="hidden lg:table-cell">Armor/Structure</th>
+                  <th class="hidden lg:table-cell">Damage (S/M/L)</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -455,19 +504,68 @@ defmodule AcesWeb.CompanyLive.Draft do
                   <tr>
                     <td>
                       <%= if unit.master_unit do %>
-                        {unit.master_unit.name} {unit.master_unit.variant}
+                        <div class="font-semibold">{Aces.Units.MasterUnit.display_name(unit.master_unit)}</div>
+                        <div class="flex gap-1 mt-1">
+                          <div class="badge badge-outline badge-sm">
+                            {String.replace(unit.master_unit.unit_type, "_", " ") |> String.capitalize()}
+                          </div>
+                          <%= if unit.master_unit.tonnage do %>
+                            <div class="badge badge-neutral badge-sm">{unit.master_unit.tonnage}t</div>
+                          <% end %>
+                          <%= if unit.master_unit.point_value do %>
+                            <div class="badge badge-accent badge-sm">{unit.master_unit.point_value} PV</div>
+                          <% end %>
+                        </div>
                       <% else %>
-                        Unknown Unit
+                        <div class="font-semibold text-gray-500">Unknown Unit</div>
+                      <% end %>
+                    </td>
+                    <td>{unit.custom_name || "-"}</td>
+                    <td>
+                      <div class={[
+                        "badge",
+                        unit.status == "operational" && "badge-success",
+                        unit.status == "damaged" && "badge-warning",
+                        unit.status == "destroyed" && "badge-error"
+                      ]}>
+                        {unit.status}
+                      </div>
+                    </td>
+                    <td>
+                      <%= if unit.pilot do %>
+                        <span class="text-sm">{unit.pilot.name}</span>
+                      <% else %>
+                        <span class="text-gray-500 text-sm">Unassigned</span>
                       <% end %>
                     </td>
                     <td>
                       <div class="badge badge-outline">
-                        {if unit.master_unit, do: unit.master_unit.unit_type, else: "N/A"}
+                        Skill {Aces.Companies.CompanyUnit.effective_skill_level(unit)}
                       </div>
                     </td>
                     <td>{unit.purchase_cost_sp} SP</td>
-                    <td>{unit.master_unit.point_value}</td>
+                    <td class="hidden lg:table-cell">
+                      <%= if unit.master_unit && unit.master_unit.bf_armor && unit.master_unit.bf_structure do %>
+                        <span class="text-sm">{unit.master_unit.bf_armor}/{unit.master_unit.bf_structure}</span>
+                      <% else %>
+                        -
+                      <% end %>
+                    </td>
+                    <td class="hidden lg:table-cell">
+                      <%= if unit.master_unit && unit.master_unit.bf_damage_short && unit.master_unit.bf_damage_medium && unit.master_unit.bf_damage_long do %>
+                        <span class="text-xs font-mono">{unit.master_unit.bf_damage_short}/{unit.master_unit.bf_damage_medium}/{unit.master_unit.bf_damage_long}</span>
+                      <% else %>
+                        -
+                      <% end %>
+                    </td>
                     <td>
+                      <button 
+                        class="btn btn-ghost btn-xs"
+                        phx-click="edit_unit"
+                        phx-value-unit_id={unit.id}
+                      >
+                        Edit
+                      </button>
                       <button 
                         class="btn btn-ghost btn-xs text-error"
                         phx-click="remove_unit"
@@ -666,6 +764,33 @@ defmodule AcesWeb.CompanyLive.Draft do
               title="Add New Pilot"
               action={@pilot_form_action}
               pilot={%Aces.Companies.Pilot{}}
+              company={@company}
+              patch={~p"/companies/#{@company}/draft"}
+            />
+          </div>
+        </div>
+      <% end %>
+
+      <!-- Unit Edit Modal -->
+      <%= if @show_unit_edit && @editing_unit do %>
+        <div class="modal modal-open">
+          <div class="modal-box w-11/12 max-w-2xl">
+            <div class="flex justify-between items-center mb-4">
+              <h3 class="font-bold text-lg">Edit Unit</h3>
+              <button
+                type="button"
+                phx-click="close_unit_edit"
+                class="btn btn-sm btn-circle btn-ghost"
+              >
+                ✕
+              </button>
+            </div>
+
+            <.live_component
+              module={AcesWeb.CompanyLive.UnitEditComponent}
+              id={:edit_unit}
+              action={:edit_unit}
+              unit={@editing_unit}
               company={@company}
               patch={~p"/companies/#{@company}/draft"}
             />

@@ -6,6 +6,7 @@ defmodule Aces.Companies.CompanyUnit do
   import Ecto.Changeset
 
   alias Aces.Companies.Company
+  alias Aces.Companies.Pilot
   alias Aces.Units.MasterUnit
 
   defmodule ValidationErrors do
@@ -48,6 +49,7 @@ defmodule Aces.Companies.CompanyUnit do
 
     belongs_to :company, Company
     belongs_to :master_unit, MasterUnit
+    belongs_to :pilot, Pilot
 
     timestamps(type: :utc_datetime)
   end
@@ -55,12 +57,13 @@ defmodule Aces.Companies.CompanyUnit do
   @doc false
   def changeset(company_unit, attrs) do
     company_unit
-    |> cast(attrs, [:company_id, :master_unit_id, :custom_name, :status, :purchase_cost_sp])
+    |> cast(attrs, [:company_id, :master_unit_id, :custom_name, :status, :purchase_cost_sp, :pilot_id])
     |> validate_required([:company_id, :master_unit_id])
     |> validate_inclusion(:status, @valid_statuses)
     |> validate_number(:purchase_cost_sp, greater_than_or_equal_to: 0)
     |> foreign_key_constraint(:company_id)
     |> foreign_key_constraint(:master_unit_id)
+    |> foreign_key_constraint(:pilot_id)
   end
 
   @doc """
@@ -244,4 +247,13 @@ defmodule Aces.Companies.CompanyUnit do
   Returns the list of valid statuses
   """
   def valid_statuses, do: @valid_statuses
+
+  @doc """
+  Returns the effective skill level for a unit.
+  If a pilot is assigned, returns the pilot's skill level.
+  If no pilot is assigned, returns default skill level of 4.
+  """
+  def effective_skill_level(%__MODULE__{pilot: %Pilot{skill_level: skill_level}}), do: skill_level
+  def effective_skill_level(%__MODULE__{pilot: nil}), do: 4
+  def effective_skill_level(%__MODULE__{pilot: _not_loaded}), do: 4
 end

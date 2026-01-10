@@ -69,8 +69,9 @@ defmodule Aces.Companies do
   """
   def get_company!(id) do
     Company
-    |> preload([:memberships, :pilots, :company_units, company_units: :master_unit])
+    |> preload([:memberships, company_units: [:master_unit, :pilot], pilots: [assigned_unit: :master_unit]])
     |> Repo.get!(id)
+    |> sort_company_units()
   end
 
   @doc """
@@ -285,6 +286,13 @@ defmodule Aces.Companies do
   end
 
   @doc """
+  Returns an `%Ecto.Changeset{}` for tracking company unit changes.
+  """
+  def change_company_unit(%CompanyUnit{} = company_unit, attrs \\ %{}) do
+    CompanyUnit.changeset(company_unit, attrs)
+  end
+
+  @doc """
   Updates a company unit
   """
   def update_company_unit(%CompanyUnit{} = company_unit, attrs) do
@@ -327,6 +335,20 @@ defmodule Aces.Companies do
         last_modified: company.updated_at
       }
     })
+  end
+
+  defp sort_company_units(%Company{company_units: units} = company) do
+    sorted_units = 
+      units
+      |> Enum.sort_by(fn unit ->
+        if unit.master_unit do
+          {unit.master_unit.unit_type, unit.master_unit.point_value || 0}
+        else
+          {"", 0}
+        end
+      end)
+    
+    %{company | company_units: sorted_units}
   end
 
   ## Pilot Management
