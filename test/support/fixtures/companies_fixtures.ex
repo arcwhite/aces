@@ -88,7 +88,7 @@ defmodule Aces.CompaniesFixtures do
       })
 
     # Reload to get the master_unit association
-    Aces.Repo.preload(company_unit, :master_unit, force: true)
+    Aces.Repo.preload(company_unit, [:master_unit, :company], force: true)
   end
 
   def valid_pilot_attributes(attrs \\ %{}) do
@@ -143,5 +143,83 @@ defmodule Aces.CompaniesFixtures do
       |> (&Aces.Campaigns.create_campaign(company, &1)).()
 
     campaign
+  end
+
+  def unique_mission_number, do: "#{System.unique_integer([:positive])}"
+
+  def valid_sortie_attributes(attrs \\ %{}) do
+    Enum.into(attrs, %{
+      "mission_number" => unique_mission_number(),
+      "name" => "Test Mission",
+      "description" => "A test sortie",
+      "pv_limit" => 200,
+      "status" => "setup"
+    })
+  end
+
+  def sortie_fixture(attrs \\ %{}) do
+    attrs = Enum.into(attrs, %{})
+    campaign = Map.get(attrs, :campaign)
+    
+    unless campaign do
+      raise ArgumentError, "campaign is required for sortie fixture"
+    end
+
+    # Extract non-schema fields before creating params
+    status = Map.get(attrs, :status, "setup")
+    force_commander_id = Map.get(attrs, :force_commander_id)
+    
+    # Remove non-schema fields and prepare params with string keys only
+    attrs_for_creation = 
+      attrs
+      |> Map.delete(:campaign)
+      |> Map.delete(:status) 
+      |> Map.delete(:force_commander_id)
+      |> Enum.reduce(%{}, fn {k, v}, acc -> Map.put(acc, to_string(k), v) end)
+    
+    # Create the basic sortie
+    {:ok, sortie} =
+      attrs_for_creation
+      |> (&Map.merge(valid_sortie_attributes(), &1)).()
+      |> (&Aces.Campaigns.create_sortie(campaign, &1)).()
+
+    # If status is in_progress, we need to start the sortie
+    # But first we need at least one deployment with a named pilot
+    if status == "in_progress" and force_commander_id do
+      # Create a dummy deployment if needed
+      if length(sortie.deployments) == 0 do
+        # We need to create a minimal deployment to satisfy the requirement
+        # This is not ideal but needed for testing
+        raise ArgumentError, "Cannot create in_progress sortie without deployments. Create deployments separately."
+      end
+      
+      {:ok, updated_sortie} = Aces.Campaigns.start_sortie(sortie, force_commander_id)
+      updated_sortie
+    else
+      sortie
+    end
+  end
+
+  def deployment_fixture(attrs \\ %{}) do
+    attrs = Enum.into(attrs, %{})
+    sortie = Map.get(attrs, :sortie)
+    company_unit = Map.get(attrs, :company_unit) 
+    pilot = Map.get(attrs, :pilot)
+    
+    unless sortie && company_unit do
+      raise ArgumentError, "sortie and company_unit are required for deployment fixture"
+    end
+
+    deployment_attrs = %{
+      company_unit_id: company_unit.id,
+      pilot_id: pilot && pilot.id,
+      configuration_changes: Map.get(attrs, :configuration_changes),
+      configuration_cost_sp: Map.get(attrs, :configuration_cost_sp, 0)
+    }
+
+    {:ok, deployment} = Aces.Campaigns.create_deployment(sortie, deployment_attrs)
+    
+    # Reload with associations
+    Aces.Repo.preload(deployment, [:pilot, company_unit: :master_unit])
   end
 end

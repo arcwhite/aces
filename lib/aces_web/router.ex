@@ -72,7 +72,7 @@ defmodule AcesWeb.Router do
 
     # Sortie routes
     live "/companies/:company_id/campaigns/:campaign_id/sorties/new", SortieLive.New, :new
-    # live "/companies/:company_id/campaigns/:campaign_id/sorties/:id", SortieLive.Show, :show
+    live "/companies/:company_id/campaigns/:campaign_id/sorties/:id", SortieLive.Show, :show
 
     get "/users/settings", UserSettingsController, :edit
     put "/users/settings", UserSettingsController, :update

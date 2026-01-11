@@ -29,7 +29,7 @@
   - Integrated with existing Campaigns context and business logic
   - All compilation warnings resolved except for future sortie routes
   - Commit: 9f3f133
-- [ ] Implement any UI required for a player to start a Sortie
+- [x] Implement any UI required for a player to start a Sortie
 - [ ] Implement any UI required for a player to log the outcome of their Sortie as they're playing it (e.g mark units as destroyed, crippled, damaged, the units crew as wounded/killed, etc.)
 - [ ] Implement UI to finish a Sortie
 - [ ] Add UI to show timelines of events on a Campaign, including Sortie outcomes, unit purchases, new pilots hired, units sold, etc.

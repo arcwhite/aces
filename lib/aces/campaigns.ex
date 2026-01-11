@@ -132,7 +132,7 @@ defmodule Aces.Campaigns do
       :campaign,
       :force_commander,
       :mvp_pilot,
-      deployments: [:company_unit, :pilot]
+      deployments: [company_unit: :master_unit, pilot: []]
     ])
     |> Repo.get!(id)
   end
