@@ -198,7 +198,8 @@ defmodule Aces.CampaignsTest do
       sortie_with_deployments = Campaigns.get_sortie!(sortie.id)
 
       # Try to deploy same unit again
-      assert {:error, :unit_already_deployed} = Campaigns.create_deployment(sortie_with_deployments, deployment_attrs)
+      assert {:error, %Ecto.Changeset{} = changeset} = Campaigns.create_deployment(sortie_with_deployments, deployment_attrs)
+      assert %{company_unit_id: ["unit is already deployed in this sortie"]} = errors_on(changeset)
     end
 
     test "prevents duplicate pilot deployment in same sortie", %{sortie: sortie, pilot: pilot, company_unit: company_unit, company: company} do
@@ -216,10 +217,11 @@ defmodule Aces.CampaignsTest do
       sortie_with_deployments = Campaigns.get_sortie!(sortie.id)
 
       # Try to deploy same pilot with second unit
-      assert {:error, :pilot_already_deployed} = Campaigns.create_deployment(sortie_with_deployments, %{
+      assert {:error, %Ecto.Changeset{} = changeset} = Campaigns.create_deployment(sortie_with_deployments, %{
         company_unit_id: company_unit2.id,
         pilot_id: pilot.id
       })
+      assert %{pilot_id: ["pilot is already deployed in this sortie"]} = errors_on(changeset)
     end
   end
 

@@ -86,9 +86,40 @@ defmodule Aces.Campaigns.Sortie do
     sortie
     |> cast(attrs, [:force_commander_id, :started_at])
     |> validate_required([:force_commander_id])
+    |> validate_status_is_setup()
+    |> validate_has_deployments()
+    |> validate_has_named_pilot()
     |> put_change(:status, "in_progress")
     |> put_change(:started_at, DateTime.truncate(DateTime.utc_now(), :second))
     |> foreign_key_constraint(:force_commander_id)
+  end
+
+  defp validate_status_is_setup(changeset) do
+    case get_field(changeset, :status) do
+      "setup" -> changeset
+      status -> add_error(changeset, :status, "must be in setup state to start (currently #{status})")
+    end
+  end
+
+  defp validate_has_deployments(changeset) do
+    deployments = changeset.data.deployments || []
+
+    if length(deployments) > 0 do
+      changeset
+    else
+      add_error(changeset, :deployments, "must have at least one unit deployed")
+    end
+  end
+
+  defp validate_has_named_pilot(changeset) do
+    deployments = changeset.data.deployments || []
+    has_named_pilot = Enum.any?(deployments, & &1.pilot_id != nil)
+
+    if has_named_pilot do
+      changeset
+    else
+      add_error(changeset, :deployments, "must have at least one deployment with a named pilot")
+    end
   end
 
   def completion_changeset(sortie, attrs) do

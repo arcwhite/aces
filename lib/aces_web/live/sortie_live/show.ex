@@ -123,20 +123,12 @@ defmodule AcesWeb.SortieLive.Show do
                |> assign(:sortie, updated_sortie)
                |> put_flash(:info, "Sortie started successfully!")}
 
-            {:error, :insufficient_deployments} ->
-              {:noreply,
-               socket
-               |> put_flash(:error, "Cannot start sortie: No units deployed or no named pilots assigned")}
-
-            {:error, changeset} ->
-              error_message = 
-                changeset.errors
-                |> Enum.map(fn {field, {msg, _}} -> "#{field}: #{msg}" end)
-                |> Enum.join(", ")
+            {:error, %Ecto.Changeset{} = changeset} ->
+              error_message = format_changeset_errors(changeset)
 
               {:noreply,
                socket
-               |> put_flash(:error, "Failed to start sortie: #{error_message}")}
+               |> put_flash(:error, "Cannot start sortie: #{error_message}")}
           end
         end
       end
@@ -527,6 +519,12 @@ defmodule AcesWeb.SortieLive.Show do
       "killed" -> "select-error"
       _ -> ""
     end
+  end
+
+  defp format_changeset_errors(changeset) do
+    changeset.errors
+    |> Enum.map(fn {field, {msg, _opts}} -> "#{field} #{msg}" end)
+    |> Enum.join(", ")
   end
 
   defp format_damage_status(status) do

@@ -158,12 +158,14 @@ defmodule Aces.Campaigns do
   end
 
   @doc """
-  Starts a sortie (validates force commander and deployments)
+  Starts a sortie (validates force commander and deployments via changeset)
   """
-  def start_sortie(%Sortie{status: "setup"} = sortie, force_commander_id) do
-    if has_required_deployments?(sortie) do
+  def start_sortie(%Sortie{} = sortie, force_commander_id) do
+    changeset = Sortie.start_changeset(sortie, %{force_commander_id: force_commander_id})
+
+    if changeset.valid? do
       Ecto.Multi.new()
-      |> Ecto.Multi.update(:sortie, Sortie.start_changeset(sortie, %{force_commander_id: force_commander_id}))
+      |> Ecto.Multi.update(:sortie, changeset)
       |> Ecto.Multi.insert(:start_event, fn %{sortie: updated_sortie} ->
         CampaignEvent.creation_changeset(%CampaignEvent{}, %{
           campaign_id: updated_sortie.campaign_id,
@@ -178,11 +180,9 @@ defmodule Aces.Campaigns do
         {:error, _step, error, _} -> {:error, error}
       end
     else
-      {:error, :insufficient_deployments}
+      {:error, changeset}
     end
   end
-
-  def start_sortie(%Sortie{}, _), do: {:error, :invalid_status}
 
   @doc """
   Completes a sortie with post-battle processing
@@ -207,8 +207,17 @@ defmodule Aces.Campaigns do
     end)
     |> Repo.transaction()
     |> case do
-      {:ok, %{finalize: sortie}} -> {:ok, get_sortie!(sortie.id)}
-      {:error, step, error, _} -> {:error, {step, error}}
+      {:ok, %{finalize: sortie}} ->
+        {:ok, get_sortie!(sortie.id)}
+
+      {:error, :sortie, %Ecto.Changeset{} = changeset, _} ->
+        {:error, changeset}
+
+      {:error, :finalize, %Ecto.Changeset{} = changeset, _} ->
+        {:error, changeset}
+
+      {:error, _step, error, _} ->
+        {:error, error}
     end
   end
 
@@ -217,17 +226,14 @@ defmodule Aces.Campaigns do
   @doc """
   Creates a deployment for a sortie
   """
-  def create_deployment(%Sortie{} = sortie, %{company_unit_id: company_unit_id} = attrs) do
-    # Validate that unit isn't already deployed and pilot isn't assigned elsewhere
-    with :ok <- validate_unit_availability(sortie, company_unit_id),
-         :ok <- validate_pilot_availability(sortie, attrs[:pilot_id]) do
-      
-      attrs_with_sortie = Map.put(attrs, :sortie_id, sortie.id)
-      
-      %Deployment{}
-      |> Deployment.creation_changeset(attrs_with_sortie)
-      |> Repo.insert()
-    end
+  def create_deployment(%Sortie{} = sortie, attrs) do
+    attrs_with_sortie = Map.put(attrs, :sortie_id, sortie.id)
+
+    %Deployment{}
+    |> Deployment.creation_changeset(attrs_with_sortie)
+    |> validate_unit_not_already_deployed(sortie)
+    |> validate_pilot_not_already_deployed(sortie)
+    |> Repo.insert()
   end
 
   @doc """
@@ -239,25 +245,23 @@ defmodule Aces.Campaigns do
 
   ## Helper Functions
 
-  defp has_required_deployments?(%Sortie{deployments: deployments}) do
-    length(deployments) > 0 and
-    Enum.any?(deployments, & &1.pilot_id != nil)  # At least one named pilot required
-  end
+  defp validate_unit_not_already_deployed(changeset, %Sortie{deployments: deployments}) do
+    company_unit_id = Ecto.Changeset.get_field(changeset, :company_unit_id)
 
-  defp validate_unit_availability(%Sortie{deployments: deployments}, company_unit_id) do
-    if Enum.any?(deployments, & &1.company_unit_id == company_unit_id) do
-      {:error, :unit_already_deployed}
+    if Enum.any?(deployments, &(&1.company_unit_id == company_unit_id)) do
+      Ecto.Changeset.add_error(changeset, :company_unit_id, "unit is already deployed in this sortie")
     else
-      :ok
+      changeset
     end
   end
 
-  defp validate_pilot_availability(%Sortie{}, nil), do: :ok
-  defp validate_pilot_availability(%Sortie{deployments: deployments}, pilot_id) do
-    if Enum.any?(deployments, & &1.pilot_id == pilot_id) do
-      {:error, :pilot_already_deployed}
+  defp validate_pilot_not_already_deployed(changeset, %Sortie{deployments: deployments}) do
+    pilot_id = Ecto.Changeset.get_field(changeset, :pilot_id)
+
+    if pilot_id && Enum.any?(deployments, &(&1.pilot_id == pilot_id)) do
+      Ecto.Changeset.add_error(changeset, :pilot_id, "pilot is already deployed in this sortie")
     else
-      :ok
+      changeset
     end
   end
 
