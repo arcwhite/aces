@@ -196,8 +196,8 @@ defmodule Aces.Campaigns do
     |> Ecto.Multi.run(:calculate_expenses, fn _repo, %{sortie: updated_sortie, update_deployments: deployments} ->
       calculate_and_update_sortie_expenses(updated_sortie, deployments)
     end)
-    |> Ecto.Multi.run(:award_sp, fn _repo, %{calculate_expenses: final_sortie} ->
-      award_pilot_sp(final_sortie)
+    |> Ecto.Multi.merge(fn %{calculate_expenses: final_sortie} ->
+      build_pilot_awards_multi(final_sortie)
     end)
     |> Ecto.Multi.run(:record_events, fn _repo, %{calculate_expenses: final_sortie} ->
       record_sortie_completion_events(final_sortie)
@@ -339,33 +339,66 @@ defmodule Aces.Campaigns do
     |> Repo.update()
   end
 
-  defp award_pilot_sp(%Sortie{} = sortie) do
+  @doc false
+  # Builds an Ecto.Multi containing all pilot SP award operations.
+  # This ensures all awards happen in a single transaction - if any fails, all roll back.
+  defp build_pilot_awards_multi(%Sortie{} = sortie) do
     participating_pilots = get_participating_pilots(sortie)
     non_participating_pilots = get_non_participating_pilots(sortie)
-    
+
     sp_per_pilot = sortie.sp_per_participating_pilot
     sp_per_non_participant = div(sp_per_pilot, 2)
-    
-    # Award full SP to participating pilots
-    Enum.each(participating_pilots, fn pilot ->
-      Aces.Companies.award_sp(pilot, sp_per_pilot)
-      update_pilot_campaign_stats(pilot, sortie.campaign_id, sp_per_pilot, true)
+
+    Ecto.Multi.new()
+    |> add_pilot_sp_awards(participating_pilots, sp_per_pilot, sortie.campaign_id, true)
+    |> add_pilot_sp_awards(non_participating_pilots, sp_per_non_participant, sortie.campaign_id, false)
+    |> maybe_add_mvp_award(sortie)
+  end
+
+  defp add_pilot_sp_awards(multi, pilots, sp_amount, campaign_id, participated?) do
+    Enum.reduce(pilots, multi, fn pilot, acc ->
+      # Award SP to pilot
+      pilot_changeset = Pilot.changeset(pilot, %{
+        sp_earned: pilot.sp_earned + sp_amount,
+        sp_available: pilot.sp_available + sp_amount
+      })
+
+      # Update campaign stats
+      stats = Repo.get_by(PilotCampaignStats, pilot_id: pilot.id, campaign_id: campaign_id)
+      stats_changes =
+        if participated? do
+          %{
+            sorties_participated: stats.sorties_participated + 1,
+            sp_earned: stats.sp_earned + sp_amount
+          }
+        else
+          %{sp_earned: stats.sp_earned + sp_amount}
+        end
+      stats_changeset = PilotCampaignStats.changeset(stats, stats_changes)
+
+      acc
+      |> Ecto.Multi.update({:award_sp, pilot.id}, pilot_changeset)
+      |> Ecto.Multi.update({:update_stats, pilot.id}, stats_changeset)
     end)
-    
-    # Award half SP to non-participating pilots
-    Enum.each(non_participating_pilots, fn pilot ->
-      Aces.Companies.award_sp(pilot, sp_per_non_participant)
-      update_pilot_campaign_stats(pilot, sortie.campaign_id, sp_per_non_participant, false)
-    end)
-    
-    # Award MVP bonus if specified
-    if sortie.mvp_pilot_id do
-      mvp_pilot = Repo.get!(Pilot, sortie.mvp_pilot_id)
-      Aces.Companies.award_mvp(mvp_pilot)
-      update_pilot_mvp_stats(mvp_pilot, sortie.campaign_id)
-    end
-    
-    {:ok, :sp_awarded}
+  end
+
+  defp maybe_add_mvp_award(multi, %Sortie{mvp_pilot_id: nil}), do: multi
+  defp maybe_add_mvp_award(multi, %Sortie{mvp_pilot_id: mvp_pilot_id, campaign_id: campaign_id}) do
+    mvp_pilot = Repo.get!(Pilot, mvp_pilot_id)
+    mvp_changeset = Pilot.changeset(mvp_pilot, %{
+      sp_earned: mvp_pilot.sp_earned + 20,
+      sp_available: mvp_pilot.sp_available + 20,
+      mvp_awards: mvp_pilot.mvp_awards + 1
+    })
+
+    stats = Repo.get_by(PilotCampaignStats, pilot_id: mvp_pilot_id, campaign_id: campaign_id)
+    stats_changeset = PilotCampaignStats.changeset(stats, %{
+      mvp_awards: stats.mvp_awards + 1
+    })
+
+    multi
+    |> Ecto.Multi.update(:award_mvp, mvp_changeset)
+    |> Ecto.Multi.update(:update_mvp_stats, stats_changeset)
   end
 
   defp get_participating_pilots(%Sortie{deployments: deployments}) do
@@ -384,30 +417,6 @@ defmodule Aces.Campaigns do
     
     company.pilots
     |> Enum.reject(&(&1.id in participating_pilot_ids))
-  end
-
-  defp update_pilot_campaign_stats(pilot, campaign_id, sp_earned, participated?) do
-    stats = Repo.get_by(PilotCampaignStats, pilot_id: pilot.id, campaign_id: campaign_id)
-    
-    updated_stats = 
-      if participated? do
-        PilotCampaignStats.record_sortie_participation(stats, sp_earned)
-      else
-        %{stats | sp_earned: stats.sp_earned + sp_earned}
-      end
-    
-    stats
-    |> PilotCampaignStats.changeset(Map.from_struct(updated_stats))
-    |> Repo.update()
-  end
-
-  defp update_pilot_mvp_stats(pilot, campaign_id) do
-    stats = Repo.get_by(PilotCampaignStats, pilot_id: pilot.id, campaign_id: campaign_id)
-    updated_stats = PilotCampaignStats.record_mvp_award(stats)
-    
-    stats
-    |> PilotCampaignStats.changeset(Map.from_struct(updated_stats))
-    |> Repo.update()
   end
 
   defp record_sortie_completion_events(%Sortie{} = sortie) do
