@@ -122,7 +122,7 @@ defmodule Aces.Companies do
   Finalizes a company, converting unused PV to SP at a 1:40 ratio
   and setting status to active
   """
-  def finalize_company(%Company{status: "draft"} = company) do
+  def finalize_company(%Company{} = company) do
     company_with_stats = add_company_stats(company)
     unused_pv = company_with_stats.stats.pv_remaining
     bonus_sp = unused_pv * 40
@@ -134,11 +134,18 @@ defmodule Aces.Companies do
 
     company
     |> Company.changeset(attrs)
+    |> validate_can_finalize()
     |> Repo.update()
   end
 
-  def finalize_company(%Company{status: status}) do
-    {:error, "Company is already #{status}, cannot finalize"}
+  defp validate_can_finalize(changeset) do
+    original_status = changeset.data.status
+
+    if original_status != "draft" do
+      Ecto.Changeset.add_error(changeset, :status, "company is already #{original_status}, cannot finalize")
+    else
+      changeset
+    end
   end
 
   @doc """
@@ -209,35 +216,23 @@ defmodule Aces.Companies do
   Adds a unit to a company's roster with PV budget checking
   Only available for draft companies
   """
-  def add_unit_to_company(company, mul_id, attrs \\ %{})
+  def add_unit_to_company(%Company{} = company, mul_id, attrs \\ %{}) do
+    case Units.get_master_unit_by_mul_id(mul_id) do
+      {:ok, master_unit} ->
+        unit_attrs = Map.merge(attrs, %{
+          company_id: company.id,
+          master_unit_id: master_unit.id
+        })
 
-  def add_unit_to_company(%Company{status: "active"} = _company, _mul_id, _attrs) do
-    {:error, :company_finalized, "Cannot add units with PV to finalized companies. Use SP-based purchases instead."}
-  end
+        %CompanyUnit{}
+        |> CompanyUnit.draft_company_changeset(unit_attrs)
+        |> Repo.insert()
 
-  def add_unit_to_company(%Company{} = company, mul_id, attrs) do
-    with {:ok, master_unit} <- Units.get_master_unit_by_mul_id(mul_id) do
-      unit_attrs = Map.merge(attrs, %{
-        company_id: company.id,
-        master_unit_id: master_unit.id
-      })
-
-      %CompanyUnit{}
-      |> CompanyUnit.draft_company_changeset(unit_attrs)
-      |> Repo.insert()
-      |> case do
-        {:ok, company_unit} ->
-          {:ok, company_unit}
-
-        {:error, changeset} ->
-          {:error, changeset}
-      end
-    else
       {:error, :not_found} ->
-        {:error, :unit_not_found, "Unit not found in Master Unit List"}
+        {:error, unit_lookup_error_changeset("Unit not found in Master Unit List")}
 
       {:error, reason} ->
-        {:error, :unit_lookup_failed, "Failed to lookup unit: #{reason}"}
+        {:error, unit_lookup_error_changeset("Failed to lookup unit: #{reason}")}
     end
   end
 
@@ -245,37 +240,35 @@ defmodule Aces.Companies do
   Purchase a unit for a company (includes PV budget deduction)
   Only available for draft companies
   """
-  def purchase_unit_for_company(company, mul_id, attrs \\ %{})
+  def purchase_unit_for_company(%Company{} = company, mul_id, attrs \\ %{}) do
+    case Units.get_master_unit_by_mul_id(mul_id) do
+      {:ok, master_unit} ->
+        unit_attrs = Map.merge(attrs, %{
+          company_id: company.id,
+          master_unit_id: master_unit.id,
+          purchase_cost_sp: attrs[:purchase_cost_sp] || 0
+        })
 
-  def purchase_unit_for_company(%Company{status: "active"} = _company, _mul_id, _attrs) do
-    {:error, %{type: :company_finalized, message: "Cannot add units with PV to finalized companies. Use SP-based purchases instead."}}
-  end
+        %CompanyUnit{}
+        |> CompanyUnit.draft_company_changeset(unit_attrs)
+        |> Repo.insert()
+        |> case do
+          {:ok, company_unit} -> {:ok, Repo.preload(company_unit, :master_unit)}
+          {:error, changeset} -> {:error, changeset}
+        end
 
-  def purchase_unit_for_company(%Company{} = company, mul_id, attrs) do
-    with {:ok, master_unit} <- Units.get_master_unit_by_mul_id(mul_id) do
-      unit_attrs = Map.merge(attrs, %{
-        company_id: company.id,
-        master_unit_id: master_unit.id,
-        purchase_cost_sp: attrs[:purchase_cost_sp] || 0
-      })
-
-      %CompanyUnit{}
-      |> CompanyUnit.draft_company_changeset(unit_attrs)
-      |> Repo.insert()
-      |> case do
-        {:ok, company_unit} ->
-          {:ok, Repo.preload(company_unit, :master_unit)}
-
-        {:error, changeset} ->
-          {:error, changeset}
-      end
-    else
       {:error, :not_found} ->
-        {:error, %{type: :unit_not_found, message: "Unit not found in Master Unit List"}}
+        {:error, unit_lookup_error_changeset("Unit not found in Master Unit List")}
 
       {:error, reason} ->
-        {:error, %{type: :unit_lookup_failed, message: "Failed to lookup unit: #{reason}"}}
+        {:error, unit_lookup_error_changeset("Failed to lookup unit: #{reason}")}
     end
+  end
+
+  defp unit_lookup_error_changeset(message) do
+    %CompanyUnit{}
+    |> Ecto.Changeset.change()
+    |> Ecto.Changeset.add_error(:master_unit_id, message)
   end
 
   @doc """
@@ -357,22 +350,33 @@ defmodule Aces.Companies do
   Creates a pilot for a company
   """
   def create_pilot(%Company{} = company, attrs \\ %{}) do
-    # Check pilot count limit (max 6 during company creation, more via hiring)
-    if company.status == "draft" and length(company.pilots || []) >= 6 do
-      {:error, :pilot_limit_reached}
+    %Pilot{}
+    |> Pilot.changeset(Map.put(attrs, :company_id, company.id))
+    |> validate_pilot_limit(company)
+    |> Repo.insert()
+  end
+
+  defp validate_pilot_limit(changeset, %Company{status: "draft", pilots: pilots}) do
+    if length(pilots || []) >= 6 do
+      Ecto.Changeset.add_error(changeset, :base, "cannot add more than 6 pilots during company creation")
     else
-      %Pilot{}
-      |> Pilot.changeset(Map.put(attrs, :company_id, company.id))
-      |> Repo.insert()
+      changeset
     end
   end
+
+  defp validate_pilot_limit(changeset, _company), do: changeset
 
   @doc """
   Creates multiple pilots for a company (used during company creation)
   """
   def create_pilots(%Company{} = company, pilots_attrs) when is_list(pilots_attrs) do
     if length(pilots_attrs) > 6 do
-      {:error, :pilot_limit_reached}
+      changeset =
+        %Pilot{}
+        |> Ecto.Changeset.change()
+        |> Ecto.Changeset.add_error(:base, "cannot add more than 6 pilots during company creation")
+
+      {:error, changeset}
     else
       Ecto.Multi.new()
       |> Ecto.Multi.run(:pilots, fn _repo, _changes ->
@@ -452,17 +456,22 @@ defmodule Aces.Companies do
     |> Repo.all()
   end
 
+  @hiring_cost 150
+
   @doc """
   Hire a new pilot for an active company (SP cost)
   """
-  def hire_pilot(company, attrs \\ %{})
-  def hire_pilot(%Company{status: "active"} = company, attrs) do
-    hiring_cost = 150 # SP cost to hire a new pilot
-    
-    if company.warchest_balance >= hiring_cost do
+  def hire_pilot(%Company{} = company, attrs \\ %{}) do
+    changeset =
+      %Pilot{}
+      |> Pilot.changeset(Map.put(attrs, :company_id, company.id))
+      |> validate_company_active_for_hiring(company)
+      |> validate_sufficient_funds_for_hiring(company)
+
+    if changeset.valid? do
       Ecto.Multi.new()
-      |> Ecto.Multi.insert(:pilot, Pilot.changeset(%Pilot{}, Map.put(attrs, :company_id, company.id)))
-      |> Ecto.Multi.update(:company, Company.changeset(company, %{warchest_balance: company.warchest_balance - hiring_cost}))
+      |> Ecto.Multi.insert(:pilot, changeset)
+      |> Ecto.Multi.update(:company, Company.changeset(company, %{warchest_balance: company.warchest_balance - @hiring_cost}))
       |> Repo.transaction()
       |> case do
         {:ok, %{pilot: pilot, company: updated_company}} ->
@@ -473,12 +482,21 @@ defmodule Aces.Companies do
           {:error, changeset}
       end
     else
-      {:error, :insufficient_funds}
+      {:error, changeset}
     end
   end
 
-  def hire_pilot(%Company{status: _status}, _attrs) do
-    {:error, :company_not_active}
+  defp validate_company_active_for_hiring(changeset, %Company{status: "active"}), do: changeset
+  defp validate_company_active_for_hiring(changeset, %Company{status: status}) do
+    Ecto.Changeset.add_error(changeset, :base, "cannot hire pilots for #{status} companies, only active companies can hire pilots")
+  end
+
+  defp validate_sufficient_funds_for_hiring(changeset, %Company{warchest_balance: balance}) do
+    if balance >= @hiring_cost do
+      changeset
+    else
+      Ecto.Changeset.add_error(changeset, :base, "insufficient SP to hire pilot (need #{@hiring_cost} SP, have #{balance} SP)")
+    end
   end
 
   @doc """
@@ -513,18 +531,26 @@ defmodule Aces.Companies do
   Allocate pilot SP to skill, edge tokens, or edge abilities
   """
   def allocate_pilot_sp(%Pilot{} = pilot, sp_amount, category) when category in [:skill, :edge_tokens, :edge_abilities] do
-    if pilot.sp_available >= sp_amount do
-      updated_pilot = Pilot.allocate_sp(pilot, sp_amount, category)
-      update_pilot(pilot, %{
-        sp_allocated_to_skill: updated_pilot.sp_allocated_to_skill,
-        sp_allocated_to_edge_tokens: updated_pilot.sp_allocated_to_edge_tokens,
-        sp_allocated_to_edge_abilities: updated_pilot.sp_allocated_to_edge_abilities,
-        sp_available: updated_pilot.sp_available,
-        skill_level: updated_pilot.skill_level,
-        edge_tokens: updated_pilot.edge_tokens
-      })
+    updated_pilot = Pilot.allocate_sp(pilot, sp_amount, category)
+
+    pilot
+    |> Pilot.changeset(%{
+      sp_allocated_to_skill: updated_pilot.sp_allocated_to_skill,
+      sp_allocated_to_edge_tokens: updated_pilot.sp_allocated_to_edge_tokens,
+      sp_allocated_to_edge_abilities: updated_pilot.sp_allocated_to_edge_abilities,
+      sp_available: updated_pilot.sp_available,
+      skill_level: updated_pilot.skill_level,
+      edge_tokens: updated_pilot.edge_tokens
+    })
+    |> validate_sufficient_sp_for_allocation(pilot, sp_amount)
+    |> Repo.update()
+  end
+
+  defp validate_sufficient_sp_for_allocation(changeset, %Pilot{sp_available: available}, sp_amount) do
+    if available >= sp_amount do
+      changeset
     else
-      {:error, :insufficient_sp}
+      Ecto.Changeset.add_error(changeset, :sp_available, "insufficient SP (need #{sp_amount}, have #{available})")
     end
   end
 

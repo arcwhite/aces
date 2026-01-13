@@ -410,8 +410,8 @@ defmodule Aces.CompaniesTest do
     test "returns error when company is already active" do
       company = company_fixture(status: "active")
 
-      assert {:error, message} = Companies.finalize_company(company)
-      assert message == "Company is already active, cannot finalize"
+      assert {:error, %Ecto.Changeset{} = changeset} = Companies.finalize_company(company)
+      assert %{status: ["company is already active, cannot finalize"]} = errors_on(changeset)
     end
 
     test "returns error with unknown status" do
@@ -421,8 +421,8 @@ defmodule Aces.CompaniesTest do
       Aces.Repo.query!("UPDATE companies SET status = 'unknown' WHERE id = $1", [company.id])
       reloaded = Companies.get_company!(company.id)
 
-      assert {:error, message} = Companies.finalize_company(reloaded)
-      assert message == "Company is already unknown, cannot finalize"
+      assert {:error, %Ecto.Changeset{} = changeset} = Companies.finalize_company(reloaded)
+      assert %{status: ["company is already unknown, cannot finalize"]} = errors_on(changeset)
     end
   end
 
@@ -449,10 +449,10 @@ defmodule Aces.CompaniesTest do
       )
 
       # This should return an error for active companies
-      assert {:error, %{type: :company_finalized, message: message}} =
+      assert {:error, %Ecto.Changeset{} = changeset} =
         Companies.purchase_unit_for_company(company, master_unit.mul_id)
 
-      assert message =~ "Cannot add units with PV to finalized companies"
+      assert %{company_id: ["Cannot add units to active companies"]} = errors_on(changeset)
     end
   end
 
@@ -469,10 +469,10 @@ defmodule Aces.CompaniesTest do
       company = company_fixture(status: "active")
       master_unit = master_unit_fixture(point_value: 100)
 
-      assert {:error, :company_finalized, message} =
+      assert {:error, %Ecto.Changeset{} = changeset} =
         Companies.add_unit_to_company(company, master_unit.mul_id)
 
-      assert message =~ "Cannot add units with PV to finalized companies"
+      assert %{company_id: ["Cannot add units to active companies"]} = errors_on(changeset)
     end
   end
 

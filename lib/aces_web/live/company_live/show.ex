@@ -115,32 +115,8 @@ defmodule AcesWeb.CompanyLive.Show do
            |> put_flash(:info, "Unit successfully added to roster!")
            |> assign(:show_unit_search, false)}
 
-        {:error, %{type: :insufficient_pv_budget, message: message, required_pv: required, available_pv: available, unit_name: unit_name}} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, "Cannot add #{unit_name}: #{message}. Need #{required} PV, but only #{available} PV remaining.")}
-
-        {:error, %{type: :unit_not_found, message: message}} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, message)}
-
-        {:error, %{type: :unit_lookup_failed, message: message}} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, "Failed to add unit: #{message}")}
-
-        {:error, %{type: :company_finalized, message: message}} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, message)}
-
-        {:error, changeset} ->
-          # Handle validation errors
-          error_message =
-            changeset.errors
-            |> Enum.map(fn {field, {msg, _}} -> "#{field}: #{msg}" end)
-            |> Enum.join(", ")
+        {:error, %Ecto.Changeset{} = changeset} ->
+          error_message = format_changeset_errors(changeset)
 
           {:noreply,
            socket
@@ -839,5 +815,11 @@ defmodule AcesWeb.CompanyLive.Show do
       <% end %>
     </div>
     """
+  end
+
+  defp format_changeset_errors(changeset) do
+    changeset.errors
+    |> Enum.map(fn {field, {msg, _opts}} -> "#{field}: #{msg}" end)
+    |> Enum.join(", ")
   end
 end

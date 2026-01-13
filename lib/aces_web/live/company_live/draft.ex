@@ -103,16 +103,9 @@ defmodule AcesWeb.CompanyLive.Draft do
            |> assign(:show_unit_search, false)
            |> assign(:unit_add_error, nil)}
 
-        # Handle validation errors from changesets
         {:error, %Ecto.Changeset{} = changeset} ->
-          error_message = extract_changeset_error_message(changeset)
+          error_message = format_changeset_errors(changeset)
           {:noreply, assign(socket, :unit_add_error, error_message)}
-
-        {:error, %{type: :unit_not_found, message: message}} ->
-          {:noreply, assign(socket, :unit_add_error, message)}
-
-        {:error, %{type: :unit_lookup_failed, message: message}} ->
-          {:noreply, assign(socket, :unit_add_error, "Failed to add unit: #{message}")}
       end
     else
       {:noreply,
@@ -234,10 +227,11 @@ defmodule AcesWeb.CompanyLive.Draft do
            |> put_flash(:info, "Company finalized successfully! Any unused PV has been converted to SP.")
            |> redirect(to: ~p"/companies/#{finalized_company}")}
 
-        {:error, reason} ->
+        {:error, %Ecto.Changeset{} = changeset} ->
+          error_message = format_changeset_errors(changeset)
           {:noreply,
            socket
-           |> put_flash(:error, "Failed to finalize company: #{reason}")}
+           |> put_flash(:error, "Failed to finalize company: #{error_message}")}
       end
     else
       {:noreply,
@@ -288,22 +282,10 @@ defmodule AcesWeb.CompanyLive.Draft do
     end
   end
 
-  # Extract a user-friendly error message from changeset
-  defp extract_changeset_error_message(%Ecto.Changeset{} = changeset) do
-    # Look for our custom validation errors first
-    case Enum.find(changeset.errors, fn {field, _} -> field == :master_unit_id end) do
-      {_, {message, _}} -> message
-      nil ->
-        # Check for company errors
-        case Enum.find(changeset.errors, fn {field, _} -> field == :company_id end) do
-          {_, {message, _}} -> message
-          nil ->
-            # Fallback for other errors
-            changeset.errors
-            |> Enum.map(fn {_field, {msg, _}} -> msg end)
-            |> Enum.join(", ")
-        end
-    end
+  defp format_changeset_errors(changeset) do
+    changeset.errors
+    |> Enum.map(fn {field, {msg, _opts}} -> "#{field}: #{msg}" end)
+    |> Enum.join(", ")
   end
 
   @impl true

@@ -175,11 +175,15 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
          |> put_flash(:info, "Pilot #{pilot.name} added successfully!")
          |> push_patch(to: socket.assigns.patch)}
 
-      {:error, :pilot_limit_reached} ->
-        {:noreply, put_flash(socket, :error, "Cannot add more than 6 pilots during company creation")}
-
       {:error, %Ecto.Changeset{} = changeset} ->
-        {:noreply, assign(socket, form: to_form(changeset))}
+        # Check for base errors (company-level validation failures like pilot limit)
+        base_errors = Keyword.get_values(changeset.errors, :base)
+        if length(base_errors) > 0 do
+          {message, _opts} = hd(base_errors)
+          {:noreply, put_flash(socket, :error, message)}
+        else
+          {:noreply, assign(socket, form: to_form(changeset))}
+        end
     end
   end
 

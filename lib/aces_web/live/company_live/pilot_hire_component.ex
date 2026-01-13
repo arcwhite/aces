@@ -37,16 +37,15 @@ defmodule AcesWeb.CompanyLive.PilotHireComponent do
          |> put_flash(:info, "Pilot #{pilot.name} hired successfully for 150 SP!")
          |> push_patch(to: socket.assigns.patch)}
 
-      {:error, :insufficient_funds} ->
-        company = socket.assigns.company
-        message = "Not enough SP to hire pilot. Need 150 SP, have #{company.warchest_balance} SP."
-        {:noreply, put_flash(socket, :error, message)}
-
-      {:error, :company_not_active} ->
-        {:noreply, put_flash(socket, :error, "Cannot hire pilots for draft companies. Only active companies can hire pilots.")}
-
       {:error, %Ecto.Changeset{} = changeset} ->
-        {:noreply, assign(socket, form: to_form(changeset))}
+        # Check for base errors (company-level validation failures)
+        base_errors = Keyword.get_values(changeset.errors, :base)
+        if length(base_errors) > 0 do
+          {message, _opts} = hd(base_errors)
+          {:noreply, put_flash(socket, :error, message)}
+        else
+          {:noreply, assign(socket, form: to_form(changeset))}
+        end
     end
   end
 
