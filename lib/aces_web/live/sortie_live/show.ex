@@ -2,7 +2,8 @@ defmodule AcesWeb.SortieLive.Show do
   use AcesWeb, :live_view
 
   alias Aces.{Companies, Campaigns}
-  alias Aces.Companies.{Authorization, Deployment}
+  alias Aces.Companies.Authorization
+  alias Aces.Campaigns.Deployment
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
@@ -250,7 +251,7 @@ defmodule AcesWeb.SortieLive.Show do
 
         <div class="stat bg-base-200 rounded-lg shadow">
           <div class="stat-title">Deployed PV</div>
-          <div class="stat-value text-secondary">{Aces.Companies.Sortie.calculate_deployed_pv(@sortie)}</div>
+          <div class="stat-value text-secondary">{Aces.Campaigns.Sortie.calculate_deployed_pv(@sortie)}</div>
           <div class="stat-desc">Currently deployed</div>
         </div>
 

@@ -7,7 +7,7 @@ defmodule Aces.Campaigns do
   alias Aces.Repo
 
   alias Aces.Companies.{Company, Pilot}
-  alias Aces.Companies.{Campaign, Sortie, Deployment, CampaignEvent, PilotCampaignStats}
+  alias Aces.Campaigns.{Campaign, Sortie, Deployment, CampaignEvent, PilotCampaignStats}
 
   ## Campaign CRUD
 

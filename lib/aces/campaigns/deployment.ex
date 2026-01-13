@@ -1,11 +1,12 @@
-defmodule Aces.Companies.Deployment do
+defmodule Aces.Campaigns.Deployment do
   @moduledoc """
   Deployment schema - represents a unit/pilot assignment to a specific sortie
   """
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias Aces.Companies.{Sortie, CompanyUnit, Pilot}
+  alias Aces.Companies.{CompanyUnit, Pilot}
+  alias Aces.Campaigns.Sortie
 
   @damage_status ~w(operational armor_damaged structure_damaged crippled salvageable destroyed)
   @casualty_status ~w(none wounded killed)

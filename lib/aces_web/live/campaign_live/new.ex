@@ -2,7 +2,8 @@ defmodule AcesWeb.CampaignLive.New do
   use AcesWeb, :live_view
 
   alias Aces.{Companies, Campaigns}
-  alias Aces.Companies.{Authorization, Campaign}
+  alias Aces.Companies.Authorization
+  alias Aces.Campaigns.Campaign
 
   on_mount {AcesWeb.UserAuthLive, :default}
 

@@ -42,7 +42,7 @@ defmodule AcesWeb.SortieLive.PersistenceTest do
       |> render_change(%{"damage_status_#{deployment.id}" => "armor_damaged"})
 
       # Reload deployment from database to check persistence
-      updated_deployment = Aces.Repo.get!(Aces.Companies.Deployment, deployment.id)
+      updated_deployment = Aces.Repo.get!(Aces.Campaigns.Deployment, deployment.id)
       assert updated_deployment.damage_status == "armor_damaged"
 
       # Update to a different status
@@ -51,7 +51,7 @@ defmodule AcesWeb.SortieLive.PersistenceTest do
       |> render_change(%{"damage_status_#{deployment.id}" => "crippled"})
 
       # Check persistence again
-      updated_deployment2 = Aces.Repo.get!(Aces.Companies.Deployment, deployment.id)
+      updated_deployment2 = Aces.Repo.get!(Aces.Campaigns.Deployment, deployment.id)
       assert updated_deployment2.damage_status == "crippled"
     end
 
@@ -64,7 +64,7 @@ defmodule AcesWeb.SortieLive.PersistenceTest do
       |> render_change(%{"pilot_casualty_#{deployment.id}" => "wounded"})
 
       # Reload deployment from database to check persistence
-      updated_deployment = Aces.Repo.get!(Aces.Companies.Deployment, deployment.id)
+      updated_deployment = Aces.Repo.get!(Aces.Campaigns.Deployment, deployment.id)
       assert updated_deployment.pilot_casualty == "wounded"
 
       # Update to killed status
@@ -73,7 +73,7 @@ defmodule AcesWeb.SortieLive.PersistenceTest do
       |> render_change(%{"pilot_casualty_#{deployment.id}" => "killed"})
 
       # Check persistence again
-      updated_deployment2 = Aces.Repo.get!(Aces.Companies.Deployment, deployment.id)
+      updated_deployment2 = Aces.Repo.get!(Aces.Campaigns.Deployment, deployment.id)
       assert updated_deployment2.pilot_casualty == "killed"
     end
 
@@ -91,7 +91,7 @@ defmodule AcesWeb.SortieLive.PersistenceTest do
       |> render_change(%{"pilot_casualty_#{crew_deployment.id}" => "wounded"})
 
       # Reload deployment from database to check persistence
-      updated_deployment = Aces.Repo.get!(Aces.Companies.Deployment, crew_deployment.id)
+      updated_deployment = Aces.Repo.get!(Aces.Campaigns.Deployment, crew_deployment.id)
       assert updated_deployment.pilot_casualty == "wounded"
       assert updated_deployment.pilot_id == nil  # Still unnamed crew
     end

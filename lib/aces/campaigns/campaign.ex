@@ -1,11 +1,12 @@
-defmodule Aces.Companies.Campaign do
+defmodule Aces.Campaigns.Campaign do
   @moduledoc """
   Campaign schema - represents a multi-month deployment for a mercenary company
   """
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias Aces.Companies.{Company, Sortie, CampaignEvent, PilotCampaignStats}
+  alias Aces.Companies.Company
+  alias Aces.Campaigns.{Sortie, CampaignEvent, PilotCampaignStats}
 
   @difficulty_levels ~w(rookie standard veteran elite legendary)
   @campaign_status ~w(active completed failed)
@@ -143,7 +144,7 @@ defmodule Aces.Companies.Campaign do
   Add a keyword to the campaign
   """
   def add_keyword(%__MODULE__{keywords: keywords} = campaign, new_keyword) when is_binary(new_keyword) do
-    updated_keywords = 
+    updated_keywords =
       keywords
       |> Kernel.++([new_keyword])
       |> Enum.uniq()

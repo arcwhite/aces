@@ -2,7 +2,7 @@ defmodule Aces.CampaignsTest do
   use Aces.DataCase
 
   alias Aces.Campaigns
-  alias Aces.Companies.Sortie
+  alias Aces.Campaigns.Sortie
 
   import Aces.AccountsFixtures
   import Aces.CompaniesFixtures

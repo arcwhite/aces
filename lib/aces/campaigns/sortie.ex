@@ -1,11 +1,12 @@
-defmodule Aces.Companies.Sortie do
+defmodule Aces.Campaigns.Sortie do
   @moduledoc """
   Sortie schema - represents an individual mission within a campaign
   """
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias Aces.Companies.{Campaign, Pilot, Deployment}
+  alias Aces.Companies.Pilot
+  alias Aces.Campaigns.{Campaign, Deployment}
 
   @sortie_status ~w(setup in_progress success failed completed)
 
@@ -119,11 +120,11 @@ defmodule Aces.Companies.Sortie do
     # Only auto-calculate if recon_total_cost was not explicitly provided
     case {get_change(changeset, :recon_total_cost), get_change(changeset, :recon_options)} do
       {nil, recon_options} when is_list(recon_options) ->
-        total_cost = 
+        total_cost =
           recon_options
           |> Enum.map(&Map.get(&1, "cost_sp", 0))
           |> Enum.sum()
-        
+
         put_change(changeset, :recon_total_cost, total_cost)
 
       _ ->

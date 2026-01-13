@@ -1,11 +1,11 @@
-defmodule Aces.Companies.CampaignEvent do
+defmodule Aces.Campaigns.CampaignEvent do
   @moduledoc """
   Campaign event schema - tracks timeline of events during a campaign
   """
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias Aces.Companies.Campaign
+  alias Aces.Campaigns.Campaign
 
   @event_types ~w(
     campaign_started campaign_completed campaign_failed

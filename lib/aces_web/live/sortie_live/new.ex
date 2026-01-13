@@ -2,7 +2,8 @@ defmodule AcesWeb.SortieLive.New do
   use AcesWeb, :live_view
 
   alias Aces.{Companies, Campaigns}
-  alias Aces.Companies.{Authorization, Sortie}
+  alias Aces.Companies.Authorization
+  alias Aces.Campaigns.Sortie
 
   on_mount {AcesWeb.UserAuthLive, :default}
 

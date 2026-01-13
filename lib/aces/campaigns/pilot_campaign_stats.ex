@@ -1,11 +1,12 @@
-defmodule Aces.Companies.PilotCampaignStats do
+defmodule Aces.Campaigns.PilotCampaignStats do
   @moduledoc """
   Pilot campaign stats schema - tracks per-campaign pilot performance
   """
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias Aces.Companies.{Pilot, Campaign}
+  alias Aces.Companies.Pilot
+  alias Aces.Campaigns.Campaign
 
   schema "pilot_campaign_stats" do
     field :sorties_participated, :integer, default: 0
