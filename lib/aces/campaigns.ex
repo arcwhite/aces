@@ -55,7 +55,7 @@ defmodule Aces.Campaigns do
   """
   def create_campaign(%Company{} = company, attrs \\ %{}) do
     total_pilot_sp = calculate_total_pilot_sp(company)
-    experience_modifier = Campaign.calculate_experience_modifier(total_pilot_sp)
+    experience_modifier = calculate_experience_modifier(total_pilot_sp)
 
     attrs_with_company = 
       attrs
@@ -412,7 +412,7 @@ defmodule Aces.Campaigns do
 
   defp record_sortie_completion_events(%Sortie{} = sortie) do
     event_type = if sortie.was_successful, do: "sortie_completed", else: "sortie_failed"
-    
+
     %CampaignEvent{}
     |> CampaignEvent.creation_changeset(%{
       campaign_id: sortie.campaign_id,
@@ -421,5 +421,74 @@ defmodule Aces.Campaigns do
       description: CampaignEvent.generate_description(event_type, CampaignEvent.sortie_completed_data(sortie))
     })
     |> Repo.insert()
+  end
+
+  ## Campaign Business Logic
+
+  @doc """
+  Calculate experience modifier based on total pilot SP in the company.
+  Higher SP companies get reduced experience gains to balance progression.
+  """
+  def calculate_experience_modifier(total_pilot_sp) do
+    cond do
+      total_pilot_sp <= 3000 -> 1.0
+      total_pilot_sp <= 6000 -> 0.9
+      total_pilot_sp <= 9000 -> 0.8
+      total_pilot_sp <= 12000 -> 0.7
+      true -> 0.6
+    end
+  end
+
+  @doc """
+  Get combined PV modifier (difficulty + experience) for a campaign.
+  """
+  def get_effective_pv_modifier(%Campaign{} = campaign, total_pilot_sp) do
+    experience_modifier = calculate_experience_modifier(total_pilot_sp)
+    campaign.pv_limit_modifier * experience_modifier
+  end
+
+  @doc """
+  Add a keyword to a campaign. Returns updated campaign struct (not persisted).
+  """
+  def add_campaign_keyword(%Campaign{keywords: keywords} = campaign, new_keyword) when is_binary(new_keyword) do
+    updated_keywords =
+      keywords
+      |> Kernel.++([new_keyword])
+      |> Enum.uniq()
+
+    %{campaign | keywords: updated_keywords}
+  end
+
+  ## Sortie Business Logic
+
+  @doc """
+  Check if a sortie can be started (has force commander and deployments with named pilot).
+  """
+  def sortie_can_start?(%Sortie{force_commander_id: nil}), do: false
+  def sortie_can_start?(%Sortie{status: "setup", deployments: deployments}) when length(deployments) > 0 do
+    Enum.any?(deployments, & &1.pilot_id != nil)
+  end
+  def sortie_can_start?(_), do: false
+
+  @doc """
+  Get deployments with participating pilots (exclude unnamed crew).
+  """
+  def participating_pilot_deployments(%Sortie{deployments: deployments}) do
+    Enum.filter(deployments, & &1.pilot_id)
+  end
+
+  @doc """
+  Calculate total PV deployed for a sortie.
+  """
+  def calculate_deployed_pv(%Sortie{deployments: deployments}) do
+    deployments
+    |> Enum.map(fn deployment ->
+      if deployment.company_unit && deployment.company_unit.master_unit do
+        deployment.company_unit.master_unit.point_value || 0
+      else
+        0
+      end
+    end)
+    |> Enum.sum()
   end
 end

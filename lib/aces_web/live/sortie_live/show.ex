@@ -243,7 +243,7 @@ defmodule AcesWeb.SortieLive.Show do
 
         <div class="stat bg-base-200 rounded-lg shadow">
           <div class="stat-title">Deployed PV</div>
-          <div class="stat-value text-secondary">{Aces.Campaigns.Sortie.calculate_deployed_pv(@sortie)}</div>
+          <div class="stat-value text-secondary">{Aces.Campaigns.calculate_deployed_pv(@sortie)}</div>
           <div class="stat-desc">Currently deployed</div>
         </div>
 

@@ -187,33 +187,4 @@ defmodule Aces.Campaigns.Sortie do
       _ -> changeset
     end
   end
-
-  @doc """
-  Check if sortie can be started (has force commander and deployments)
-  """
-  def can_start?(%__MODULE__{force_commander_id: nil}), do: false
-  def can_start?(%__MODULE__{status: "setup", deployments: deployments}) when length(deployments) > 0, do: true
-  def can_start?(_), do: false
-
-  @doc """
-  Get deployments with participating pilots (exclude unnamed crew)
-  """
-  def participating_pilot_deployments(%__MODULE__{deployments: deployments}) do
-    Enum.filter(deployments, & &1.pilot_id)
-  end
-
-  @doc """
-  Calculate total PV deployed for this sortie
-  """
-  def calculate_deployed_pv(%__MODULE__{deployments: deployments}) do
-    deployments
-    |> Enum.map(fn deployment ->
-      if deployment.company_unit && deployment.company_unit.master_unit do
-        deployment.company_unit.master_unit.point_value || 0
-      else
-        0
-      end
-    end)
-    |> Enum.sum()
-  end
 end

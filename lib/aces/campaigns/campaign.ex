@@ -118,37 +118,4 @@ defmodule Aces.Campaigns.Campaign do
         changeset
     end
   end
-
-  @doc """
-  Calculate experience modifier based on total pilot SP in the company
-  """
-  def calculate_experience_modifier(total_pilot_sp) do
-    cond do
-      total_pilot_sp <= 3000 -> 1.0
-      total_pilot_sp <= 6000 -> 0.9
-      total_pilot_sp <= 9000 -> 0.8
-      total_pilot_sp <= 12000 -> 0.7
-      true -> 0.6
-    end
-  end
-
-  @doc """
-  Get combined PV modifier (difficulty + experience)
-  """
-  def get_effective_pv_modifier(%__MODULE__{} = campaign, total_pilot_sp) do
-    experience_modifier = calculate_experience_modifier(total_pilot_sp)
-    campaign.pv_limit_modifier * experience_modifier
-  end
-
-  @doc """
-  Add a keyword to the campaign
-  """
-  def add_keyword(%__MODULE__{keywords: keywords} = campaign, new_keyword) when is_binary(new_keyword) do
-    updated_keywords =
-      keywords
-      |> Kernel.++([new_keyword])
-      |> Enum.uniq()
-
-    %{campaign | keywords: updated_keywords}
-  end
 end
