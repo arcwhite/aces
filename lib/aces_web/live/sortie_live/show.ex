@@ -57,47 +57,24 @@ defmodule AcesWeb.SortieLive.Show do
 
   @impl true
   def handle_event("update_damage_status", params, socket) do
-    if socket.assigns.can_edit and socket.assigns.sortie.status == "in_progress" do
-      # Extract deployment_id and damage_status from params
-      # The form will send params like %{"damage_status_123" => "armor_damaged"}
-      case params |> Enum.find_value(fn 
-          {"damage_status_" <> id_string, status} -> {String.to_integer(id_string), status}
-          _ -> nil
-        end) do
-        {deployment_id, damage_status} ->
-          deployment = Enum.find(socket.assigns.sortie.deployments, &(&1.id == deployment_id))
-          
-          if deployment do
-            case update_deployment_damage(deployment, damage_status) do
-              {:ok, _updated_deployment} ->
-                # Reload the sortie to get updated deployments
-                updated_sortie = Campaigns.get_sortie!(socket.assigns.sortie.id)
-                
-                {:noreply,
-                 socket
-                 |> assign(:sortie, updated_sortie)
-                 |> put_flash(:info, "Unit damage updated")}
+    with :ok <- require_can_edit(socket),
+         :ok <- require_sortie_status(socket, "in_progress"),
+         {:ok, deployment_id, damage_status} <- extract_damage_params(params),
+         {:ok, deployment} <- find_deployment(socket, deployment_id) do
+      case update_deployment_damage(deployment, damage_status) do
+        {:ok, _updated_deployment} ->
+          updated_sortie = Campaigns.get_sortie!(socket.assigns.sortie.id)
 
-              {:error, _changeset} ->
-                {:noreply,
-                 socket
-                 |> put_flash(:error, "Failed to update damage status")}
-            end
-          else
-            {:noreply,
-             socket
-             |> put_flash(:error, "Deployment not found")}
-          end
-        
-        nil ->
           {:noreply,
            socket
-           |> put_flash(:error, "Invalid damage status parameters")}
+           |> assign(:sortie, updated_sortie)
+           |> put_flash(:info, "Unit damage updated")}
+
+        {:error, _changeset} ->
+          {:noreply, put_flash(socket, :error, "Failed to update damage status")}
       end
     else
-      {:noreply,
-       socket
-       |> put_flash(:error, "Cannot update damage - sortie is not in progress or you lack permissions")}
+      {:error, message} -> {:noreply, put_flash(socket, :error, message)}
     end
   end
 
@@ -114,103 +91,49 @@ defmodule AcesWeb.SortieLive.Show do
 
   @impl true
   def handle_event("start_sortie", _params, socket) do
-    if socket.assigns.can_edit and socket.assigns.sortie.status == "setup" do
-      force_commander_id = socket.assigns.selected_force_commander_id
-
-      if is_nil(force_commander_id) do
-        {:noreply,
-         socket
-         |> put_flash(:error, "Please select a Force Commander")}
-      else
-        # Validate that the selected force commander is deployed on this sortie
-        deployed_pilot_ids =
-          socket.assigns.sortie.deployments
-          |> Enum.filter(& &1.pilot_id)
-          |> Enum.map(& &1.pilot_id)
-
-        unless force_commander_id in deployed_pilot_ids do
+    with :ok <- require_can_edit(socket),
+         :ok <- require_sortie_status(socket, "setup"),
+         {:ok, force_commander_id} <- require_force_commander_selected(socket),
+         :ok <- require_force_commander_deployed(socket, force_commander_id),
+         :ok <- require_no_in_progress_sorties(socket) do
+      case Campaigns.start_sortie(socket.assigns.sortie, force_commander_id) do
+        {:ok, updated_sortie} ->
           {:noreply,
            socket
-           |> put_flash(:error, "Force Commander must be one of the deployed pilots")}
-        else
-          # Reload campaign to get current sortie statuses
-          campaign = Campaigns.get_campaign!(socket.assigns.campaign.id)
-          in_progress_sorties = Enum.filter(campaign.sorties, &(&1.status == "in_progress"))
+           |> assign(:sortie, updated_sortie)
+           |> put_flash(:info, "Sortie started successfully!")}
 
-          if length(in_progress_sorties) > 0 do
-            {:noreply,
-             socket
-             |> put_flash(:error, "Only one sortie can be in progress at a time. Complete the current sortie before starting a new one.")}
-          else
-            case Campaigns.start_sortie(socket.assigns.sortie, force_commander_id) do
-              {:ok, updated_sortie} ->
-                {:noreply,
-                 socket
-                 |> assign(:sortie, updated_sortie)
-                 |> put_flash(:info, "Sortie started successfully!")}
-
-              {:error, %Ecto.Changeset{} = changeset} ->
-                error_message = format_changeset_errors(changeset)
-
-                {:noreply,
-                 socket
-                 |> put_flash(:error, "Cannot start sortie: #{error_message}")}
-            end
-          end
-        end
+        {:error, %Ecto.Changeset{} = changeset} ->
+          {:noreply,
+           socket
+           |> put_flash(:error, "Cannot start sortie: #{format_changeset_errors(changeset)}")}
       end
     else
-      {:noreply,
-       socket
-       |> put_flash(:error, "Cannot start sortie - not in setup state or insufficient permissions")}
+      {:error, message} -> {:noreply, put_flash(socket, :error, message)}
     end
   end
 
   @impl true
   def handle_event("update_pilot_casualty", params, socket) do
-    if socket.assigns.can_edit and socket.assigns.sortie.status == "in_progress" do
-      # Extract deployment_id and pilot_casualty from params
-      # The form will send params like %{"pilot_casualty_123" => "wounded"}
-      case params |> Enum.find_value(fn 
-          {"pilot_casualty_" <> id_string, status} -> {String.to_integer(id_string), status}
-          _ -> nil
-        end) do
-        {deployment_id, casualty_status} ->
-          deployment = Enum.find(socket.assigns.sortie.deployments, &(&1.id == deployment_id))
-          
-          if deployment do
-            case update_deployment_casualty(deployment, casualty_status) do
-              {:ok, _updated_deployment} ->
-                # Reload the sortie to get updated deployments
-                updated_sortie = Campaigns.get_sortie!(socket.assigns.sortie.id)
-                
-                casualty_type = if deployment.pilot_id, do: "Pilot", else: "Crew"
-                
-                {:noreply,
-                 socket
-                 |> assign(:sortie, updated_sortie)
-                 |> put_flash(:info, "#{casualty_type} casualty updated")}
+    with :ok <- require_can_edit(socket),
+         :ok <- require_sortie_status(socket, "in_progress"),
+         {:ok, deployment_id, casualty_status} <- extract_casualty_params(params),
+         {:ok, deployment} <- find_deployment(socket, deployment_id) do
+      case update_deployment_casualty(deployment, casualty_status) do
+        {:ok, _updated_deployment} ->
+          updated_sortie = Campaigns.get_sortie!(socket.assigns.sortie.id)
+          casualty_type = if deployment.pilot_id, do: "Pilot", else: "Crew"
 
-              {:error, _changeset} ->
-                {:noreply,
-                 socket
-                 |> put_flash(:error, "Failed to update casualty status")}
-            end
-          else
-            {:noreply,
-             socket
-             |> put_flash(:error, "Deployment not found")}
-          end
-        
-        nil ->
           {:noreply,
            socket
-           |> put_flash(:error, "Invalid pilot casualty parameters")}
+           |> assign(:sortie, updated_sortie)
+           |> put_flash(:info, "#{casualty_type} casualty updated")}
+
+        {:error, _changeset} ->
+          {:noreply, put_flash(socket, :error, "Failed to update casualty status")}
       end
     else
-      {:noreply,
-       socket
-       |> put_flash(:error, "Cannot update casualty - sortie is not in progress or you lack permissions")}
+      {:error, message} -> {:noreply, put_flash(socket, :error, message)}
     end
   end
 
@@ -224,6 +147,73 @@ defmodule AcesWeb.SortieLive.Show do
     deployment
     |> Deployment.changeset(%{pilot_casualty: pilot_casualty})
     |> Aces.Repo.update()
+  end
+
+  # Validation helpers for `with` chains
+  # These return :ok or {:error, message} to enable clean guard-clause-style validation
+
+  defp require_can_edit(%{assigns: %{can_edit: true}}), do: :ok
+  defp require_can_edit(_socket), do: {:error, "You don't have permission to perform this action"}
+
+  defp require_sortie_status(%{assigns: %{sortie: %{status: status}}}, expected) when status == expected, do: :ok
+  defp require_sortie_status(%{assigns: %{sortie: %{status: actual}}}, expected) do
+    {:error, "Sortie must be in #{expected} state (currently #{actual})"}
+  end
+
+  defp require_force_commander_selected(%{assigns: %{selected_force_commander_id: nil}}) do
+    {:error, "Please select a Force Commander"}
+  end
+  defp require_force_commander_selected(%{assigns: %{selected_force_commander_id: id}}), do: {:ok, id}
+
+  defp require_force_commander_deployed(socket, force_commander_id) do
+    deployed_pilot_ids =
+      socket.assigns.sortie.deployments
+      |> Enum.filter(& &1.pilot_id)
+      |> Enum.map(& &1.pilot_id)
+
+    if force_commander_id in deployed_pilot_ids do
+      :ok
+    else
+      {:error, "Force Commander must be one of the deployed pilots"}
+    end
+  end
+
+  defp require_no_in_progress_sorties(socket) do
+    campaign = Campaigns.get_campaign!(socket.assigns.campaign.id)
+    in_progress_sorties = Enum.filter(campaign.sorties, &(&1.status == "in_progress"))
+
+    if length(in_progress_sorties) > 0 do
+      {:error, "Only one sortie can be in progress at a time. Complete the current sortie before starting a new one."}
+    else
+      :ok
+    end
+  end
+
+  defp extract_damage_params(params) do
+    case Enum.find_value(params, fn
+           {"damage_status_" <> id_string, status} -> {String.to_integer(id_string), status}
+           _ -> nil
+         end) do
+      {deployment_id, damage_status} -> {:ok, deployment_id, damage_status}
+      nil -> {:error, "Invalid damage status parameters"}
+    end
+  end
+
+  defp extract_casualty_params(params) do
+    case Enum.find_value(params, fn
+           {"pilot_casualty_" <> id_string, status} -> {String.to_integer(id_string), status}
+           _ -> nil
+         end) do
+      {deployment_id, casualty_status} -> {:ok, deployment_id, casualty_status}
+      nil -> {:error, "Invalid pilot casualty parameters"}
+    end
+  end
+
+  defp find_deployment(socket, deployment_id) do
+    case Enum.find(socket.assigns.sortie.deployments, &(&1.id == deployment_id)) do
+      nil -> {:error, "Deployment not found"}
+      deployment -> {:ok, deployment}
+    end
   end
 
   @impl true
