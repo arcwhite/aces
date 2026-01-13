@@ -28,11 +28,19 @@ defmodule AcesWeb.SortieLive.Show do
          |> redirect(to: ~p"/companies/#{company_id}/campaigns/#{campaign_id}")}
       else
         # Get deployed pilots for force commander selection (only pilots deployed on this sortie)
-        deployed_pilots = 
+        deployed_pilots =
           sortie.deployments
           |> Enum.filter(& &1.pilot_id)
           |> Enum.map(& &1.pilot)
           |> Enum.filter(& &1)
+
+        # Default to first deployed pilot or existing force commander
+        default_force_commander_id =
+          cond do
+            sortie.force_commander_id -> sortie.force_commander_id
+            length(deployed_pilots) > 0 -> hd(deployed_pilots).id
+            true -> nil
+          end
 
         {:ok,
          socket
@@ -40,6 +48,7 @@ defmodule AcesWeb.SortieLive.Show do
          |> assign(:campaign, campaign)
          |> assign(:sortie, sortie)
          |> assign(:deployed_pilots, deployed_pilots)
+         |> assign(:selected_force_commander_id, default_force_commander_id)
          |> assign(:page_title, "Sortie #{sortie.mission_number}: #{sortie.name}")
          |> assign(:can_edit, Authorization.can?(:edit_company, user, company))}
       end
@@ -93,42 +102,60 @@ defmodule AcesWeb.SortieLive.Show do
   end
 
   @impl true
-  def handle_event("start_sortie", %{"force_commander_id" => force_commander_id}, socket) do
+  def handle_event("select_force_commander", %{"force_commander_id" => force_commander_id}, socket) do
+    force_commander_id_int =
+      case force_commander_id do
+        "" -> nil
+        id -> String.to_integer(id)
+      end
+
+    {:noreply, assign(socket, :selected_force_commander_id, force_commander_id_int)}
+  end
+
+  @impl true
+  def handle_event("start_sortie", _params, socket) do
     if socket.assigns.can_edit and socket.assigns.sortie.status == "setup" do
-      # Validate that the selected force commander is deployed on this sortie
-      force_commander_id_int = String.to_integer(force_commander_id)
-      deployed_pilot_ids = 
-        socket.assigns.sortie.deployments
-        |> Enum.filter(& &1.pilot_id)
-        |> Enum.map(& &1.pilot_id)
-      
-      unless force_commander_id_int in deployed_pilot_ids do
+      force_commander_id = socket.assigns.selected_force_commander_id
+
+      if is_nil(force_commander_id) do
         {:noreply,
          socket
-         |> put_flash(:error, "Force Commander must be one of the deployed pilots")}
+         |> put_flash(:error, "Please select a Force Commander")}
       else
-        # Reload campaign to get current sortie statuses
-        campaign = Campaigns.get_campaign!(socket.assigns.campaign.id)
-        in_progress_sorties = Enum.filter(campaign.sorties, &(&1.status == "in_progress"))
-        
-        if length(in_progress_sorties) > 0 do
+        # Validate that the selected force commander is deployed on this sortie
+        deployed_pilot_ids =
+          socket.assigns.sortie.deployments
+          |> Enum.filter(& &1.pilot_id)
+          |> Enum.map(& &1.pilot_id)
+
+        unless force_commander_id in deployed_pilot_ids do
           {:noreply,
            socket
-           |> put_flash(:error, "Only one sortie can be in progress at a time. Complete the current sortie before starting a new one.")}
+           |> put_flash(:error, "Force Commander must be one of the deployed pilots")}
         else
-          case Campaigns.start_sortie(socket.assigns.sortie, force_commander_id_int) do
-            {:ok, updated_sortie} ->
-              {:noreply,
-               socket
-               |> assign(:sortie, updated_sortie)
-               |> put_flash(:info, "Sortie started successfully!")}
+          # Reload campaign to get current sortie statuses
+          campaign = Campaigns.get_campaign!(socket.assigns.campaign.id)
+          in_progress_sorties = Enum.filter(campaign.sorties, &(&1.status == "in_progress"))
 
-            {:error, %Ecto.Changeset{} = changeset} ->
-              error_message = format_changeset_errors(changeset)
+          if length(in_progress_sorties) > 0 do
+            {:noreply,
+             socket
+             |> put_flash(:error, "Only one sortie can be in progress at a time. Complete the current sortie before starting a new one.")}
+          else
+            case Campaigns.start_sortie(socket.assigns.sortie, force_commander_id) do
+              {:ok, updated_sortie} ->
+                {:noreply,
+                 socket
+                 |> assign(:sortie, updated_sortie)
+                 |> put_flash(:info, "Sortie started successfully!")}
 
-              {:noreply,
-               socket
-               |> put_flash(:error, "Cannot start sortie: #{error_message}")}
+              {:error, %Ecto.Changeset{} = changeset} ->
+                error_message = format_changeset_errors(changeset)
+
+                {:noreply,
+                 socket
+                 |> put_flash(:error, "Cannot start sortie: #{error_message}")}
+            end
           end
         end
       end
@@ -396,14 +423,15 @@ defmodule AcesWeb.SortieLive.Show do
                 <span class="label-text">Force Commander</span>
               </label>
               <%= if length(@deployed_pilots) > 0 do %>
-                <select 
-                  id="force-commander-select"
+                <select
+                  name="force_commander_id"
                   class="select select-bordered w-full"
-                  phx-value-field="force_commander_id"
+                  phx-change="select_force_commander"
                 >
-                  <option value="" disabled selected>Select Force Commander</option>
                   <%= for pilot <- @deployed_pilots do %>
-                    <option value={pilot.id}>{pilot.name} ({pilot.callsign})</option>
+                    <option value={pilot.id} selected={pilot.id == @selected_force_commander_id}>
+                      {pilot.name} ({pilot.callsign})
+                    </option>
                   <% end %>
                 </select>
               <% else %>
@@ -414,12 +442,10 @@ defmodule AcesWeb.SortieLive.Show do
             </div>
 
             <div class="card-actions justify-end">
-              <button 
+              <button
                 class="btn btn-primary"
                 phx-click="start_sortie"
-                phx-value-force_commander_id=""
-                onclick="this.setAttribute('phx-value-force_commander_id', document.getElementById('force-commander-select').value)"
-                disabled={length(@deployed_pilots) == 0}
+                disabled={length(@deployed_pilots) == 0 or is_nil(@selected_force_commander_id)}
               >
                 Start Sortie
               </button>
