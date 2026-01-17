@@ -34,7 +34,7 @@ defmodule Aces.Companies.PilotTest do
       |> Enum.into(@valid_attrs)
       |> Map.put(:company_id, company.id)
 
-    {:ok, pilot} = Aces.Companies.create_pilot(company, attrs)
+    {:ok, pilot} = Aces.Companies.Pilots.create_pilot(company, attrs)
     pilot
   end
 

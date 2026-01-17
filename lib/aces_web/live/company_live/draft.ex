@@ -3,6 +3,8 @@ defmodule AcesWeb.CompanyLive.Draft do
 
   alias Aces.Companies
   alias Aces.Companies.Authorization
+  alias Aces.Companies.Pilots, as: CompanyPilots
+  alias Aces.Companies.Units, as: CompanyUnits
   alias Aces.Units
   alias AcesWeb.Layouts
 
@@ -92,7 +94,7 @@ defmodule AcesWeb.CompanyLive.Draft do
     user = socket.assigns.current_scope.user
 
     if Authorization.can?(:edit_company, user, company) do
-      case Companies.purchase_unit_for_company(company, mul_id) do
+      case CompanyUnits.purchase_unit_for_company(company, mul_id) do
         {:ok, _company_unit} ->
           updated_company = Companies.get_company_with_stats!(company.id)
 
@@ -154,7 +156,7 @@ defmodule AcesWeb.CompanyLive.Draft do
       company_unit = Enum.find(company.company_units, &(&1.id == unit_id))
       
       if company_unit do
-        case Companies.remove_unit_from_company(company_unit) do
+        case CompanyUnits.remove_unit_from_company(company_unit) do
           {:ok, _} ->
             updated_company = Companies.get_company_with_stats!(company.id)
 
@@ -189,7 +191,7 @@ defmodule AcesWeb.CompanyLive.Draft do
       pilot = Enum.find(company.pilots, &(&1.id == pilot_id))
       
       if pilot do
-        case Companies.delete_pilot(pilot) do
+        case CompanyPilots.delete_pilot(pilot) do
           {:ok, _} ->
             updated_company = Companies.get_company_with_stats!(company.id)
 

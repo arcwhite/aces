@@ -8,56 +8,15 @@
 # Learnings
 
 # High-priority items
-- [x] Think hard and plan data structures for Campaigns and Sorties and their events, reading @specs/CAMPAIGNS.md
-  - COMPLETED: Implemented comprehensive campaign and sortie data structures
-  - Created database migration with campaigns, sorties, deployments, campaign_events, and pilot_campaign_stats tables
-  - Added Campaign, Sortie, Deployment, CampaignEvent, and PilotCampaignStats Ecto schemas with proper validations
-  - Implemented Campaigns context with business logic for campaign/sortie management
-  - Includes post-battle processing, SP allocation, expense calculations, and event tracking
-  - Supports real-time damage tracking during sorties and multi-step post-battle workflow
-  - All existing tests passing, schemas ready for UI implementation
-  - Commit: 5a0b257
-- [x] Implement any UI required for the player to start a Campaign
-  - COMPLETED: Implemented comprehensive campaign creation and management UI
-  - Created CampaignLive.New with form for campaign name, description, difficulty, and starting warchest
-  - Created CampaignLive.Show with campaign overview, sortie history, and pilot performance stats
-  - Added active campaign section to company show page with quick access
-  - Added campaign routes: /companies/:company_id/campaigns/new and /companies/:company_id/campaigns/:id
-  - Updated difficulty levels to include Legendary with proper modifiers
-  - Fixed datetime microseconds compatibility issues throughout campaign/sortie schemas
-  - Removed keywords from creation form (keywords are gained from sorties, not set at creation)
-  - Integrated with existing Campaigns context and business logic
-  - All compilation warnings resolved except for future sortie routes
-  - Commit: 9f3f133
-- [x] Implement any UI required for a player to start a Sortie
+
 - [ ] Implement any UI required for a player to log the outcome of their Sortie as they're playing it (e.g mark units as destroyed, crippled, damaged, the units crew as wounded/killed, etc.)
 - [ ] Implement UI to finish a Sortie
 - [ ] Add UI to show timelines of events on a Campaign, including Sortie outcomes, unit purchases, new pilots hired, units sold, etc.
 
 # Medium-priority items
+- [ ] Refctor Aces.Campaigns, breaking it into Aces.Campaigns, Aces.Campaigns.Sorties, and maybe Aces.Campaigns.Deployments? Not worth doing until after we figured out how to wrap up a Sortie and its data I think
 - [ ] Figure out how to compute code coverage
 
 # Low-priority items
 
 # Completed Items
-- [x] All units have a skill rating. If a named pilot is assigned to a unit, it's skill rating is equal to the pilot's. Otherwise it's 4.
-
-- [x] Pilot skill progression is not right, it should be brought into line with the Skill Progression section of the PLAN.md file
-  - COMPLETED: Fixed pilot skill progression to match PLAN.md requirements
-  - Updated skill level range to 0-4 (Alpha Strike rules: lower is better)
-  - Added SP allocation tracking fields for skill, edge tokens, and edge abilities  
-  - Implemented proper starting conditions: skill 4, 1 edge token for free, 150 SP available
-  - Fixed skill progression costs to match PLAN.md spec (400/900/1900/3400 SP for skills 3/2/1/0)
-  - Added edge token and edge ability progression costs
-  - Replaced upgrade_pilot_skill with allocate_pilot_sp for proper SP allocation
-  - Added validation to ensure SP allocations are consistent with derived fields
-  - Updated test fixtures to work with new SP system
-  - All tests passing
-  - Commit: 8e078ab
-
-- [x] Limitations on having only ONE PAIR of Mechs with the same Chassis (but different variants) are not right. Right now I can add a BLR-M3, a BLR-1G, a MAD-5S, and a MAD-5R. I should not be able to add the MAD-5R, as this would be two sets of mechs with the same chassis.
-  - COMPLETED: Fixed chassis limitation logic to enforce only one paired chassis per company
-  - Added validation to prevent completing a second pair when one pair already exists
-  - Still allows single mechs of new chassis after a pair exists
-  - Comprehensive test coverage added for new validation rules
-  - Commit: d45ac56

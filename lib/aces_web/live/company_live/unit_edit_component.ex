@@ -1,7 +1,7 @@
 defmodule AcesWeb.CompanyLive.UnitEditComponent do
   use AcesWeb, :live_component
 
-  alias Aces.Companies
+  alias Aces.Companies.Units
 
   @impl true
   def render(assigns) do
@@ -39,7 +39,7 @@ defmodule AcesWeb.CompanyLive.UnitEditComponent do
 
   @impl true
   def update(%{unit: unit, company: company} = assigns, socket) do
-    changeset = Companies.change_company_unit(unit)
+    changeset = Units.change_company_unit(unit)
 
     # Build pilot options - only include unassigned pilots, plus the currently assigned pilot
     pilot_options = build_pilot_options(company.pilots, unit.pilot_id)
@@ -55,7 +55,7 @@ defmodule AcesWeb.CompanyLive.UnitEditComponent do
   def handle_event("validate", %{"company_unit" => unit_params}, socket) do
     changeset =
       socket.assigns.unit
-      |> Companies.change_company_unit(unit_params)
+      |> Units.change_company_unit(unit_params)
       |> Map.put(:action, :validate)
 
     {:noreply, assign_form(socket, changeset)}
@@ -66,7 +66,7 @@ defmodule AcesWeb.CompanyLive.UnitEditComponent do
   end
 
   defp save_unit(socket, :edit_unit, unit_params) do
-    case Companies.update_company_unit(socket.assigns.unit, unit_params) do
+    case Units.update_company_unit(socket.assigns.unit, unit_params) do
       {:ok, unit} ->
         notify_parent({:saved, unit})
 

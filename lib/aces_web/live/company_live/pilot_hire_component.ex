@@ -1,13 +1,13 @@
 defmodule AcesWeb.CompanyLive.PilotHireComponent do
   use AcesWeb, :live_component
 
-  alias Aces.Companies
   alias Aces.Companies.Pilot
+  alias Aces.Companies.Pilots
 
   @impl true
   def update(assigns, socket) do
     pilot = %Pilot{}
-    changeset = Companies.change_pilot(pilot)
+    changeset = Pilots.change_pilot(pilot)
 
     {:ok,
      socket
@@ -20,7 +20,7 @@ defmodule AcesWeb.CompanyLive.PilotHireComponent do
   def handle_event("validate", %{"pilot" => pilot_params}, socket) do
     changeset =
       socket.assigns.pilot
-      |> Companies.change_pilot(pilot_params)
+      |> Pilots.change_pilot(pilot_params)
       |> Map.put(:action, :validate)
 
     {:noreply, assign(socket, :form, to_form(changeset))}
@@ -29,7 +29,7 @@ defmodule AcesWeb.CompanyLive.PilotHireComponent do
   def handle_event("save", %{"pilot" => pilot_params}, socket) do
     company = socket.assigns.company
 
-    case Companies.hire_pilot(company, pilot_params) do
+    case Pilots.hire_pilot(company, pilot_params) do
       {:ok, pilot, updated_company} ->
         notify_parent({:saved, pilot, updated_company})
         {:noreply,

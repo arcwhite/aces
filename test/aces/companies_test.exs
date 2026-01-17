@@ -2,6 +2,7 @@ defmodule Aces.CompaniesTest do
   use Aces.DataCase
 
   alias Aces.Companies
+  alias Aces.Companies.Units
 
   import Aces.AccountsFixtures
   import Aces.CompaniesFixtures
@@ -267,7 +268,7 @@ defmodule Aces.CompaniesTest do
       master_unit = master_unit_fixture()
 
       assert {:ok, company_unit} =
-               Companies.add_unit_to_company(company, master_unit.mul_id, %{
+               Units.add_unit_to_company(company, master_unit.mul_id, %{
                  custom_name: "The Destroyer",
                  purchase_cost_sp: 2000
                })
@@ -284,7 +285,7 @@ defmodule Aces.CompaniesTest do
     test "removes a unit from roster" do
       company_unit = company_unit_fixture()
 
-      assert {:ok, _} = Companies.remove_unit_from_company(company_unit)
+      assert {:ok, _} = Units.remove_unit_from_company(company_unit)
 
       # Unit should be deleted
       assert Aces.Repo.get(Aces.Companies.CompanyUnit, company_unit.id) == nil
@@ -296,7 +297,7 @@ defmodule Aces.CompaniesTest do
       company_unit = company_unit_fixture()
 
       assert {:ok, updated} =
-               Companies.update_company_unit(company_unit, %{
+               Units.update_company_unit(company_unit, %{
                  custom_name: "New Name",
                  status: "damaged"
                })
@@ -437,7 +438,7 @@ defmodule Aces.CompaniesTest do
 
       # Now this should work without making HTTP calls since unit is cached
       assert {:ok, _company_unit} =
-        Companies.purchase_unit_for_company(company, master_unit.mul_id)
+        Units.purchase_unit_for_company(company, master_unit.mul_id)
     end
 
     test "prevents PV purchases for active companies" do
@@ -450,7 +451,7 @@ defmodule Aces.CompaniesTest do
 
       # This should return an error for active companies
       assert {:error, %Ecto.Changeset{} = changeset} =
-        Companies.purchase_unit_for_company(company, master_unit.mul_id)
+        Units.purchase_unit_for_company(company, master_unit.mul_id)
 
       assert %{company_id: ["Cannot add units to active companies"]} = errors_on(changeset)
     end
@@ -462,7 +463,7 @@ defmodule Aces.CompaniesTest do
       master_unit = master_unit_fixture(point_value: 100)
 
       assert {:ok, _company_unit} =
-        Companies.add_unit_to_company(company, master_unit.mul_id)
+        Units.add_unit_to_company(company, master_unit.mul_id)
     end
 
     test "prevents unit addition for active companies" do
@@ -470,7 +471,7 @@ defmodule Aces.CompaniesTest do
       master_unit = master_unit_fixture(point_value: 100)
 
       assert {:error, %Ecto.Changeset{} = changeset} =
-        Companies.add_unit_to_company(company, master_unit.mul_id)
+        Units.add_unit_to_company(company, master_unit.mul_id)
 
       assert %{company_id: ["Cannot add units to active companies"]} = errors_on(changeset)
     end
@@ -483,7 +484,7 @@ defmodule Aces.CompaniesTest do
       protomech = master_unit_fixture(unit_type: "protomech", point_value: 50)
 
       assert {:error, %Ecto.Changeset{valid?: false} = changeset} =
-        Companies.purchase_unit_for_company(company, protomech.mul_id)
+        Units.purchase_unit_for_company(company, protomech.mul_id)
 
       assert "Only types Battlemech, Battle Armor, Combat Vehicle, Conventional Infantry are allowed" in errors_on(changeset).master_unit_id
     end
@@ -495,12 +496,12 @@ defmodule Aces.CompaniesTest do
       warhammer3 = master_unit_fixture(unit_type: "battlemech", name: "Warhammer", variant: "WHM-7M", point_value: 50)
 
       # Add two different Warhammer variants
-      assert {:ok, _} = Companies.purchase_unit_for_company(company, warhammer1.mul_id)
-      assert {:ok, _} = Companies.purchase_unit_for_company(company, warhammer2.mul_id)
+      assert {:ok, _} = Units.purchase_unit_for_company(company, warhammer1.mul_id)
+      assert {:ok, _} = Units.purchase_unit_for_company(company, warhammer2.mul_id)
 
       # Third should fail
       assert {:error, %Ecto.Changeset{valid?: false} = changeset} =
-        Companies.purchase_unit_for_company(company, warhammer3.mul_id)
+        Units.purchase_unit_for_company(company, warhammer3.mul_id)
 
       assert "Cannot add more than 2 Battlemechs of the same chassis" in errors_on(changeset).master_unit_id
     end
@@ -511,11 +512,11 @@ defmodule Aces.CompaniesTest do
       warhammer2 = master_unit_fixture(unit_type: "battlemech", name: "Warhammer", variant: "WHM-6R", point_value: 50)
 
       # Add one variant
-      assert {:ok, _} = Companies.purchase_unit_for_company(company, warhammer1.mul_id)
+      assert {:ok, _} = Units.purchase_unit_for_company(company, warhammer1.mul_id)
 
       # Same variant should fail
       assert {:error, %Ecto.Changeset{valid?: false} = changeset} =
-        Companies.purchase_unit_for_company(company, warhammer2.mul_id)
+        Units.purchase_unit_for_company(company, warhammer2.mul_id)
 
       assert "Cannot add duplicate Battlemech variants of the same chassis" in errors_on(changeset).master_unit_id
     end
@@ -525,12 +526,12 @@ defmodule Aces.CompaniesTest do
       maxim = master_unit_fixture(unit_type: "combat_vehicle", name: "Maxim", variant: "Standard", point_value: 50)
 
       # Add two identical units
-      assert {:ok, _} = Companies.purchase_unit_for_company(company, maxim.mul_id)
-      assert {:ok, _} = Companies.purchase_unit_for_company(company, maxim.mul_id)
+      assert {:ok, _} = Units.purchase_unit_for_company(company, maxim.mul_id)
+      assert {:ok, _} = Units.purchase_unit_for_company(company, maxim.mul_id)
 
       # Third should fail
       assert {:error, %Ecto.Changeset{valid?: false} = changeset} =
-        Companies.purchase_unit_for_company(company, maxim.mul_id)
+        Units.purchase_unit_for_company(company, maxim.mul_id)
 
       assert "Cannot add more than 2 identical units of the same type" in errors_on(changeset).master_unit_id
     end

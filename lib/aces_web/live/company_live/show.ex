@@ -3,6 +3,7 @@ defmodule AcesWeb.CompanyLive.Show do
 
   alias Aces.{Companies, Campaigns}
   alias Aces.Companies.Authorization
+  alias Aces.Companies.Units, as: CompanyUnits
   alias Aces.Units
 
   on_mount {AcesWeb.UserAuthLive, :default}
@@ -104,7 +105,7 @@ defmodule AcesWeb.CompanyLive.Show do
     user = socket.assigns.current_scope.user
 
     if Authorization.can?(:edit_company, user, company) do
-      case Companies.purchase_unit_for_company(company, mul_id) do
+      case CompanyUnits.purchase_unit_for_company(company, mul_id) do
         {:ok, _company_unit} ->
           # Reload the company with updated stats
           updated_company = Companies.get_company_with_stats!(company.id)

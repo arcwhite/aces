@@ -5,6 +5,7 @@ defmodule Aces.CompaniesFixtures do
   """
 
   alias Aces.Companies
+  alias Aces.Companies.Pilots
   alias Aces.AccountsFixtures
 
   def unique_company_name, do: "Company #{System.unique_integer()}"
@@ -120,7 +121,7 @@ defmodule Aces.CompaniesFixtures do
     {:ok, pilot} =
       attrs
       |> valid_pilot_attributes()
-      |> (&Companies.create_pilot(company, &1)).()
+      |> (&Pilots.create_pilot(company, &1)).()
 
     pilot
   end

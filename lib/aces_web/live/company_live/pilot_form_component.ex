@@ -1,12 +1,12 @@
 defmodule AcesWeb.CompanyLive.PilotFormComponent do
   use AcesWeb, :live_component
 
-  alias Aces.Companies
   alias Aces.Companies.Pilot
+  alias Aces.Companies.Pilots
 
   @impl true
   def update(%{pilot: pilot} = assigns, socket) do
-    changeset = Companies.change_pilot(pilot)
+    changeset = Pilots.change_pilot(pilot)
     available_abilities = Pilot.available_edge_abilities()
     max_abilities = Pilot.calculate_edge_abilities_from_sp(pilot.sp_allocated_to_edge_abilities)
 
@@ -107,7 +107,7 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
 
     changeset =
       socket.assigns.pilot
-      |> Companies.change_pilot(pilot_params)
+      |> Pilots.change_pilot(pilot_params)
       |> Map.put(:action, :validate)
 
     {:noreply, assign(socket, :form, to_form(changeset))}
@@ -134,7 +134,7 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
     current_form_data = socket.assigns.form.params || %{}
     changeset = 
       updated_pilot
-      |> Companies.change_pilot(current_form_data)
+      |> Pilots.change_pilot(current_form_data)
       |> Map.put(:action, :validate)
 
     {:noreply,
@@ -167,7 +167,7 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
   defp save_pilot(socket, :new, pilot_params) do
     company = socket.assigns.company
 
-    case Companies.create_pilot(company, pilot_params) do
+    case Pilots.create_pilot(company, pilot_params) do
       {:ok, pilot} ->
         notify_parent({:saved, pilot})
         {:noreply,
@@ -190,7 +190,7 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
   defp save_pilot(socket, :edit, pilot_params) do
     pilot = socket.assigns.pilot
 
-    case Companies.update_pilot(pilot, pilot_params) do
+    case Pilots.update_pilot(pilot, pilot_params) do
       {:ok, pilot} ->
         notify_parent({:saved, pilot})
         {:noreply,
