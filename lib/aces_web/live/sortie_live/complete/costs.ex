@@ -5,7 +5,7 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
   use AcesWeb, :live_view
 
   alias Aces.{Companies, Campaigns}
-  alias Aces.Companies.Authorization
+  alias Aces.Companies.{Authorization, Pilots, Pilot}
   alias Aces.Campaigns.Deployment
   alias AcesWeb.SortieLive.Complete.Helpers
 
@@ -131,14 +131,37 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
     sortie = socket.assigns.sortie
     costs = socket.assigns.costs
 
+    # Check if operational costs have changed - if so, we need to reset pilot allocations
+    # because the available pool for pilots may have changed
+    old_operational_expenses = (sortie.total_expenses || 0) - (sortie.pilot_sp_cost || 0)
+    new_operational_expenses = costs.total_expenses
+    costs_changed = old_operational_expenses != new_operational_expenses
+
+    # If costs changed and pilots already distributed SP, reset the pilot data
+    {pilot_sp_cost, pilot_allocations} =
+      if costs_changed and (sortie.pilot_sp_cost || 0) > 0 do
+        # Reset pilot SP - they'll need to go through the pilots step again
+        reset_pilot_sp_for_cost_change(sortie, socket.assigns.company)
+        {0, %{}}
+      else
+        # Preserve existing pilot data
+        {sortie.pilot_sp_cost || 0, sortie.pilot_allocations || %{}}
+      end
+
+    # Calculate total expenses including pilot SP cost
+    total_expenses_with_pilot = costs.total_expenses + pilot_sp_cost
+    net_earnings = costs.adjusted_income - total_expenses_with_pilot
+
     # Update sortie with calculated costs
     {:ok, _} =
       sortie
       |> Ecto.Changeset.change(%{
         rearming_cost: costs.total_rearming,
         total_income: costs.adjusted_income,
-        total_expenses: costs.total_expenses,
-        net_earnings: costs.net_earnings,
+        total_expenses: total_expenses_with_pilot,
+        net_earnings: net_earnings,
+        pilot_sp_cost: pilot_sp_cost,
+        pilot_allocations: pilot_allocations,
         finalization_step: "pilots"
       })
       |> Aces.Repo.update()
@@ -436,6 +459,48 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
       "wounded" -> "Wounded"
       "killed" -> "Killed"
       _ -> String.capitalize(status || "unknown")
+    end
+  end
+
+  # Reset pilot SP when costs change - pilots will need to go through distribution again
+  defp reset_pilot_sp_for_cost_change(sortie, company) do
+    all_pilots = Pilots.list_company_pilots(company)
+
+    # First, reverse any allocations from spend_sp step using pilot_allocations
+    # This also tells us how much SP each pilot received (sp_to_spend field)
+    if sortie.pilot_allocations && sortie.pilot_allocations != %{} do
+      Enum.each(sortie.pilot_allocations, fn {pilot_id_str, saved} ->
+        pilot_id = String.to_integer(pilot_id_str)
+        pilot = Enum.find(all_pilots, &(&1.id == pilot_id))
+
+        if pilot do
+          baseline_skill = saved["baseline_skill"] || 0
+          baseline_tokens = saved["baseline_tokens"] || 0
+          baseline_abilities = saved["baseline_abilities"] || 0
+          baseline_edge_abilities = saved["baseline_edge_abilities"] || []
+          sp_received = saved["sp_to_spend"] || 0
+
+          # Check if this pilot was MVP (gets extra 20 SP)
+          mvp_bonus = if sortie.mvp_pilot_id == pilot_id, do: 20, else: 0
+          total_sp_to_remove = sp_received + mvp_bonus
+
+          # Reverse the spend_sp allocations AND the pilots step distribution
+          pilot
+          |> Ecto.Changeset.change(%{
+            sp_allocated_to_skill: baseline_skill,
+            sp_allocated_to_edge_tokens: baseline_tokens,
+            sp_allocated_to_edge_abilities: baseline_abilities,
+            edge_abilities: baseline_edge_abilities,
+            skill_level: Pilot.calculate_skill_from_sp(baseline_skill),
+            edge_tokens: Pilot.calculate_edge_tokens_from_sp(baseline_tokens),
+            sp_available: 0,
+            sp_earned: max((pilot.sp_earned || 0) - total_sp_to_remove, 0),
+            sorties_participated: max((pilot.sorties_participated || 0) - 1, 0),
+            mvp_awards: if(sortie.mvp_pilot_id == pilot_id, do: max((pilot.mvp_awards || 0) - 1, 0), else: pilot.mvp_awards)
+          })
+          |> Aces.Repo.update()
+        end
+      end)
     end
   end
 end

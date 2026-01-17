@@ -85,27 +85,52 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
       |> Enum.map(& &1.pilot_id)
       |> MapSet.new()
 
-    # Calculate earnings for each pilot
-    Enum.map(all_pilots, fn pilot ->
+    # First pass: calculate "desired" SP for each pilot (before pool constraint)
+    desired_earnings =
+      Enum.map(all_pilots, fn pilot ->
+        cond do
+          # Killed pilots earn nothing
+          MapSet.member?(killed_pilot_ids, pilot.id) ->
+            {pilot.id, %{desired_sp: 0, status: :killed, participated: true}}
+
+          # Deceased pilots don't earn
+          pilot.status == "deceased" ->
+            {pilot.id, %{desired_sp: 0, status: :deceased, participated: false}}
+
+          # Participating pilots want full share
+          MapSet.member?(participating_pilot_ids, pilot.id) ->
+            {pilot.id, %{desired_sp: max_sp_per_pilot, status: :active, participated: true}}
+
+          # Non-participating pilots want half share
+          true ->
+            {pilot.id, %{desired_sp: div(max_sp_per_pilot, 2), status: :active, participated: false}}
+        end
+      end)
+
+    # Calculate total desired SP
+    total_desired = Enum.reduce(desired_earnings, 0, fn {_id, data}, acc -> acc + data.desired_sp end)
+
+    # Determine if we need to scale down (can't give out more than net_earnings)
+    # If net_earnings <= 0, nobody gets anything
+    scale_factor =
       cond do
-        # Killed pilots earn nothing
-        MapSet.member?(killed_pilot_ids, pilot.id) ->
-          {pilot.id, %{sp: 0, status: :killed, participated: true}}
-
-        # Deceased pilots don't earn
-        pilot.status == "deceased" ->
-          {pilot.id, %{sp: 0, status: :deceased, participated: false}}
-
-        # Participating pilots get full share (up to max)
-        MapSet.member?(participating_pilot_ids, pilot.id) ->
-          sp = if net_earnings > 0, do: min(max_sp_per_pilot, net_earnings), else: 0
-          {pilot.id, %{sp: sp, status: :active, participated: true}}
-
-        # Non-participating pilots get half share
-        true ->
-          sp = if net_earnings > 0, do: min(div(max_sp_per_pilot, 2), net_earnings), else: 0
-          {pilot.id, %{sp: sp, status: :active, participated: false}}
+        net_earnings <= 0 -> 0.0
+        total_desired <= net_earnings -> 1.0
+        total_desired > 0 -> net_earnings / total_desired
+        true -> 0.0
       end
+
+    # Second pass: apply scale factor to get actual SP
+    Enum.map(desired_earnings, fn {pilot_id, data} ->
+      actual_sp =
+        if data.desired_sp > 0 do
+          # Scale down and floor to integer
+          floor(data.desired_sp * scale_factor)
+        else
+          0
+        end
+
+      {pilot_id, %{sp: actual_sp, status: data.status, participated: data.participated}}
     end)
     |> Map.new()
   end
@@ -121,7 +146,109 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
     sortie = socket.assigns.sortie
     mvp_id = socket.assigns.selected_mvp_id
     pilot_earnings = socket.assigns.pilot_earnings
+    already_distributed = (sortie.pilot_sp_cost || 0) > 0
 
+    if already_distributed do
+      # SP was already distributed - only handle MVP changes
+      handle_mvp_change_only(socket, sortie, mvp_id)
+    else
+      # First time through - distribute SP to pilots
+      distribute_sp_to_pilots(socket, sortie, mvp_id, pilot_earnings)
+    end
+
+    {:noreply,
+     push_navigate(socket,
+       to: ~p"/companies/#{socket.assigns.company.id}/campaigns/#{socket.assigns.campaign.id}/sorties/#{sortie.id}/complete/spend_sp"
+     )}
+  end
+
+  defp handle_mvp_change_only(socket, sortie, new_mvp_id) do
+    old_mvp_id = sortie.mvp_pilot_id
+
+    # Only process if MVP actually changed
+    if old_mvp_id != new_mvp_id do
+      # First, reverse any SP allocations that were made in spend_sp step
+      # This resets pilots to their baseline state before the allocations
+      reverse_pilot_allocations(sortie.pilot_allocations, socket.assigns.all_pilots)
+
+      # Remove MVP bonus from old MVP (if there was one)
+      if old_mvp_id do
+        old_mvp = Enum.find(socket.assigns.all_pilots, &(&1.id == old_mvp_id))
+        if old_mvp do
+          old_mvp
+          |> Ecto.Changeset.change(%{
+            sp_earned: max((old_mvp.sp_earned || 0) - 20, 0),
+            sp_available: max((old_mvp.sp_available || 0) - 20, 0),
+            mvp_awards: max((old_mvp.mvp_awards || 0) - 1, 0)
+          })
+          |> Aces.Repo.update()
+        end
+      end
+
+      # Add MVP bonus to new MVP (if there is one)
+      if new_mvp_id do
+        new_mvp = Enum.find(socket.assigns.all_pilots, &(&1.id == new_mvp_id))
+        if new_mvp do
+          new_mvp
+          |> Ecto.Changeset.change(%{
+            sp_earned: (new_mvp.sp_earned || 0) + 20,
+            sp_available: (new_mvp.sp_available || 0) + 20,
+            mvp_awards: (new_mvp.mvp_awards || 0) + 1
+          })
+          |> Aces.Repo.update()
+        end
+      end
+
+      # Update sortie with new MVP and clear pilot_allocations
+      sortie
+      |> Ecto.Changeset.change(%{
+        mvp_pilot_id: new_mvp_id,
+        pilot_allocations: %{},
+        finalization_step: "spend_sp"
+      })
+      |> Aces.Repo.update()
+    else
+      # Just update finalization step
+      sortie
+      |> Ecto.Changeset.change(%{finalization_step: "spend_sp"})
+      |> Aces.Repo.update()
+    end
+  end
+
+  defp reverse_pilot_allocations(nil, _pilots), do: :ok
+  defp reverse_pilot_allocations(allocations, pilots) when allocations == %{}, do: :ok
+  defp reverse_pilot_allocations(allocations, pilots) do
+    # For each pilot with saved allocations, reset their stats to baseline
+    # and restore their sp_available
+    Enum.each(allocations, fn {pilot_id_str, saved} ->
+      pilot_id = String.to_integer(pilot_id_str)
+      pilot = Enum.find(pilots, &(&1.id == pilot_id))
+
+      if pilot do
+        # Get the baseline values (what they had before this sortie's allocations)
+        baseline_skill = saved["baseline_skill"] || 0
+        baseline_tokens = saved["baseline_tokens"] || 0
+        baseline_abilities = saved["baseline_abilities"] || 0
+        baseline_edge_abilities = saved["baseline_edge_abilities"] || []
+        sp_to_spend = saved["sp_to_spend"] || 0
+
+        # Reset pilot to baseline and restore sp_available
+        pilot
+        |> Ecto.Changeset.change(%{
+          sp_allocated_to_skill: baseline_skill,
+          sp_allocated_to_edge_tokens: baseline_tokens,
+          sp_allocated_to_edge_abilities: baseline_abilities,
+          edge_abilities: baseline_edge_abilities,
+          skill_level: Aces.Companies.Pilot.calculate_skill_from_sp(baseline_skill),
+          edge_tokens: Aces.Companies.Pilot.calculate_edge_tokens_from_sp(baseline_tokens),
+          sp_available: sp_to_spend
+        })
+        |> Aces.Repo.update()
+      end
+    end)
+  end
+
+  defp distribute_sp_to_pilots(socket, sortie, mvp_id, pilot_earnings) do
     # Calculate total pilot SP cost (sum of all SP awarded to pilots)
     # NOTE: MVP bonus is NOT included - it's "free" and doesn't come from sortie earnings
     total_pilot_sp_cost =
@@ -155,16 +282,22 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
     Enum.each(socket.assigns.all_pilots, fn pilot ->
       earnings = Map.get(pilot_earnings, pilot.id)
 
-      if earnings && earnings.sp > 0 do
-        # Add MVP bonus if this is the MVP
-        bonus = if pilot.id == mvp_id, do: 20, else: 0
-        total_sp = earnings.sp + bonus
+      # Calculate base SP from earnings
+      base_sp = if earnings && earnings.sp > 0, do: earnings.sp, else: 0
 
-        # Update pilot's sp_earned and sp_available
+      # MVP bonus is given regardless of earnings (as long as pilot is eligible)
+      # MVP must have participated and not be killed/deceased
+      is_mvp = pilot.id == mvp_id
+      mvp_bonus = if is_mvp && earnings && earnings.participated && earnings.status == :active, do: 20, else: 0
+
+      total_sp = base_sp + mvp_bonus
+
+      # Only update if there's something to give (SP or MVP bonus) or if they participated
+      if total_sp > 0 || (earnings && earnings.participated) do
         new_sp_earned = (pilot.sp_earned || 0) + total_sp
         new_sp_available = (pilot.sp_available || 0) + total_sp
-        new_sorties = (pilot.sorties_participated || 0) + if(earnings.participated, do: 1, else: 0)
-        new_mvp_awards = (pilot.mvp_awards || 0) + if(pilot.id == mvp_id, do: 1, else: 0)
+        new_sorties = (pilot.sorties_participated || 0) + if(earnings && earnings.participated, do: 1, else: 0)
+        new_mvp_awards = (pilot.mvp_awards || 0) + if(is_mvp && mvp_bonus > 0, do: 1, else: 0)
 
         pilot
         |> Ecto.Changeset.change(%{
@@ -196,11 +329,6 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
         end
       end
     end)
-
-    {:noreply,
-     push_navigate(socket,
-       to: ~p"/companies/#{socket.assigns.company.id}/campaigns/#{socket.assigns.campaign.id}/sorties/#{sortie.id}/complete/spend_sp"
-     )}
   end
 
   @impl true
@@ -325,21 +453,24 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
             The MVP receives an additional 20 SP bonus (not deducted from earnings).
           </p>
 
-          <select
-            class="select select-bordered w-full max-w-md"
-            phx-change="select_mvp"
-            name="pilot_id"
-          >
-            <option value="">Select MVP...</option>
-            <%= for pilot <- @all_pilots do %>
-              <% earnings = Map.get(@pilot_earnings, pilot.id) %>
-              <%= if earnings.participated and earnings.status not in [:killed, :deceased] do %>
-                <option value={pilot.id} selected={pilot.id == @selected_mvp_id}>
-                  {pilot.name} {if pilot.callsign, do: "(#{pilot.callsign})", else: ""}
-                </option>
+          <form phx-change="select_mvp">
+            <select
+              name="pilot_id"
+              class="select select-bordered w-full max-w-md"
+              phx-change="select_mvp"
+              id={"mvp-select-#{@selected_mvp_id || "none"}"}
+            >
+              <option value="" selected={is_nil(@selected_mvp_id)}>Select MVP...</option>
+              <%= for pilot <- @all_pilots do %>
+                <% earnings = Map.get(@pilot_earnings, pilot.id) %>
+                <%= if earnings.participated and earnings.status not in [:killed, :deceased] do %>
+                  <option value={pilot.id} selected={pilot.id == @selected_mvp_id}>
+                    {pilot.name} {if pilot.callsign, do: "(#{pilot.callsign})", else: ""}
+                  </option>
+                <% end %>
               <% end %>
-            <% end %>
-          </select>
+            </select>
+          </form>
         </div>
       </div>
 

@@ -36,7 +36,8 @@ defmodule Aces.Campaigns.Sortie do
     field :keywords_gained, {:array, :string}, default: []
 
     # Finalization wizard progress
-    field :finalization_step, :string  # "outcome" | "damage" | "costs" | "pilots" | "summary" | nil
+    field :finalization_step, :string  # "outcome" | "damage" | "costs" | "pilots" | "spend_sp" | "summary" | nil
+    field :pilot_allocations, :map, default: %{}  # Stores SP allocations made in spend_sp step
 
     # Metadata
     field :started_at, :utc_datetime
@@ -59,7 +60,7 @@ defmodule Aces.Campaigns.Sortie do
       :primary_objective_income, :secondary_objectives_income, :waypoints_income,
       :rearming_cost, :total_income, :total_expenses, :net_earnings, :pilot_sp_cost,
       :sp_per_participating_pilot, :keywords_gained, :mvp_pilot_id,
-      :started_at, :completed_at, :finalization_step
+      :started_at, :completed_at, :finalization_step, :pilot_allocations
     ])
     |> validate_required([:name, :pv_limit, :status])
     |> validate_inclusion(:status, @sortie_status)

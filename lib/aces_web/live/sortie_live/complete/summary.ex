@@ -291,29 +291,31 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
             <!-- Expense Breakdown -->
             <div class="text-sm opacity-70 mt-2">Expenses:</div>
             <% repair_cost = Enum.reduce(@sortie.deployments, 0, fn d, acc -> acc + (d.repair_cost_sp || 0) end) %>
-            <% other_expenses = (@sortie.total_expenses || 0) - (@sortie.pilot_sp_cost || 0) - repair_cost %>
+            <% rearming_cost = @sortie.rearming_cost || 0 %>
+            <% pilot_sp_cost = @sortie.pilot_sp_cost || 0 %>
+            <% casualty_cost = (@sortie.total_expenses || 0) - pilot_sp_cost - repair_cost - rearming_cost %>
             <%= if repair_cost > 0 do %>
               <div class="flex justify-between text-error pl-4">
                 <span>Repair Costs:</span>
                 <span class="font-mono">-{repair_cost} SP</span>
               </div>
             <% end %>
-            <%= if @sortie.rearming_cost && @sortie.rearming_cost > 0 do %>
+            <%= if rearming_cost > 0 do %>
               <div class="flex justify-between text-error pl-4">
                 <span>Rearming Costs:</span>
-                <span class="font-mono">-{@sortie.rearming_cost} SP</span>
+                <span class="font-mono">-{rearming_cost} SP</span>
               </div>
             <% end %>
-            <%= if other_expenses > 0 do %>
+            <%= if casualty_cost > 0 do %>
               <div class="flex justify-between text-error pl-4">
                 <span>Casualty Costs:</span>
-                <span class="font-mono">-{other_expenses} SP</span>
+                <span class="font-mono">-{casualty_cost} SP</span>
               </div>
             <% end %>
-            <%= if @sortie.pilot_sp_cost && @sortie.pilot_sp_cost > 0 do %>
+            <%= if pilot_sp_cost > 0 do %>
               <div class="flex justify-between text-error pl-4">
                 <span>Pilot SP Allocation:</span>
-                <span class="font-mono">-{@sortie.pilot_sp_cost} SP</span>
+                <span class="font-mono">-{pilot_sp_cost} SP</span>
               </div>
             <% end %>
             <div class="flex justify-between text-error font-semibold">

@@ -21,12 +21,14 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
     with :ok <- authorize_access(user, company),
          :ok <- validate_sortie_belongs_to_campaign(sortie, campaign, company),
          :ok <- validate_sortie_status(sortie, "spend_sp") do
-      # Get all pilots with SP to spend
+      # Get all pilots in the company
       all_pilots = Pilots.list_company_pilots(company)
-      pilots_with_sp = Enum.filter(all_pilots, fn p -> (p.sp_available || 0) > 0 end)
 
-      # Build allocation state for each pilot
-      pilot_allocations = build_pilot_allocations(pilots_with_sp)
+      # Check if we have saved allocations from a previous visit
+      saved_allocations = sortie.pilot_allocations || %{}
+
+      # Build allocation state - either from saved data or fresh
+      {pilots_with_sp, pilot_allocations} = build_pilot_allocations_with_saved(all_pilots, saved_allocations)
 
       {:ok,
        socket
@@ -67,38 +69,112 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
     Helpers.validate_step_access(sortie, requested_step)
   end
 
-  defp build_pilot_allocations(pilots) do
-    Enum.map(pilots, fn pilot ->
-      # Store baseline allocations - these are locked from before this sortie
-      baseline_skill = pilot.sp_allocated_to_skill
-      baseline_tokens = pilot.sp_allocated_to_edge_tokens
-      baseline_abilities = pilot.sp_allocated_to_edge_abilities
-      baseline_edge_abilities = pilot.edge_abilities || []
+  defp build_pilot_allocations_with_saved(all_pilots, saved_allocations) do
+    # Build allocation state for pilots with SP or saved allocations
+    allocations =
+      Enum.filter(all_pilots, fn pilot ->
+        # Include if pilot has SP to spend OR has saved allocations
+        pilot_id_str = to_string(pilot.id)
+        (pilot.sp_available || 0) > 0 or Map.has_key?(saved_allocations, pilot_id_str)
+      end)
+      |> Enum.map(fn pilot ->
+        pilot_id_str = to_string(pilot.id)
+        saved = Map.get(saved_allocations, pilot_id_str)
 
-      {pilot.id, %{
-        pilot: pilot,
-        # Baseline (locked) allocations from before this sortie
-        baseline_skill: baseline_skill,
-        baseline_tokens: baseline_tokens,
-        baseline_abilities: baseline_abilities,
-        baseline_edge_abilities: baseline_edge_abilities,
-        # Additional SP to allocate (starts at 0)
-        add_skill: 0,
-        add_tokens: 0,
-        add_abilities: 0,
-        # New edge abilities selected this sortie
-        new_edge_abilities: [],
-        # SP available to spend this sortie
-        sp_to_spend: pilot.sp_available,
-        sp_remaining: pilot.sp_available,
-        # Derived values (will be recalculated)
-        skill_level: pilot.skill_level,
-        edge_tokens: pilot.edge_tokens,
-        max_abilities: Pilot.calculate_edge_abilities_from_sp(baseline_abilities),
-        has_error: false
-      }}
+        if saved do
+          # Restore from saved allocations
+          build_allocation_from_saved(pilot, saved)
+        else
+          # Fresh allocation (first visit)
+          build_fresh_allocation(pilot)
+        end
+      end)
+      |> Map.new()
+
+    # Get the list of pilots for display
+    pilots_with_sp = Enum.filter(all_pilots, fn pilot ->
+      pilot_id_str = to_string(pilot.id)
+      (pilot.sp_available || 0) > 0 or Map.has_key?(saved_allocations, pilot_id_str)
     end)
-    |> Map.new()
+
+    {pilots_with_sp, allocations}
+  end
+
+  defp build_fresh_allocation(pilot) do
+    # Store baseline allocations - these are locked from before this sortie
+    baseline_skill = pilot.sp_allocated_to_skill
+    baseline_tokens = pilot.sp_allocated_to_edge_tokens
+    baseline_abilities = pilot.sp_allocated_to_edge_abilities
+    baseline_edge_abilities = pilot.edge_abilities || []
+
+    {pilot.id, %{
+      pilot: pilot,
+      # Baseline (locked) allocations from before this sortie
+      baseline_skill: baseline_skill,
+      baseline_tokens: baseline_tokens,
+      baseline_abilities: baseline_abilities,
+      baseline_edge_abilities: baseline_edge_abilities,
+      # Additional SP to allocate (starts at 0)
+      add_skill: 0,
+      add_tokens: 0,
+      add_abilities: 0,
+      # New edge abilities selected this sortie
+      new_edge_abilities: [],
+      # SP available to spend this sortie
+      sp_to_spend: pilot.sp_available,
+      sp_remaining: pilot.sp_available,
+      # Derived values (will be recalculated)
+      skill_level: pilot.skill_level,
+      edge_tokens: pilot.edge_tokens,
+      max_abilities: Pilot.calculate_edge_abilities_from_sp(baseline_abilities),
+      has_error: false
+    }}
+  end
+
+  defp build_allocation_from_saved(pilot, saved) do
+    # Restore baselines from saved data (these are the TRUE baselines from before this sortie)
+    baseline_skill = saved["baseline_skill"] || 0
+    baseline_tokens = saved["baseline_tokens"] || 0
+    baseline_abilities = saved["baseline_abilities"] || 0
+    baseline_edge_abilities = saved["baseline_edge_abilities"] || []
+
+    # Restore the add values from saved data
+    add_skill = saved["add_skill"] || 0
+    add_tokens = saved["add_tokens"] || 0
+    add_abilities = saved["add_abilities"] || 0
+    new_edge_abilities = saved["new_edge_abilities"] || []
+
+    # SP to spend is the sum of what was allocated
+    sp_to_spend = saved["sp_to_spend"] || (add_skill + add_tokens + add_abilities)
+
+    # Calculate derived values
+    total_skill = baseline_skill + add_skill
+    total_tokens = baseline_tokens + add_tokens
+    total_abilities = baseline_abilities + add_abilities
+
+    skill_level = Pilot.calculate_skill_from_sp(total_skill)
+    edge_tokens = Pilot.calculate_edge_tokens_from_sp(total_tokens)
+    max_abilities = Pilot.calculate_edge_abilities_from_sp(total_abilities)
+
+    sp_remaining = sp_to_spend - add_skill - add_tokens - add_abilities
+
+    {pilot.id, %{
+      pilot: pilot,
+      baseline_skill: baseline_skill,
+      baseline_tokens: baseline_tokens,
+      baseline_abilities: baseline_abilities,
+      baseline_edge_abilities: baseline_edge_abilities,
+      add_skill: add_skill,
+      add_tokens: add_tokens,
+      add_abilities: add_abilities,
+      new_edge_abilities: new_edge_abilities,
+      sp_to_spend: sp_to_spend,
+      sp_remaining: sp_remaining,
+      skill_level: skill_level,
+      edge_tokens: edge_tokens,
+      max_abilities: max_abilities,
+      has_error: sp_remaining < 0
+    }}
   end
 
   @impl true
@@ -169,7 +245,24 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
     if not all_sp_spent do
       {:noreply, put_flash(socket, :error, "All pilots must spend their entire SP allocation before proceeding")}
     else
-      # Save all pilot allocations
+      # Build the pilot_allocations map to save to sortie
+      saved_allocations =
+        Enum.map(allocations, fn {pilot_id, alloc} ->
+          {to_string(pilot_id), %{
+            "baseline_skill" => alloc.baseline_skill,
+            "baseline_tokens" => alloc.baseline_tokens,
+            "baseline_abilities" => alloc.baseline_abilities,
+            "baseline_edge_abilities" => alloc.baseline_edge_abilities,
+            "add_skill" => alloc.add_skill,
+            "add_tokens" => alloc.add_tokens,
+            "add_abilities" => alloc.add_abilities,
+            "new_edge_abilities" => alloc.new_edge_abilities,
+            "sp_to_spend" => alloc.sp_to_spend
+          }}
+        end)
+        |> Map.new()
+
+      # Save all pilot allocations to their records
       Enum.each(allocations, fn {pilot_id, alloc} ->
         pilot = Enum.find(socket.assigns.pilots_with_sp, &(&1.id == pilot_id))
 
@@ -194,10 +287,13 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
         end
       end)
 
-      # Update sortie to next step
+      # Update sortie with saved allocations and next step
       {:ok, _} =
         socket.assigns.sortie
-        |> Ecto.Changeset.change(%{finalization_step: "summary"})
+        |> Ecto.Changeset.change(%{
+          pilot_allocations: saved_allocations,
+          finalization_step: "summary"
+        })
         |> Aces.Repo.update()
 
       {:noreply,
