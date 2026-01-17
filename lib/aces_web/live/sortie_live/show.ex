@@ -540,6 +540,93 @@ defmodule AcesWeb.SortieLive.Show do
         </div>
       <% end %>
 
+      <%= if @sortie.status == "finalizing" do %>
+        <div class="card bg-warning/20 shadow-xl mb-8">
+          <div class="card-body">
+            <div class="flex items-start gap-4">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-warning shrink-0 w-6 h-6 mt-1">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              <div class="flex-1">
+                <h3 class="font-bold text-lg mb-2">Sortie Finalization in Progress</h3>
+                <p class="mb-4">
+                  This sortie is being finalized. Complete the remaining steps to record the mission outcome.
+                </p>
+                <.link
+                  navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{@sortie.id}/complete/#{@sortie.finalization_step}"}
+                  class="btn btn-warning"
+                >
+                  Continue Finalization →
+                </.link>
+              </div>
+            </div>
+          </div>
+        </div>
+      <% end %>
+
+      <%= if @sortie.status == "completed" do %>
+        <div class="card bg-success/20 shadow-xl mb-8">
+          <div class="card-body">
+            <div class="flex items-start gap-4">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-success shrink-0 w-6 h-6 mt-1">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              <div class="flex-1">
+                <h3 class="font-bold text-lg mb-2">Sortie Completed - Victory!</h3>
+                <div class="grid gap-4 md:grid-cols-3 mb-4">
+                  <div>
+                    <div class="text-sm opacity-70">Net Earnings</div>
+                    <div class={["font-bold text-lg", if(@sortie.net_earnings >= 0, do: "text-success", else: "text-error")]}>
+                      {@sortie.net_earnings || 0} SP
+                    </div>
+                  </div>
+                  <%= if @sortie.mvp_pilot do %>
+                    <div>
+                      <div class="text-sm opacity-70">MVP</div>
+                      <div class="font-bold text-lg">{@sortie.mvp_pilot.name}</div>
+                    </div>
+                  <% end %>
+                  <%= if @sortie.keywords_gained && length(@sortie.keywords_gained) > 0 do %>
+                    <div>
+                      <div class="text-sm opacity-70">Keywords Gained</div>
+                      <div class="flex flex-wrap gap-1 mt-1">
+                        <%= for keyword <- @sortie.keywords_gained do %>
+                          <span class="badge badge-primary badge-sm">{keyword}</span>
+                        <% end %>
+                      </div>
+                    </div>
+                  <% end %>
+                </div>
+                <.link
+                  navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{@sortie.id}/complete/summary"}
+                  class="btn btn-success btn-outline"
+                >
+                  View Full Summary
+                </.link>
+              </div>
+            </div>
+          </div>
+        </div>
+      <% end %>
+
+      <%= if @sortie.status == "failed" do %>
+        <div class="card bg-error/20 shadow-xl mb-8">
+          <div class="card-body">
+            <div class="flex items-start gap-4">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-error shrink-0 w-6 h-6 mt-1">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              <div class="flex-1">
+                <h3 class="font-bold text-lg mb-2">Sortie Failed</h3>
+                <p class="opacity-70 mb-4">
+                  This sortie was marked as failed. No outcomes were applied to your company. You can retry by creating a new sortie with the same mission parameters.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      <% end %>
+
       <!-- Sortie Failed Modal -->
       <%= if @show_fail_modal do %>
         <div class="modal modal-open">

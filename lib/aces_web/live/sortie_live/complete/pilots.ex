@@ -5,7 +5,8 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
   use AcesWeb, :live_view
 
   alias Aces.{Companies, Campaigns}
-  alias Aces.Companies.Authorization
+  alias Aces.Companies.{Authorization, Pilots}
+  alias AcesWeb.SortieLive.Complete.Helpers
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
@@ -20,7 +21,7 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
          :ok <- validate_sortie_belongs_to_campaign(sortie, campaign, company),
          :ok <- validate_sortie_status(sortie, "pilots") do
       # Get all pilots in the company
-      all_pilots = Companies.list_pilots(company)
+      all_pilots = Pilots.list_company_pilots(company)
 
       # Get pilot IDs who participated in this sortie
       participating_pilot_ids =
@@ -69,19 +70,8 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
     end
   end
 
-  defp validate_sortie_status(sortie, expected_step) do
-    cond do
-      sortie.status != "finalizing" ->
-        {:error, "Sortie must be in finalizing state",
-         ~p"/companies/#{sortie.campaign.company_id}/campaigns/#{sortie.campaign_id}/sorties/#{sortie.id}"}
-
-      sortie.finalization_step != expected_step ->
-        {:error, "Please complete the previous step first",
-         ~p"/companies/#{sortie.campaign.company_id}/campaigns/#{sortie.campaign_id}/sorties/#{sortie.id}/complete/#{sortie.finalization_step}"}
-
-      true ->
-        :ok
-    end
+  defp validate_sortie_status(sortie, requested_step) do
+    Helpers.validate_step_access(sortie, requested_step)
   end
 
   defp calculate_pilot_earnings(sortie, all_pilots, participating_pilot_ids) do
@@ -132,12 +122,32 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
     mvp_id = socket.assigns.selected_mvp_id
     pilot_earnings = socket.assigns.pilot_earnings
 
-    # Update sortie with MVP
+    # Calculate total pilot SP cost (sum of all SP awarded to pilots)
+    # NOTE: MVP bonus is NOT included - it's "free" and doesn't come from sortie earnings
+    total_pilot_sp_cost =
+      Enum.reduce(socket.assigns.all_pilots, 0, fn pilot, acc ->
+        earnings = Map.get(pilot_earnings, pilot.id)
+        if earnings && earnings.sp > 0 do
+          acc + earnings.sp
+        else
+          acc
+        end
+      end)
+
+    # Recalculate expenses and net earnings including pilot SP cost
+    # total_expenses already includes repair + rearming + casualty from costs step
+    new_total_expenses = (sortie.total_expenses || 0) + total_pilot_sp_cost
+    new_net_earnings = (sortie.total_income || 0) - new_total_expenses
+
+    # Update sortie with MVP and pilot SP cost
     {:ok, _} =
       sortie
       |> Ecto.Changeset.change(%{
         mvp_pilot_id: mvp_id,
-        finalization_step: "summary"
+        pilot_sp_cost: total_pilot_sp_cost,
+        total_expenses: new_total_expenses,
+        net_earnings: new_net_earnings,
+        finalization_step: "spend_sp"
       })
       |> Aces.Repo.update()
 
@@ -189,7 +199,7 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
 
     {:noreply,
      push_navigate(socket,
-       to: ~p"/companies/#{socket.assigns.company.id}/campaigns/#{socket.assigns.campaign.id}/sorties/#{sortie.id}/complete/summary"
+       to: ~p"/companies/#{socket.assigns.company.id}/campaigns/#{socket.assigns.campaign.id}/sorties/#{sortie.id}/complete/spend_sp"
      )}
   end
 
@@ -220,6 +230,7 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
             <li class="step step-primary">Unit Status</li>
             <li class="step step-primary">Costs</li>
             <li class="step step-primary">Pilot SP</li>
+            <li class="step">Spend SP</li>
             <li class="step">Summary</li>
           </ul>
         </div>
@@ -338,7 +349,7 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
         </svg>
         <span>
-          SP will be added to each pilot's available pool. Pilots can allocate their SP to skills, edge tokens, and edge abilities from the company roster screen.
+          SP will be added to each pilot's available pool. You'll allocate SP to skills, edge tokens, and edge abilities on the next screen.
         </span>
       </div>
 
@@ -351,7 +362,7 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
           ← Back
         </.link>
         <button type="button" class="btn btn-primary" phx-click="save">
-          Continue to Summary →
+          Continue to Spend SP →
         </button>
       </div>
     </div>

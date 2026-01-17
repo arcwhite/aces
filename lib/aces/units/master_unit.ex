@@ -27,6 +27,7 @@ defmodule Aces.Units.MasterUnit do
 
     # Alpha Strike fields
     field :bf_move, :string
+    field :bf_size, :integer
     field :bf_armor, :integer
     field :bf_structure, :integer
     field :bf_damage_short, :string
@@ -64,6 +65,7 @@ defmodule Aces.Units.MasterUnit do
       :date_introduced,
       :era_id,
       :bf_move,
+      :bf_size,
       :bf_armor,
       :bf_structure,
       :bf_damage_short,

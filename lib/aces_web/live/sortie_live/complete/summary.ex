@@ -6,7 +6,8 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
   use AcesWeb, :live_view
 
   alias Aces.{Companies, Campaigns}
-  alias Aces.Companies.Authorization
+  alias Aces.Companies.{Authorization, Pilots}
+  alias AcesWeb.SortieLive.Complete.Helpers
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
@@ -69,15 +70,13 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
 
   defp validate_sortie_status(sortie) do
     cond do
+      # Completed sorties can always view the summary
       sortie.status == "completed" ->
         :ok
 
-      sortie.status == "finalizing" and sortie.finalization_step == "summary" ->
-        :ok
-
+      # For finalizing sorties, use the helper to allow backward navigation
       sortie.status == "finalizing" ->
-        {:error, "Please complete the previous step first",
-         ~p"/companies/#{sortie.campaign.company_id}/campaigns/#{sortie.campaign_id}/sorties/#{sortie.id}/complete/#{sortie.finalization_step}"}
+        Helpers.validate_step_access(sortie, "summary")
 
       true ->
         {:error, "Sortie is not ready for summary",
@@ -130,7 +129,7 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
       |> MapSet.new()
 
     company
-    |> Companies.list_pilots()
+    |> Pilots.list_company_pilots()
     |> Enum.filter(&(&1.status == "wounded" and not MapSet.member?(wounded_in_sortie, &1.id)))
     |> Enum.each(fn pilot ->
       pilot
@@ -155,10 +154,10 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
             </.link>
           <% else %>
             <.link
-              navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{@sortie.id}/complete/pilots"}
+              navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{@sortie.id}/complete/spend_sp"}
               class="btn btn-ghost btn-sm"
             >
-              ← Back to Pilot SP
+              ← Back to Spend SP
             </.link>
           <% end %>
         </div>
@@ -193,6 +192,7 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
               <li class="step step-primary">Unit Status</li>
               <li class="step step-primary">Costs</li>
               <li class="step step-primary">Pilot SP</li>
+              <li class="step step-primary">Spend SP</li>
               <li class="step step-primary">Summary</li>
             </ul>
           </div>
@@ -287,10 +287,40 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
               <span>Adjusted Income:</span>
               <span class="font-mono text-success">{@sortie.total_income || 0} SP</span>
             </div>
-            <div class="flex justify-between text-error">
+
+            <!-- Expense Breakdown -->
+            <div class="text-sm opacity-70 mt-2">Expenses:</div>
+            <% repair_cost = Enum.reduce(@sortie.deployments, 0, fn d, acc -> acc + (d.repair_cost_sp || 0) end) %>
+            <% other_expenses = (@sortie.total_expenses || 0) - (@sortie.pilot_sp_cost || 0) - repair_cost %>
+            <%= if repair_cost > 0 do %>
+              <div class="flex justify-between text-error pl-4">
+                <span>Repair Costs:</span>
+                <span class="font-mono">-{repair_cost} SP</span>
+              </div>
+            <% end %>
+            <%= if @sortie.rearming_cost && @sortie.rearming_cost > 0 do %>
+              <div class="flex justify-between text-error pl-4">
+                <span>Rearming Costs:</span>
+                <span class="font-mono">-{@sortie.rearming_cost} SP</span>
+              </div>
+            <% end %>
+            <%= if other_expenses > 0 do %>
+              <div class="flex justify-between text-error pl-4">
+                <span>Casualty Costs:</span>
+                <span class="font-mono">-{other_expenses} SP</span>
+              </div>
+            <% end %>
+            <%= if @sortie.pilot_sp_cost && @sortie.pilot_sp_cost > 0 do %>
+              <div class="flex justify-between text-error pl-4">
+                <span>Pilot SP Allocation:</span>
+                <span class="font-mono">-{@sortie.pilot_sp_cost} SP</span>
+              </div>
+            <% end %>
+            <div class="flex justify-between text-error font-semibold">
               <span>Total Expenses:</span>
               <span class="font-mono">-{@sortie.total_expenses || 0} SP</span>
             </div>
+
             <div class="divider my-1"></div>
             <div class="flex justify-between text-lg font-bold">
               <span>Net Earnings:</span>
@@ -391,7 +421,7 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
           </.link>
         <% else %>
           <.link
-            navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{@sortie.id}/complete/pilots"}
+            navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{@sortie.id}/complete/spend_sp"}
             class="btn btn-ghost"
           >
             ← Back

@@ -108,14 +108,17 @@ defmodule Aces.Campaigns.Deployment do
     end
   end
 
-  defp get_repair_size(%{unit_type: unit_type, tonnage: tonnage}) do
-    # Combat Vehicles, Battle Armour, and Infantry count as half size
+  defp get_repair_size(%{unit_type: unit_type, bf_size: bf_size}) do
+    # Use bf_size from MUL API, defaulting to 1 if not available
+    base_size = bf_size || 1
+
+    # Combat Vehicles, Battle Armour, and Infantry count as half size for repair costs
     case unit_type do
-      type when type in ["Combat Vehicle", "Battle Armor", "Infantry"] ->
-        (tonnage || 1) / 2.0
+      type when type in ["combat_vehicle", "battle_armor", "conventional_infantry"] ->
+        base_size / 2.0
 
       _ ->
-        tonnage || 1
+        base_size
     end
   end
 

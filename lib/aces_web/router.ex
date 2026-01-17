@@ -79,6 +79,7 @@ defmodule AcesWeb.Router do
     live "/companies/:company_id/campaigns/:campaign_id/sorties/:id/complete/damage", SortieLive.Complete.Damage, :damage
     live "/companies/:company_id/campaigns/:campaign_id/sorties/:id/complete/costs", SortieLive.Complete.Costs, :costs
     live "/companies/:company_id/campaigns/:campaign_id/sorties/:id/complete/pilots", SortieLive.Complete.Pilots, :pilots
+    live "/companies/:company_id/campaigns/:campaign_id/sorties/:id/complete/spend_sp", SortieLive.Complete.SpendSP, :spend_sp
     live "/companies/:company_id/campaigns/:campaign_id/sorties/:id/complete/summary", SortieLive.Complete.Summary, :summary
 
     get "/users/settings", UserSettingsController, :edit

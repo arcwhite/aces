@@ -7,6 +7,7 @@ defmodule AcesWeb.SortieLive.Complete.Damage do
   alias Aces.{Companies, Campaigns}
   alias Aces.Companies.Authorization
   alias Aces.Campaigns.Deployment
+  alias AcesWeb.SortieLive.Complete.Helpers
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
@@ -67,20 +68,8 @@ defmodule AcesWeb.SortieLive.Complete.Damage do
     end
   end
 
-  defp validate_sortie_status(sortie, expected_step) do
-    cond do
-      sortie.status != "finalizing" ->
-        {:error, "Sortie must be in finalizing state",
-         ~p"/companies/#{sortie.campaign.company_id}/campaigns/#{sortie.campaign_id}/sorties/#{sortie.id}"}
-
-      sortie.finalization_step != expected_step ->
-        # Redirect to correct step
-        {:error, "Please complete the previous step first",
-         ~p"/companies/#{sortie.campaign.company_id}/campaigns/#{sortie.campaign_id}/sorties/#{sortie.id}/complete/#{sortie.finalization_step}"}
-
-      true ->
-        :ok
-    end
+  defp validate_sortie_status(sortie, requested_step) do
+    Helpers.validate_step_access(sortie, requested_step)
   end
 
   @impl true
@@ -186,6 +175,7 @@ defmodule AcesWeb.SortieLive.Complete.Damage do
             <li class="step step-primary">Unit Status</li>
             <li class="step">Costs</li>
             <li class="step">Pilot SP</li>
+            <li class="step">Spend SP</li>
             <li class="step">Summary</li>
           </ul>
         </div>

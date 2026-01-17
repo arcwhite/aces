@@ -7,6 +7,7 @@ defmodule AcesWeb.SortieLive.Complete.Outcome do
   alias Aces.{Companies, Campaigns}
   alias Aces.Companies.Authorization
   alias Aces.Campaigns.Sortie
+  alias AcesWeb.SortieLive.Complete.Helpers
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
@@ -57,12 +58,7 @@ defmodule AcesWeb.SortieLive.Complete.Outcome do
   end
 
   defp validate_sortie_status(sortie) do
-    if sortie.status == "finalizing" do
-      :ok
-    else
-      {:error, "Sortie must be in finalizing state to complete",
-       ~p"/companies/#{sortie.campaign.company_id}/campaigns/#{sortie.campaign_id}/sorties/#{sortie.id}"}
-    end
+    Helpers.validate_step_access(sortie, "outcome")
   end
 
   defp build_form(sortie) do
@@ -99,6 +95,11 @@ defmodule AcesWeb.SortieLive.Complete.Outcome do
   @impl true
   def handle_event("remove_keyword", %{"keyword" => keyword}, socket) do
     {:noreply, assign(socket, :keywords, Enum.reject(socket.assigns.keywords, &(&1 == keyword)))}
+  end
+
+  @impl true
+  def handle_event("update_keyword_input", %{"keyword_input" => value}, socket) do
+    {:noreply, assign(socket, :new_keyword, value)}
   end
 
   @impl true
@@ -195,6 +196,7 @@ defmodule AcesWeb.SortieLive.Complete.Outcome do
             <li class="step">Unit Status</li>
             <li class="step">Costs</li>
             <li class="step">Pilot SP</li>
+            <li class="step">Spend SP</li>
             <li class="step">Summary</li>
           </ul>
         </div>
@@ -321,10 +323,11 @@ defmodule AcesWeb.SortieLive.Complete.Outcome do
             <div class="flex gap-2 mb-4">
               <input
                 type="text"
+                id="keyword-input"
+                name="keyword_input"
                 value={@new_keyword}
                 phx-keyup="update_keyword_input"
-                phx-key="Enter"
-                phx-value-keyword={@new_keyword}
+                phx-debounce="100"
                 class="input input-bordered flex-1"
                 placeholder="Enter a keyword..."
               />

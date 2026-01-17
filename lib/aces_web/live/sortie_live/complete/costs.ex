@@ -7,6 +7,7 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
   alias Aces.{Companies, Campaigns}
   alias Aces.Companies.Authorization
   alias Aces.Campaigns.Deployment
+  alias AcesWeb.SortieLive.Complete.Helpers
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
@@ -57,28 +58,25 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
     end
   end
 
-  defp validate_sortie_status(sortie, expected_step) do
-    cond do
-      sortie.status != "finalizing" ->
-        {:error, "Sortie must be in finalizing state",
-         ~p"/companies/#{sortie.campaign.company_id}/campaigns/#{sortie.campaign_id}/sorties/#{sortie.id}"}
-
-      sortie.finalization_step != expected_step ->
-        {:error, "Please complete the previous step first",
-         ~p"/companies/#{sortie.campaign.company_id}/campaigns/#{sortie.campaign_id}/sorties/#{sortie.id}/complete/#{sortie.finalization_step}"}
-
-      true ->
-        :ok
-    end
+  defp validate_sortie_status(sortie, requested_step) do
+    Helpers.validate_step_access(sortie, requested_step)
   end
 
   defp calculate_all_costs(sortie) do
     deployments = sortie.deployments
 
     # Calculate repair costs per deployment
+    # If a destroyed unit was salvaged, treat it as "salvageable" for cost purposes
     repair_costs =
       Enum.map(deployments, fn d ->
-        repair_cost = Deployment.calculate_unit_repair_cost(d.company_unit.master_unit, d.damage_status)
+        effective_status =
+          if d.damage_status == "destroyed" and d.was_salvaged do
+            "salvageable"
+          else
+            d.damage_status
+          end
+
+        repair_cost = Deployment.calculate_unit_repair_cost(d.company_unit.master_unit, effective_status)
         {d.id, repair_cost}
       end)
       |> Map.new()
@@ -188,6 +186,7 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
             <li class="step step-primary">Unit Status</li>
             <li class="step step-primary">Costs</li>
             <li class="step">Pilot SP</li>
+            <li class="step">Spend SP</li>
             <li class="step">Summary</li>
           </ul>
         </div>
@@ -208,13 +207,14 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
               </thead>
               <tbody>
                 <%= for deployment <- @sortie.deployments do %>
+                  <% effective_status = effective_damage_status(deployment) %>
                   <tr>
                     <td>
                       {deployment.company_unit.custom_name || deployment.company_unit.master_unit.name}
                     </td>
                     <td>
-                      <span class={damage_badge_class(deployment.damage_status)}>
-                        {format_damage_status(deployment.damage_status)}
+                      <span class={damage_badge_class(effective_status)}>
+                        {format_damage_status(effective_status)}
                       </span>
                     </td>
                     <td class="text-right font-mono">
@@ -389,12 +389,21 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
     """
   end
 
+  defp effective_damage_status(deployment) do
+    if deployment.damage_status == "destroyed" and deployment.was_salvaged do
+      "salvageable"
+    else
+      deployment.damage_status
+    end
+  end
+
   defp damage_badge_class(status) do
     case status do
       "operational" -> "badge badge-success"
       "armor_damaged" -> "badge badge-warning"
       "structure_damaged" -> "badge badge-warning"
       "crippled" -> "badge badge-error"
+      "salvageable" -> "badge badge-warning"
       "destroyed" -> "badge badge-error"
       _ -> "badge"
     end
@@ -415,6 +424,7 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
       "armor_damaged" -> "Armor Damaged"
       "structure_damaged" -> "Structure Damaged"
       "crippled" -> "Crippled"
+      "salvageable" -> "Salvageable"
       "destroyed" -> "Destroyed"
       _ -> String.capitalize(status || "unknown")
     end

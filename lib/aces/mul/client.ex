@@ -40,28 +40,42 @@ defmodule Aces.MUL.Client do
   end
 
   @doc """
-  Fetches a single unit by MUL ID
+  Fetches a single unit by MUL ID using the QuickList API.
+  Requires the unit's full_name to search for it.
   """
   def fetch_unit(mul_id) when is_integer(mul_id) do
-    with :ok <- rate_limit_check(),
-         {:ok, response} <- make_request("/Unit/Details/#{mul_id}") do
-      case response.status do
-        200 ->
-          case parse_unit_details(response.body) do
-            {:error, reason} -> {:error, reason}
-            unit -> {:ok, unit}
-          end
+    # The Details endpoint returns HTML, not JSON
+    # We need the unit's name to search via QuickList
+    Logger.warning("fetch_unit/1 requires a unit name to search - use fetch_unit_by_name/1 instead")
+    {:error, :not_supported}
+  end
 
-        404 ->
-          {:error, :not_found}
+  @doc """
+  Fetches a single unit by its full name using the QuickList API.
+  Returns the unit data if found, or an error.
+  """
+  def fetch_unit_by_name(full_name) when is_binary(full_name) do
+    case fetch_units(%{name: full_name}) do
+      {:ok, [unit | _]} -> {:ok, unit}
+      {:ok, []} -> {:error, :not_found}
+      error -> error
+    end
+  end
 
-        _ ->
-          {:error, "MUL API returned status #{response.status}"}
-      end
-    else
-      {:error, reason} ->
-        Logger.warning("MUL API unit fetch failed: #{inspect(reason)}")
-        {:error, reason}
+  @doc """
+  Fetches a single unit by MUL ID and name.
+  Uses name to search, then validates the ID matches.
+  """
+  def fetch_unit(mul_id, full_name) when is_integer(mul_id) and is_binary(full_name) do
+    case fetch_units(%{name: full_name}) do
+      {:ok, units} ->
+        case Enum.find(units, fn u -> u.mul_id == mul_id end) do
+          nil -> {:error, :not_found}
+          unit -> {:ok, unit}
+        end
+
+      error ->
+        error
     end
   end
 
@@ -240,9 +254,9 @@ defmodule Aces.MUL.Client do
   defp normalize_unit(api_data, faction_context) do
     %{
       mul_id: api_data["Id"],
-      name: api_data["Name"],
+      name: api_data["Class"] || api_data["Name"],
       variant: api_data["Variant"],
-      full_name: build_full_name(api_data["Name"], api_data["Variant"]),
+      full_name: api_data["Name"],
       unit_type: map_unit_type(extract_type_name(api_data["Type"])),
       tonnage: api_data["Tonnage"],
       point_value: api_data["BFPointValue"],
@@ -254,6 +268,7 @@ defmodule Aces.MUL.Client do
       date_introduced: api_data["DateIntroduced"],
       era_id: api_data["EraId"],
       bf_move: api_data["BFMove"],
+      bf_size: api_data["BFSize"],
       bf_armor: api_data["BFArmor"],
       bf_structure: api_data["BFStructure"],
       bf_damage_short: to_string(api_data["BFDamageShort"] || ""),
@@ -267,28 +282,6 @@ defmodule Aces.MUL.Client do
       last_synced_at: DateTime.utc_now()
     }
   end
-
-  defp parse_unit_details(body) do
-    # Body may already be parsed by make_request, or it might be raw HTML/string
-    case body do
-      data when is_map(data) ->
-        # Already parsed JSON
-        case normalize_unit(data) do
-          nil -> {:error, :invalid_response}
-          unit -> unit
-        end
-      data when is_binary(data) ->
-        # Raw string - likely HTML error page if we reach this point
-        Logger.warning("MUL API returned non-JSON response (likely HTML error page)")
-        {:error, :service_unavailable}
-      _ ->
-        {:error, :invalid_response}
-    end
-  end
-
-  defp build_full_name(name, nil), do: name
-  defp build_full_name(name, ""), do: name
-  defp build_full_name(name, variant), do: "#{name} #{variant}"
 
   defp map_unit_type("BattleMech"), do: "battlemech"
   defp map_unit_type("Combat Vehicle"), do: "combat_vehicle"

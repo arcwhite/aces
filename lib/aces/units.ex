@@ -137,13 +137,10 @@ defmodule Aces.Units do
     end
   end
 
-  defp fetch_and_cache_unit(mul_id) do
-    case Client.fetch_unit(mul_id) do
-      {:ok, unit_data} ->
-        create_or_update_master_unit(unit_data)
-
-      error -> error
-    end
+  defp fetch_and_cache_unit(_mul_id) do
+    # Cannot fetch by MUL ID alone - the MUL API requires a name search
+    # Units should be added through search_units which uses the QuickList API
+    {:error, :not_found}
   end
 
   defp cache_stale?(unit) do
@@ -156,7 +153,7 @@ defmodule Aces.Units do
   end
 
   defp refresh_unit_from_api(unit) do
-    case Client.fetch_unit(unit.mul_id) do
+    case Client.fetch_unit(unit.mul_id, unit.full_name) do
       {:ok, fresh_data} ->
         unit
         |> MasterUnit.changeset(fresh_data)
@@ -224,4 +221,42 @@ defmodule Aces.Units do
   end
 
   defp apply_filters(query, [_ | rest]), do: apply_filters(query, rest)
+
+  @doc """
+  Refresh units that are missing bf_size from the MUL API.
+
+  Options:
+    - limit: Maximum number of units to refresh (default: all)
+
+  Returns {:ok, count} with the number of units updated.
+  """
+  def refresh_units_missing_bf_size(opts \\ []) do
+    limit = Keyword.get(opts, :limit, nil)
+
+    query = MasterUnit |> where([u], is_nil(u.bf_size))
+    query = if limit, do: query |> limit(^limit), else: query
+
+    units_to_refresh = Repo.all(query)
+
+    Logger.info("Refreshing #{length(units_to_refresh)} units missing bf_size")
+
+    updated_count =
+      units_to_refresh
+      |> Enum.map(fn unit ->
+        case Client.fetch_unit(unit.mul_id, unit.full_name) do
+          {:ok, fresh_data} ->
+            unit
+            |> MasterUnit.changeset(fresh_data)
+            |> Repo.update()
+
+          {:error, reason} ->
+            Logger.warning("Failed to refresh unit #{unit.mul_id} (#{unit.full_name}): #{inspect(reason)}")
+            {:error, reason}
+        end
+      end)
+      |> Enum.count(&match?({:ok, _}, &1))
+
+    Logger.info("Successfully refreshed #{updated_count} units with bf_size")
+    {:ok, updated_count}
+  end
 end

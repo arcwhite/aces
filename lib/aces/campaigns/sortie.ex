@@ -31,6 +31,7 @@ defmodule Aces.Campaigns.Sortie do
     field :total_income, :integer, default: 0
     field :total_expenses, :integer, default: 0
     field :net_earnings, :integer, default: 0
+    field :pilot_sp_cost, :integer, default: 0
     field :sp_per_participating_pilot, :integer, default: 0
     field :keywords_gained, {:array, :string}, default: []
 
@@ -56,7 +57,7 @@ defmodule Aces.Campaigns.Sortie do
       :name, :description, :pv_limit, :status, :force_commander_id,
       :recon_notes, :recon_options, :recon_total_cost, :was_successful,
       :primary_objective_income, :secondary_objectives_income, :waypoints_income,
-      :rearming_cost, :total_income, :total_expenses, :net_earnings,
+      :rearming_cost, :total_income, :total_expenses, :net_earnings, :pilot_sp_cost,
       :sp_per_participating_pilot, :keywords_gained, :mvp_pilot_id,
       :started_at, :completed_at, :finalization_step
     ])
