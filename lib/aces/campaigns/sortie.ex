@@ -8,7 +8,7 @@ defmodule Aces.Campaigns.Sortie do
   alias Aces.Companies.Pilot
   alias Aces.Campaigns.{Campaign, Deployment}
 
-  @sortie_status ~w(setup in_progress success failed completed)
+  @sortie_status ~w(setup in_progress finalizing failed completed)
 
   schema "sorties" do
     field :mission_number, :string
@@ -34,6 +34,9 @@ defmodule Aces.Campaigns.Sortie do
     field :sp_per_participating_pilot, :integer, default: 0
     field :keywords_gained, {:array, :string}, default: []
 
+    # Finalization wizard progress
+    field :finalization_step, :string  # "outcome" | "damage" | "costs" | "pilots" | "summary" | nil
+
     # Metadata
     field :started_at, :utc_datetime
     field :completed_at, :utc_datetime
@@ -55,7 +58,7 @@ defmodule Aces.Campaigns.Sortie do
       :primary_objective_income, :secondary_objectives_income, :waypoints_income,
       :rearming_cost, :total_income, :total_expenses, :net_earnings,
       :sp_per_participating_pilot, :keywords_gained, :mvp_pilot_id,
-      :started_at, :completed_at
+      :started_at, :completed_at, :finalization_step
     ])
     |> validate_required([:name, :pv_limit, :status])
     |> validate_inclusion(:status, @sortie_status)
@@ -147,6 +150,51 @@ defmodule Aces.Campaigns.Sortie do
     |> validate_inclusion(:status, @sortie_status)
   end
 
+  @doc """
+  Changeset for marking a sortie as failed.
+  Used when the player clicks "Sortie Failed" - no outcomes are applied.
+  """
+  def fail_changeset(sortie, attrs \\ %{}) do
+    sortie
+    |> change()
+    |> cast(attrs, [:recon_notes])
+    |> validate_status_is_in_progress()
+    |> put_change(:status, "failed")
+    |> put_change(:was_successful, false)
+    |> put_change(:completed_at, DateTime.truncate(DateTime.utc_now(), :second))
+  end
+
+  @doc """
+  Changeset for beginning the finalization wizard.
+  Transitions from in_progress to finalizing status.
+  """
+  def begin_finalization_changeset(sortie) do
+    sortie
+    |> change()
+    |> validate_status_is_in_progress()
+    |> put_change(:status, "finalizing")
+    |> put_change(:finalization_step, "outcome")
+  end
+
+  @doc """
+  Changeset for updating finalization wizard progress.
+  """
+  def finalization_step_changeset(sortie, step, attrs \\ %{}) do
+    sortie
+    |> cast(attrs, [
+      :primary_objective_income, :secondary_objectives_income, :waypoints_income,
+      :keywords_gained, :sp_per_participating_pilot, :recon_notes
+    ])
+    |> put_change(:finalization_step, step)
+  end
+
+  defp validate_status_is_in_progress(changeset) do
+    case get_field(changeset, :status) do
+      "in_progress" -> changeset
+      status -> add_error(changeset, :status, "must be in progress to complete (currently #{status})")
+    end
+  end
+
   defp maybe_calculate_recon_total_cost(changeset) do
     # Only auto-calculate if recon_total_cost was not explicitly provided
     case {get_change(changeset, :recon_total_cost), get_change(changeset, :recon_options)} do
@@ -182,7 +230,7 @@ defmodule Aces.Campaigns.Sortie do
 
   defp put_completed_status(changeset) do
     case get_change(changeset, :was_successful) do
-      true -> put_change(changeset, :status, "success")
+      true -> put_change(changeset, :status, "completed")
       false -> put_change(changeset, :status, "failed")
       _ -> changeset
     end

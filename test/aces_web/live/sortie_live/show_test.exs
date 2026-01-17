@@ -115,14 +115,14 @@ defmodule AcesWeb.SortieLive.ShowTest do
       # Create a second unit for the pilot deployment
       master_unit2 = master_unit_fixture()
       company_unit2 = company_unit_fixture(company: company, master_unit: master_unit2)
-      
+
       # Create a sortie and deployment without a pilot (unnamed crew)
       sortie = sortie_fixture(campaign: campaign)
       deployment = deployment_fixture(sortie: sortie, company_unit: company_unit, pilot: nil)
-      
+
       # Add a deployment with a pilot to allow starting the sortie
       _pilot_deployment = deployment_fixture(sortie: sortie, company_unit: company_unit2, pilot: pilot)
-      
+
       # Reload sortie with deployments and start it
       sortie_with_deployments = Aces.Campaigns.get_sortie!(sortie.id)
       {:ok, sortie} = Aces.Campaigns.start_sortie(sortie_with_deployments, pilot.id)
@@ -137,6 +137,95 @@ defmodule AcesWeb.SortieLive.ShowTest do
       # Check that casualty status was updated in the UI for unnamed crew
       html = render(show_live)
       assert html =~ "wounded\" selected"
+    end
+
+    test "shows sortie failed and victory buttons for in-progress sortie", %{conn: conn, company: company, campaign: campaign, pilot: pilot, company_unit: company_unit} do
+      sortie = sortie_fixture(campaign: campaign)
+      _deployment = deployment_fixture(sortie: sortie, company_unit: company_unit, pilot: pilot)
+
+      sortie_with_deployments = Aces.Campaigns.get_sortie!(sortie.id)
+      {:ok, sortie} = Aces.Campaigns.start_sortie(sortie_with_deployments, pilot.id)
+
+      {:ok, _show_live, html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/#{sortie.id}")
+
+      assert html =~ "Sortie Failed"
+      assert html =~ "Sortie Victory"
+    end
+
+    test "opens fail modal when clicking Sortie Failed button", %{conn: conn, company: company, campaign: campaign, pilot: pilot, company_unit: company_unit} do
+      sortie = sortie_fixture(campaign: campaign)
+      _deployment = deployment_fixture(sortie: sortie, company_unit: company_unit, pilot: pilot)
+
+      sortie_with_deployments = Aces.Campaigns.get_sortie!(sortie.id)
+      {:ok, sortie} = Aces.Campaigns.start_sortie(sortie_with_deployments, pilot.id)
+
+      {:ok, show_live, _html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/#{sortie.id}")
+
+      # Click the Sortie Failed button
+      html = show_live
+             |> element("button", "Sortie Failed")
+             |> render_click()
+
+      assert html =~ "Confirm Sortie Failure"
+      assert html =~ "What went wrong?"
+    end
+
+    test "can confirm sortie failure and redirects to campaign", %{conn: conn, company: company, campaign: campaign, pilot: pilot, company_unit: company_unit} do
+      sortie = sortie_fixture(campaign: campaign)
+      _deployment = deployment_fixture(sortie: sortie, company_unit: company_unit, pilot: pilot)
+
+      sortie_with_deployments = Aces.Campaigns.get_sortie!(sortie.id)
+      {:ok, sortie} = Aces.Campaigns.start_sortie(sortie_with_deployments, pilot.id)
+
+      {:ok, show_live, _html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/#{sortie.id}")
+
+      # Open the modal
+      show_live
+      |> element("button", "Sortie Failed")
+      |> render_click()
+
+      # Confirm the failure - redirects to campaign LiveView
+      {:ok, _campaign_live, html} =
+        show_live
+        |> form("form[phx-submit='confirm_sortie_failed']", %{"notes" => "OpFor was too strong"})
+        |> render_submit()
+        |> follow_redirect(conn)
+
+      # Should show campaign page with flash
+      assert html =~ campaign.name
+      assert html =~ "failed"
+
+      # Verify sortie status was updated
+      updated_sortie = Aces.Campaigns.get_sortie!(sortie.id)
+      assert updated_sortie.status == "failed"
+      assert updated_sortie.was_successful == false
+      assert updated_sortie.completed_at != nil
+    end
+
+    test "begins finalization when clicking Sortie Victory", %{conn: conn, company: company, campaign: campaign, pilot: pilot, company_unit: company_unit} do
+      sortie = sortie_fixture(campaign: campaign)
+      _deployment = deployment_fixture(sortie: sortie, company_unit: company_unit, pilot: pilot)
+
+      sortie_with_deployments = Aces.Campaigns.get_sortie!(sortie.id)
+      {:ok, sortie} = Aces.Campaigns.start_sortie(sortie_with_deployments, pilot.id)
+
+      {:ok, show_live, _html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/#{sortie.id}")
+
+      # Click the Sortie Victory button - redirects to outcome wizard step
+      {:ok, _outcome_live, html} =
+        show_live
+        |> element("button", "Sortie Victory")
+        |> render_click()
+        |> follow_redirect(conn)
+
+      # Should show the outcome wizard page
+      assert html =~ "Complete Sortie: Victory Details"
+      assert html =~ "Mission Income"
+
+      # Verify sortie status was updated
+      updated_sortie = Aces.Campaigns.get_sortie!(sortie.id)
+      assert updated_sortie.status == "finalizing"
+      assert updated_sortie.finalization_step == "outcome"
     end
   end
 end

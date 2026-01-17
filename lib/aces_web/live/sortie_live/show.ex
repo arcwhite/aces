@@ -50,7 +50,8 @@ defmodule AcesWeb.SortieLive.Show do
          |> assign(:deployed_pilots, deployed_pilots)
          |> assign(:selected_force_commander_id, default_force_commander_id)
          |> assign(:page_title, "Sortie #{sortie.mission_number}: #{sortie.name}")
-         |> assign(:can_edit, Authorization.can?(:edit_company, user, company))}
+         |> assign(:can_edit, Authorization.can?(:edit_company, user, company))
+         |> assign(:show_fail_modal, false)}
       end
     end
   end
@@ -131,6 +132,60 @@ defmodule AcesWeb.SortieLive.Show do
 
         {:error, _changeset} ->
           {:noreply, put_flash(socket, :error, "Failed to update casualty status")}
+      end
+    else
+      {:error, message} -> {:noreply, put_flash(socket, :error, message)}
+    end
+  end
+
+  @impl true
+  def handle_event("show_fail_modal", _params, socket) do
+    {:noreply, assign(socket, :show_fail_modal, true)}
+  end
+
+  @impl true
+  def handle_event("hide_fail_modal", _params, socket) do
+    {:noreply, assign(socket, :show_fail_modal, false)}
+  end
+
+  @impl true
+  def handle_event("confirm_sortie_failed", %{"notes" => notes}, socket) do
+    with :ok <- require_can_edit(socket),
+         :ok <- require_sortie_status(socket, "in_progress") do
+      attrs = if notes && String.trim(notes) != "", do: %{recon_notes: notes}, else: %{}
+
+      case socket.assigns.sortie
+           |> Aces.Campaigns.Sortie.fail_changeset(attrs)
+           |> Aces.Repo.update() do
+        {:ok, _sortie} ->
+          {:noreply,
+           socket
+           |> put_flash(:info, "Sortie marked as failed. You can retry by creating a new sortie.")
+           |> push_navigate(to: ~p"/companies/#{socket.assigns.company.id}/campaigns/#{socket.assigns.campaign.id}")}
+
+        {:error, _changeset} ->
+          {:noreply, put_flash(socket, :error, "Failed to mark sortie as failed")}
+      end
+    else
+      {:error, message} -> {:noreply, put_flash(socket, :error, message)}
+    end
+  end
+
+  @impl true
+  def handle_event("begin_finalization", _params, socket) do
+    with :ok <- require_can_edit(socket),
+         :ok <- require_sortie_status(socket, "in_progress") do
+      case socket.assigns.sortie
+           |> Aces.Campaigns.Sortie.begin_finalization_changeset()
+           |> Aces.Repo.update() do
+        {:ok, _sortie} ->
+          {:noreply,
+           push_navigate(socket,
+             to: ~p"/companies/#{socket.assigns.company.id}/campaigns/#{socket.assigns.campaign.id}/sorties/#{socket.assigns.sortie.id}/complete/outcome"
+           )}
+
+        {:error, _changeset} ->
+          {:noreply, put_flash(socket, :error, "Failed to begin sortie finalization")}
       end
     else
       {:error, message} -> {:noreply, put_flash(socket, :error, message)}
@@ -454,11 +509,70 @@ defmodule AcesWeb.SortieLive.Show do
       <% end %>
 
       <%= if @sortie.status == "in_progress" do %>
-        <div class="alert alert-info mb-8">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-          </svg>
-          <span>Mission in progress. Mark unit damage and pilot casualties as they occur during play.</span>
+        <div class="card bg-base-100 shadow-xl mb-8">
+          <div class="card-body">
+            <div class="flex items-start gap-4">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6 mt-1">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              <div class="flex-1">
+                <p class="mb-4">Mission in progress. Mark unit damage and pilot casualties as they occur during play.</p>
+
+                <%= if @can_edit do %>
+                  <div class="flex gap-3">
+                    <button
+                      class="btn btn-error"
+                      phx-click="show_fail_modal"
+                    >
+                      Sortie Failed
+                    </button>
+                    <button
+                      class="btn btn-success"
+                      phx-click="begin_finalization"
+                    >
+                      Sortie Victory
+                    </button>
+                  </div>
+                <% end %>
+              </div>
+            </div>
+          </div>
+        </div>
+      <% end %>
+
+      <!-- Sortie Failed Modal -->
+      <%= if @show_fail_modal do %>
+        <div class="modal modal-open">
+          <div class="modal-box">
+            <h3 class="font-bold text-lg">Confirm Sortie Failure</h3>
+            <p class="py-4">
+              Are you sure the sortie failed? All damage and casualties tracked during play will be kept for reference,
+              but no outcomes will be applied to your company.
+            </p>
+            <p class="text-sm opacity-70 mb-4">
+              You can retry this mission by creating a new sortie.
+            </p>
+
+            <form phx-submit="confirm_sortie_failed">
+              <div class="form-control mb-4">
+                <label class="label">
+                  <span class="label-text">Notes (optional)</span>
+                </label>
+                <textarea
+                  name="notes"
+                  class="textarea textarea-bordered"
+                  placeholder="What went wrong?"
+                  rows="3"
+                ></textarea>
+              </div>
+
+              <div class="modal-action">
+                <button type="button" class="btn" phx-click="hide_fail_modal">Cancel</button>
+                <button type="submit" class="btn btn-error">Confirm Failure</button>
+              </div>
+            </form>
+          </div>
+          <div class="modal-backdrop" phx-click="hide_fail_modal"></div>
         </div>
       <% end %>
 
