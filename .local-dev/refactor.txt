@@ -1,0 +1,223 @@
+# Complete Sortie Wizard - Refactoring Plan
+
+## Priority 1: Critical - Business Logic Separation
+
+### 1.1 Move Business Logic to Campaigns Context
+**Files affected**: costs.ex, pilots.ex, spend_sp.ex, summary.ex
+
+Business calculations are scattered across LiveView modules, violating separation of concerns:
+- Cost calculations in `costs.ex:65-127`
+- Pilot earnings calculations in `pilots.ex:77-136`
+- Pilot allocation reversal logic in `pilots.ex:165-249`
+
+**Recommendation**: Create `Aces.Campaigns.SortieCompletion` module with:
+- `calculate_all_costs/1`
+- `calculate_pilot_earnings/3`
+- `reverse_pilot_allocations/2`
+- `distribute_sp_to_pilots/4`
+
+**Benefits**:
+- Testable in isolation
+- Reusable across different interfaces
+- Follows Phoenix context pattern
+
+### 1.2 Extract Pilot SP Allocation Logic
+**Files affected**: spend_sp.ex
+
+The `SpendSP` LiveView has 300+ lines mixing UI and business logic for pilot allocation state management.
+
+**Recommendation**: Create `Aces.Campaigns.PilotAllocation` struct/module with:
+- `build_fresh/1`
+- `build_from_saved/2`
+- `update_allocation/3`
+- `toggle_edge_ability/2`
+- `validate/1`
+- `to_changeset/2`
+
+---
+
+## Priority 2: High - Code Duplication Reduction
+
+### 2.1 Consolidate Common Authorization/Validation Logic
+**Files affected**: All 6 wizard steps (outcome.ex, damage.ex, costs.ex, pilots.ex, spend_sp.ex, summary.ex)
+
+Every wizard step duplicates identical `authorize_access/2` and `validate_sortie_belongs_to_campaign/3` functions.
+
+**Recommendation**: Either:
+- Extend the `Helpers` module with these functions, OR
+- Create a `WizardBase` behaviour/macro module that all steps `use`
+
+### 2.2 Consolidate Badge/Status Formatting Functions
+**Files affected**: costs.ex, summary.ex, damage.ex
+
+Duplicated functions:
+- `damage_badge_class/1` - costs.ex:423-433, summary.ex:450-459, damage.ex:295-304
+- `casualty_badge_class/1` - costs.ex:435-442, summary.ex:461-468, damage.ex:306-313
+- `format_damage_status/1` - costs.ex:444-454, summary.ex:470-479
+- `format_casualty_status/1` - costs.ex:456-463, summary.ex:481-488
+
+**Recommendation**: Create `AcesWeb.SortieLive.SortieHelpers` view helper module.
+
+### 2.3 Extract Common Parse Utilities
+**Files affected**: outcome.ex:142-150, spend_sp.ex:348-355
+
+`parse_int/1` is duplicated in both files.
+
+**Recommendation**: Move to `Helpers` module or a general utility module.
+
+---
+
+## Priority 3: Medium - Schema and State Management
+
+### 3.1 Consider Embedded Schema for Pilot Allocations
+**Files affected**: lib/aces/campaigns/sortie.ex
+
+`pilot_allocations` is stored as a generic `:map` field, losing type safety and validation.
+
+**Recommendation**: Use an embedded schema `PilotAllocationSave` for better:
+- Compile-time validation
+- Documentation
+- Type safety with Dialyzer
+
+### 3.2 Add Status Transition Validation
+**Files affected**: lib/aces/campaigns/sortie.ex
+
+Status transitions (setup -> in_progress -> finalizing -> completed/failed) lack a comprehensive state machine.
+
+**Recommendation**: Create `Aces.Campaigns.SortieStatus` module with:
+- `can_transition?/2`
+- `validate_transition/2`
+
+---
+
+## Priority 4: Medium - LiveView Component Structure
+
+### 4.1 Extract Wizard Progress Indicator Component
+**Files affected**: All wizard step templates
+
+Progress steps UI is duplicated in all wizard step templates (outcome.ex:193-202, damage.ex:172-181, etc.)
+
+**Recommendation**: Create `wizard_progress/1` function component in `AcesWeb.WizardComponents`.
+
+### 4.2 Extract Reusable Form Components
+**Files affected**: Various wizard templates
+
+Similar form patterns (number inputs with labels, selects) repeated across steps.
+
+**Recommendation**: Create common form components in `AcesWeb.FormComponents`.
+
+---
+
+## Priority 5: Medium - UX Improvement
+
+### 5.1 Add Warning When Navigating Back from Spend SP
+**Files affected**: costs.ex, pilots.ex, spend_sp.ex
+
+When operational costs change (e.g. player realises something was salvageable), the SP available for pilots changes significantly. Currently all pilot SP allocations are silently reversed.
+
+**Recommendation**: Add a confirmation dialog or warning message when:
+- User navigates backward from Spend SP step
+- Changes in earlier steps would affect SP pool calculations
+- Message should explain that SP allocations will be reset
+
+---
+
+## Priority 6: Low - Code Organization and Clarity
+
+### 6.1 Improve Naming Consistency
+**Files affected**: costs.ex, pilots.ex, spend_sp.ex
+
+Inconsistent naming:
+- `reset_pilot_sp_for_cost_change` vs `reverse_pilot_allocations`
+- `pilot_allocations` (saved) vs `allocation` (runtime)
+- `sp_to_spend` vs `sp_available` vs `sp_remaining`
+
+**Recommendation**: Establish naming conventions:
+- Use `revert_*` consistently for rollback operations
+- Use `saved_*` prefix for persisted data vs runtime state
+
+### 6.2 Add Module Documentation
+**Files affected**: Various
+
+Functions like `effective_damage_status/1` in costs.ex:415 need clearer @doc explaining:
+- Why destroyed+salvaged becomes "salvageable"
+- Business logic reasoning
+
+### 6.3 Extract Magic Numbers to Module Attributes
+**Files affected**: pilots.ex, summary.ex, deployment.ex, spend_sp.ex
+
+Magic numbers scattered throughout:
+- `20` (MVP bonus SP) - pilots.ex:181, summary.ex:389
+- `100` (casualty cost for unnamed pilots) - deployment.ex:86, costs.ex:95
+- Various skill/token/ability costs in spend_sp.ex:482-536
+
+**Recommendation**: Define as module attributes or create `Aces.Campaigns.Constants` module.
+
+---
+
+## Priority 7: Low - Database Improvements
+
+### 7.1 Add Database Constraints
+**Files affected**: New migration
+
+Some validations exist only in changesets, not in the database.
+
+**Recommendation**: Add constraints:
+- `status` NOT NULL with CHECK constraint for valid values
+- `pv_limit` positive integer constraint
+
+### 7.2 Consider Partial Index for Active Sorties
+**Files affected**: New migration
+
+`show.ex:237` queries for in-progress sorties without index.
+
+**Recommendation**: Add partial index on `(campaign_id) WHERE status = 'in_progress'`
+
+---
+
+## Priority 8: Low - Testing
+
+### 8.1 Add Boundary Tests for Wizard Navigation
+**Files affected**: test/aces_web/live/sortie_live/complete_test.exs
+
+Ensure test coverage for `Helpers.can_navigate_to?/2`:
+- Forward navigation (only +1 step allowed)
+- Backward navigation (any previous step)
+- Invalid step transitions
+
+### 8.2 Test Complex Calculations in Isolation
+Once business logic is extracted to context (Priority 1), create comprehensive unit tests for:
+- `calculate_pilot_earnings/3`
+- Cost calculations
+- SP distributions
+
+---
+
+## Domain Clarifications (Resolved)
+
+1. **Casualty Costs**: Unnamed pilots cost 100 SP for both wounded and killed (medical/replacement). Named killed pilots do not cost 100 SP here; replacement hiring (150 SP) is handled outside this flow.
+
+2. **SP Allocation Reversal**: Confirmed okay to reset values when costs change, but should add a warning to the player (see Priority 5.1).
+
+3. **Force Commander vs MVP**: Force Commander can also be selected as MVP - no validation needed.
+
+---
+
+## Implementation Order Suggestion
+
+**Phase 1 (Foundation)**:
+- 1.1 Move business logic to context
+- 2.1 Consolidate authorization/validation
+
+**Phase 2 (Cleanup)**:
+- 1.2 Extract pilot allocation logic
+- 2.2 Consolidate badge/formatting functions
+- 2.3 Extract parse utilities
+
+**Phase 3 (UX & Polish)**:
+- 5.1 Add navigation warning
+- 4.1 Extract wizard progress component
+- 3.1 Embedded schema for allocations
+
+**Phase 4 (Technical Debt)**:
+- Remaining priorities 6-8
