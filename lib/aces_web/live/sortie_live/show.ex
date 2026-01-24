@@ -289,8 +289,16 @@ defmodule AcesWeb.SortieLive.Show do
               <p class="text-lg opacity-70">{@sortie.description}</p>
             <% end %>
           </div>
-          
+
           <div class="flex items-center gap-2">
+            <%= if @sortie.status == "setup" and @can_edit do %>
+              <.link
+                navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{@sortie.id}/edit"}
+                class="btn btn-outline btn-sm"
+              >
+                Edit Sortie
+              </.link>
+            <% end %>
             <div class={[
               "badge badge-lg",
               @sortie.status == "setup" && "badge-neutral",

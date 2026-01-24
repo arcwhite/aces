@@ -73,6 +73,7 @@ defmodule AcesWeb.Router do
     # Sortie routes
     live "/companies/:company_id/campaigns/:campaign_id/sorties/new", SortieLive.New, :new
     live "/companies/:company_id/campaigns/:campaign_id/sorties/:id", SortieLive.Show, :show
+    live "/companies/:company_id/campaigns/:campaign_id/sorties/:id/edit", SortieLive.Edit, :edit
 
     # Sortie completion wizard
     live "/companies/:company_id/campaigns/:campaign_id/sorties/:id/complete/outcome", SortieLive.Complete.Outcome, :outcome

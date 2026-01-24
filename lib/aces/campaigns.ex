@@ -6,8 +6,9 @@ defmodule Aces.Campaigns do
   import Ecto.Query, warn: false
   alias Aces.Repo
 
-  alias Aces.Companies.{Company, Pilot}
+  alias Aces.Companies.{Company, CompanyUnit, Pilot}
   alias Aces.Campaigns.{Campaign, Sortie, Deployment, CampaignEvent, PilotCampaignStats}
+  alias Aces.Units.MasterUnit
 
   ## Campaign CRUD
 
@@ -127,12 +128,20 @@ defmodule Aces.Campaigns do
   Gets a sortie by ID with full associations
   """
   def get_sortie!(id) do
+    # Build a query for deployments ordered by PV (descending)
+    deployments_query =
+      from d in Deployment,
+        join: cu in CompanyUnit, on: cu.id == d.company_unit_id,
+        join: mu in MasterUnit, on: mu.id == cu.master_unit_id,
+        order_by: [desc: mu.point_value],
+        preload: [company_unit: {cu, master_unit: mu}, pilot: []]
+
     Sortie
     |> preload([
       :campaign,
       :force_commander,
       :mvp_pilot,
-      deployments: [company_unit: :master_unit, pilot: []]
+      deployments: ^deployments_query
     ])
     |> Repo.get!(id)
   end
@@ -141,7 +150,7 @@ defmodule Aces.Campaigns do
   Creates a sortie for a campaign
   """
   def create_sortie(%Campaign{} = campaign, attrs \\ %{}) do
-    attrs_with_campaign = 
+    attrs_with_campaign =
       attrs
       |> Map.put("campaign_id", campaign.id)
 
@@ -155,6 +164,26 @@ defmodule Aces.Campaigns do
       {:error, changeset} ->
         {:error, changeset}
     end
+  end
+
+  @doc """
+  Updates a sortie (only allowed when status is "setup")
+  """
+  def update_sortie(%Sortie{status: "setup"} = sortie, attrs) do
+    sortie
+    |> Sortie.creation_changeset(attrs)
+    |> Repo.update()
+    |> case do
+      {:ok, sortie} ->
+        {:ok, get_sortie!(sortie.id)}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
+  end
+
+  def update_sortie(%Sortie{status: status}, _attrs) do
+    {:error, "Cannot edit sortie that has already begun (status: #{status})"}
   end
 
   @doc """
@@ -241,6 +270,15 @@ defmodule Aces.Campaigns do
   """
   def remove_deployment(%Deployment{} = deployment) do
     Repo.delete(deployment)
+  end
+
+  @doc """
+  Updates a deployment (e.g., to change pilot assignment)
+  """
+  def update_deployment(%Deployment{} = deployment, attrs) do
+    deployment
+    |> Deployment.creation_changeset(attrs)
+    |> Repo.update()
   end
 
   ## Helper Functions

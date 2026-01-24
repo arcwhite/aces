@@ -29,7 +29,8 @@ defmodule AcesWeb.CampaignLive.Show do
          socket
          |> assign(:company, company)
          |> assign(:campaign, campaign)
-         |> assign(:page_title, campaign.name)}
+         |> assign(:page_title, campaign.name)
+         |> assign(:can_edit, Authorization.can?(:edit_company, user, company))}
       end
     end
   end
@@ -48,7 +49,7 @@ defmodule AcesWeb.CampaignLive.Show do
            |> put_flash(:info, "Campaign #{outcome} successfully!")}
 
         {:error, changeset} ->
-          error_message = 
+          error_message =
             changeset.errors
             |> Enum.map(fn {field, {msg, _}} -> "#{field}: #{msg}" end)
             |> Enum.join(", ")
@@ -82,7 +83,7 @@ defmodule AcesWeb.CampaignLive.Show do
               <p class="text-lg opacity-70">{@campaign.description}</p>
             <% end %>
           </div>
-          
+
           <div class="flex items-center gap-2">
             <div class={[
               "badge badge-lg",
@@ -92,7 +93,7 @@ defmodule AcesWeb.CampaignLive.Show do
             ]}>
               {String.capitalize(@campaign.status)}
             </div>
-            
+
             <%= if @campaign.status == "active" do %>
               <div class="dropdown dropdown-end">
                 <div tabindex="0" role="button" class="btn btn-primary btn-sm">
@@ -100,7 +101,7 @@ defmodule AcesWeb.CampaignLive.Show do
                 </div>
                 <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
                   <li>
-                    <a 
+                    <a
                       phx-click="complete_campaign"
                       phx-value-outcome="completed"
                       data-confirm="Mark this campaign as completed?"
@@ -109,7 +110,7 @@ defmodule AcesWeb.CampaignLive.Show do
                     </a>
                   </li>
                   <li>
-                    <a 
+                    <a
                       phx-click="complete_campaign"
                       phx-value-outcome="failed"
                       data-confirm="Mark this campaign as failed?"
@@ -171,7 +172,7 @@ defmodule AcesWeb.CampaignLive.Show do
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold">Sortie History</h2>
           <%= if @campaign.status == "active" do %>
-            <.link 
+            <.link
               navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/new"}
               class="btn btn-primary"
             >
@@ -212,7 +213,7 @@ defmodule AcesWeb.CampaignLive.Show do
                       <div class={[
                         "badge",
                         sortie.status == "setup" && "badge-neutral",
-                        sortie.status == "in_progress" && "badge-warning", 
+                        sortie.status == "in_progress" && "badge-warning",
                         sortie.status == "completed" && "badge-success",
                         sortie.status == "failed" && "badge-error"
                       ]}>
@@ -237,12 +238,20 @@ defmodule AcesWeb.CampaignLive.Show do
                       <% end %>
                     </td>
                     <td>
-                      <.link 
+                      <.link
                         navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{sortie.id}"}
                         class="btn btn-ghost btn-sm"
                       >
                         View
                       </.link>
+                      <%= if sortie.status == "setup" and @can_edit do %>
+                        <.link
+                          navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{sortie.id}/edit"}
+                          class="btn btn-outline btn-sm"
+                        >
+                          Edit
+                        </.link>
+                      <% end %>
                     </td>
                   </tr>
                 <% end %>
@@ -255,7 +264,7 @@ defmodule AcesWeb.CampaignLive.Show do
       <!-- Campaign Events -->
       <div class="mb-8">
         <h2 class="text-2xl font-bold mb-4">Campaign Timeline</h2>
-        
+
         <%= if length(@campaign.campaign_events) == 0 do %>
           <div class="alert alert-info">
             <span>No events recorded yet.</span>
@@ -286,7 +295,7 @@ defmodule AcesWeb.CampaignLive.Show do
       <!-- Pilot Campaign Stats -->
       <div class="mb-8">
         <h2 class="text-2xl font-bold mb-4">Pilot Performance</h2>
-        
+
         <%= if length(@campaign.pilot_campaign_stats) == 0 do %>
           <div class="alert alert-info">
             <span>No pilot stats available.</span>
