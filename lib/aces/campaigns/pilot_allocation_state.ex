@@ -82,7 +82,7 @@ defmodule Aces.Campaigns.PilotAllocationState do
   @doc """
   Build an allocation from previously saved data.
 
-  Restores allocation state from the saved map (stored in sortie.pilot_allocations)
+  Restores allocation state from a saved map (converted from pilot_allocations table records)
   and recalculates derived values.
 
   ## Parameters
@@ -150,7 +150,7 @@ defmodule Aces.Campaigns.PilotAllocationState do
 
   ## Parameters
   - `all_pilots` - List of all company pilots
-  - `saved_allocations` - Map from sortie.pilot_allocations (may be nil or empty)
+  - `saved_allocations` - Map converted from pilot_allocations table (may be nil or empty)
   """
   @spec build_all(list(Pilot.t()), map() | nil) :: {list(Pilot.t()), map()}
   def build_all(all_pilots, saved_allocations) do
@@ -312,9 +312,9 @@ defmodule Aces.Campaigns.PilotAllocationState do
   end
 
   @doc """
-  Convert an allocation to a map suitable for saving to the sortie.
+  Convert an allocation to a map suitable for saving to the database.
 
-  This is the format stored in sortie.pilot_allocations.
+  This is the intermediate format used when saving to the pilot_allocations table.
   """
   @spec to_saved_format(t()) :: map()
   def to_saved_format(allocation) do
@@ -332,7 +332,7 @@ defmodule Aces.Campaigns.PilotAllocationState do
   end
 
   @doc """
-  Convert all allocations to the saved format for sortie.pilot_allocations.
+  Convert all allocations to the saved format for persisting to the database.
   """
   @spec all_to_saved_format(map()) :: map()
   def all_to_saved_format(allocations) do
