@@ -8,6 +8,7 @@ defmodule Aces.Companies.Pilot do
 
   alias Aces.Companies.Company
   alias Aces.Companies.CompanyUnit
+  alias Aces.Campaigns.PilotAllocation
 
   @status_values ~w(active wounded deceased)
   @max_skill_level 4
@@ -94,6 +95,7 @@ defmodule Aces.Companies.Pilot do
 
     belongs_to :company, Company
     has_one :assigned_unit, CompanyUnit
+    has_many :allocations, PilotAllocation, foreign_key: :pilot_id
 
     timestamps(type: :utc_datetime)
   end

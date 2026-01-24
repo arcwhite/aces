@@ -72,14 +72,15 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
     costs_changed = SortieCompletion.costs_changed?(sortie, costs.total_expenses)
 
     # If costs changed and pilots already distributed SP, reset the pilot data
-    {pilot_sp_cost, pilot_allocations} =
+    pilot_sp_cost =
       if costs_changed and (sortie.pilot_sp_cost || 0) > 0 do
         # Reset pilot SP - they'll need to go through the pilots step again
+        # This also deletes pilot allocations from the database
         apply_pilot_reversals(sortie, company)
-        {0, %{}}
+        0
       else
-        # Preserve existing pilot data
-        {sortie.pilot_sp_cost || 0, sortie.pilot_allocations || %{}}
+        # Preserve existing pilot SP cost
+        sortie.pilot_sp_cost || 0
       end
 
     # Calculate total expenses including pilot SP cost
@@ -95,7 +96,6 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
         total_expenses: total_expenses_with_pilot,
         net_earnings: net_earnings,
         pilot_sp_cost: pilot_sp_cost,
-        pilot_allocations: pilot_allocations,
         finalization_step: "pilots"
       })
       |> Aces.Repo.update()
@@ -349,7 +349,7 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
   # Apply pilot reversals when costs change
   defp apply_pilot_reversals(sortie, company) do
     all_pilots = Pilots.list_company_pilots(company)
-    reversals = SortieCompletion.reverse_pilot_allocations_full(sortie.pilot_allocations, all_pilots, sortie)
+    reversals = SortieCompletion.reverse_pilot_allocations_full(sortie.id, all_pilots, sortie)
 
     Enum.each(reversals, fn {pilot_id, changes} ->
       pilot = Enum.find(all_pilots, &(&1.id == pilot_id))
@@ -359,6 +359,9 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
         |> Aces.Repo.update()
       end
     end)
+
+    # Delete pilot allocations from database
+    Campaigns.delete_sortie_pilot_allocations(sortie.id)
   end
 
   defp damage_badge_class(status) do

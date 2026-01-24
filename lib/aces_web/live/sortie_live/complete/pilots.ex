@@ -109,7 +109,10 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
     # Only process if MVP actually changed
     if old_mvp_id != new_mvp_id do
       # First, reverse any SP allocations that were made in spend_sp step
-      apply_pilot_reversals(sortie.pilot_allocations, all_pilots)
+      apply_pilot_reversals(sortie.id, all_pilots)
+
+      # Delete pilot allocations from database
+      Campaigns.delete_sortie_pilot_allocations(sortie.id)
 
       # Apply MVP changes using business logic module
       mvp_changes = SortieCompletion.calculate_mvp_change(old_mvp_id, new_mvp_id, all_pilots)
@@ -132,11 +135,10 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
         end
       end
 
-      # Update sortie with new MVP and clear pilot_allocations
+      # Update sortie with new MVP
       sortie
       |> Ecto.Changeset.change(%{
         mvp_pilot_id: new_mvp_id,
-        pilot_allocations: %{},
         finalization_step: "spend_sp"
       })
       |> Aces.Repo.update()
@@ -148,8 +150,8 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
     end
   end
 
-  defp apply_pilot_reversals(allocations, all_pilots) do
-    reversals = SortieCompletion.reverse_pilot_allocations(allocations, all_pilots)
+  defp apply_pilot_reversals(sortie_id, all_pilots) do
+    reversals = SortieCompletion.reverse_pilot_allocations(sortie_id, all_pilots)
 
     Enum.each(reversals, fn {pilot_id, changes} ->
       pilot = Enum.find(all_pilots, &(&1.id == pilot_id))

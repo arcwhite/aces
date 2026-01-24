@@ -7,7 +7,7 @@ defmodule Aces.Campaigns do
   alias Aces.Repo
 
   alias Aces.Companies.{Company, CompanyUnit, Pilot}
-  alias Aces.Campaigns.{Campaign, Sortie, Deployment, CampaignEvent, PilotCampaignStats}
+  alias Aces.Campaigns.{Campaign, Sortie, Deployment, CampaignEvent, PilotCampaignStats, PilotAllocation}
   alias Aces.Units.MasterUnit
 
   ## Campaign CRUD
@@ -537,5 +537,138 @@ defmodule Aces.Campaigns do
       end
     end)
     |> Enum.sum()
+  end
+
+  ## Pilot Allocation Management
+
+  @doc """
+  Gets all pilot allocations for a sortie.
+
+  Returns a list of PilotAllocation records.
+  """
+  def get_sortie_pilot_allocations(sortie_id) do
+    PilotAllocation
+    |> where(sortie_id: ^sortie_id)
+    |> Repo.all()
+  end
+
+  @doc """
+  Gets all pilot allocations for a sortie, converted to saved format.
+
+  Returns a map of pilot_id_string => saved_data, compatible with
+  PilotAllocationState.build_all/2.
+  """
+  def get_sortie_pilot_allocations_as_saved_map(sortie_id) do
+    allocations = get_sortie_pilot_allocations(sortie_id)
+
+    if allocations == [] do
+      %{}
+    else
+      # For sortie allocations, we need to also get each pilot's initial allocation
+      # to compute baselines. The "saved" format expects baseline + add values.
+      build_saved_map_from_allocations(allocations, sortie_id)
+    end
+  end
+
+  defp build_saved_map_from_allocations(allocations, sortie_id) do
+    # Get pilot IDs from sortie allocations
+    pilot_ids = Enum.map(allocations, & &1.pilot_id)
+
+    # Get all prior allocations for these pilots (everything before or including this sortie)
+    # We need: initial allocation + all sortie allocations BEFORE this one to compute baseline
+    prior_allocations = get_prior_allocations_for_pilots(pilot_ids, sortie_id)
+
+    # Build the saved map for each pilot
+    allocations
+    |> Enum.map(fn alloc ->
+      pilot_prior = Map.get(prior_allocations, alloc.pilot_id, [])
+
+      # Baseline is sum of all allocations BEFORE this sortie
+      baseline_skill = Enum.sum(Enum.map(pilot_prior, & &1.sp_to_skill))
+      baseline_tokens = Enum.sum(Enum.map(pilot_prior, & &1.sp_to_tokens))
+      baseline_abilities = Enum.sum(Enum.map(pilot_prior, & &1.sp_to_abilities))
+      baseline_edge_abilities = Enum.flat_map(pilot_prior, & &1.edge_abilities_gained)
+
+      saved = %{
+        "baseline_skill" => baseline_skill,
+        "baseline_tokens" => baseline_tokens,
+        "baseline_abilities" => baseline_abilities,
+        "baseline_edge_abilities" => baseline_edge_abilities,
+        "add_skill" => alloc.sp_to_skill,
+        "add_tokens" => alloc.sp_to_tokens,
+        "add_abilities" => alloc.sp_to_abilities,
+        "new_edge_abilities" => alloc.edge_abilities_gained,
+        "sp_to_spend" => alloc.total_sp
+      }
+
+      {to_string(alloc.pilot_id), saved}
+    end)
+    |> Map.new()
+  end
+
+  defp get_prior_allocations_for_pilots(pilot_ids, sortie_id) do
+    # Get the sortie to find its inserted_at timestamp
+    sortie = Repo.get!(Sortie, sortie_id)
+
+    # Get all allocations for these pilots that are:
+    # 1. Initial allocations (sortie_id is nil), OR
+    # 2. Sortie allocations from sorties created BEFORE this one
+    PilotAllocation
+    |> where([a], a.pilot_id in ^pilot_ids)
+    |> where([a], is_nil(a.sortie_id) or a.sortie_id != ^sortie_id)
+    |> join(:left, [a], s in Sortie, on: a.sortie_id == s.id)
+    |> where([a, s], is_nil(a.sortie_id) or s.inserted_at < ^sortie.inserted_at)
+    |> Repo.all()
+    |> Enum.group_by(& &1.pilot_id)
+  end
+
+  @doc """
+  Saves pilot allocations for a sortie.
+
+  Takes a map of pilot_id => PilotAllocationState and creates/updates
+  PilotAllocation records in the database.
+
+  Returns {:ok, results} or {:error, reason}.
+  """
+  def save_sortie_pilot_allocations(sortie_id, allocations_map) do
+    multi =
+      Enum.reduce(allocations_map, Ecto.Multi.new(), fn {pilot_id, alloc_state}, multi ->
+        attrs = %{
+          pilot_id: pilot_id,
+          sortie_id: sortie_id,
+          allocation_type: "sortie",
+          sp_to_skill: alloc_state.add_skill,
+          sp_to_tokens: alloc_state.add_tokens,
+          sp_to_abilities: alloc_state.add_abilities,
+          edge_abilities_gained: alloc_state.new_edge_abilities,
+          total_sp: alloc_state.sp_to_spend
+        }
+
+        changeset = PilotAllocation.sortie_changeset(%PilotAllocation{}, attrs)
+
+        Ecto.Multi.insert(
+          multi,
+          {:pilot_allocation, pilot_id},
+          changeset,
+          on_conflict: {:replace, [:sp_to_skill, :sp_to_tokens, :sp_to_abilities, :edge_abilities_gained, :total_sp, :updated_at]},
+          conflict_target: [:sortie_id, :pilot_id]
+        )
+      end)
+
+    Repo.transaction(multi)
+  end
+
+  @doc """
+  Deletes all pilot allocations for a sortie.
+
+  Used when reversing pilot allocations during cost changes.
+  """
+  def delete_sortie_pilot_allocations(sortie_id) do
+    {deleted, _} =
+      PilotAllocation
+      |> where(sortie_id: ^sortie_id)
+      |> Repo.delete_all()
+
+    {:ok, deleted}
   end
 end

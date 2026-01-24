@@ -6,7 +6,7 @@ defmodule Aces.Campaigns.Sortie do
   import Ecto.Changeset
 
   alias Aces.Companies.Pilot
-  alias Aces.Campaigns.{Campaign, Deployment}
+  alias Aces.Campaigns.{Campaign, Deployment, PilotAllocation}
 
   @sortie_status ~w(setup in_progress finalizing failed completed)
 
@@ -37,7 +37,9 @@ defmodule Aces.Campaigns.Sortie do
 
     # Finalization wizard progress
     field :finalization_step, :string  # "outcome" | "damage" | "costs" | "pilots" | "spend_sp" | "summary" | nil
-    field :pilot_allocations, :map, default: %{}  # Stores SP allocations made in spend_sp step
+
+    # Pilot SP allocations made in spend_sp step (stored in pilot_allocations table)
+    has_many :pilot_allocations, PilotAllocation
 
     # Metadata
     field :started_at, :utc_datetime
@@ -60,7 +62,7 @@ defmodule Aces.Campaigns.Sortie do
       :primary_objective_income, :secondary_objectives_income, :waypoints_income,
       :rearming_cost, :total_income, :total_expenses, :net_earnings, :pilot_sp_cost,
       :sp_per_participating_pilot, :keywords_gained, :mvp_pilot_id,
-      :started_at, :completed_at, :finalization_step, :pilot_allocations
+      :started_at, :completed_at, :finalization_step
     ])
     |> validate_required([:name, :pv_limit, :status])
     |> validate_inclusion(:status, @sortie_status)

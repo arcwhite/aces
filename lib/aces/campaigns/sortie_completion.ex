@@ -115,7 +115,7 @@ defmodule Aces.Campaigns.SortieCompletion do
   Returns a list of {pilot_id, changes_map} tuples that need to be applied.
 
   ## Parameters
-  - `pilot_allocations` - saved allocations from sortie.pilot_allocations
+  - `pilot_allocations` - saved allocations map (with string keys) OR sortie_id (integer)
   - `all_pilots` - list of all company pilots
 
   ## Examples
@@ -125,6 +125,11 @@ defmodule Aces.Campaigns.SortieCompletion do
   """
   def reverse_pilot_allocations(nil, _pilots), do: []
   def reverse_pilot_allocations(allocations, _pilots) when allocations == %{}, do: []
+  def reverse_pilot_allocations(sortie_id, pilots) when is_integer(sortie_id) do
+    # Load allocations from database
+    allocations = Aces.Campaigns.get_sortie_pilot_allocations_as_saved_map(sortie_id)
+    reverse_pilot_allocations(allocations, pilots)
+  end
   def reverse_pilot_allocations(allocations, pilots) do
     Enum.flat_map(allocations, fn {pilot_id_str, saved} ->
       pilot_id = String.to_integer(pilot_id_str)
@@ -147,7 +152,7 @@ defmodule Aces.Campaigns.SortieCompletion do
   need to be rolled back completely.
 
   ## Parameters
-  - `pilot_allocations` - saved allocations from sortie.pilot_allocations
+  - `pilot_allocations` - saved allocations map (with string keys) OR sortie_id (integer)
   - `all_pilots` - list of all company pilots
   - `sortie` - the sortie being modified
 
@@ -155,6 +160,11 @@ defmodule Aces.Campaigns.SortieCompletion do
   """
   def reverse_pilot_allocations_full(nil, _pilots, _sortie), do: []
   def reverse_pilot_allocations_full(allocations, _pilots, _sortie) when allocations == %{}, do: []
+  def reverse_pilot_allocations_full(sortie_id, pilots, sortie) when is_integer(sortie_id) do
+    # Load allocations from database
+    allocations = Aces.Campaigns.get_sortie_pilot_allocations_as_saved_map(sortie_id)
+    reverse_pilot_allocations_full(allocations, pilots, sortie)
+  end
   def reverse_pilot_allocations_full(allocations, pilots, sortie) do
     Enum.flat_map(allocations, fn {pilot_id_str, saved} ->
       pilot_id = String.to_integer(pilot_id_str)

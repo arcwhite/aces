@@ -25,9 +25,12 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
       # Get all pilots in the company
       all_pilots = Pilots.list_company_pilots(company)
 
+      # Load saved allocations from the database (pilot_allocations table)
+      saved_allocations = Campaigns.get_sortie_pilot_allocations_as_saved_map(sortie.id)
+
       # Build allocation state - either from saved data or fresh
       {pilots_with_sp, pilot_allocations} =
-        PilotAllocationState.build_all(all_pilots, sortie.pilot_allocations)
+        PilotAllocationState.build_all(all_pilots, saved_allocations)
 
       {:ok,
        socket
@@ -122,25 +125,50 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
     end
   end
 
-  defp build_save_transaction(socket, allocations, saved_allocations) do
+  defp build_save_transaction(socket, allocations, _saved_allocations) do
+    alias Aces.Campaigns.PilotAllocation
+
+    sortie = socket.assigns.sortie
+
     # Start with pilot updates
     multi =
       Enum.reduce(allocations, Ecto.Multi.new(), fn {pilot_id, alloc}, multi ->
         pilot = Enum.find(socket.assigns.pilots_with_sp, &(&1.id == pilot_id))
 
         if pilot do
+          # Update pilot record
           changes = PilotAllocationState.to_pilot_changes(alloc)
           changeset = Ecto.Changeset.change(pilot, changes)
-          Ecto.Multi.update(multi, {:pilot, pilot_id}, changeset)
+
+          # Create PilotAllocation record for this sortie
+          allocation_attrs = %{
+            pilot_id: pilot_id,
+            sortie_id: sortie.id,
+            sp_to_skill: alloc.add_skill,
+            sp_to_tokens: alloc.add_tokens,
+            sp_to_abilities: alloc.add_abilities,
+            edge_abilities_gained: alloc.new_edge_abilities,
+            total_sp: alloc.sp_to_spend
+          }
+
+          allocation_changeset = PilotAllocation.sortie_changeset(%PilotAllocation{}, allocation_attrs)
+
+          multi
+          |> Ecto.Multi.update({:pilot, pilot_id}, changeset)
+          |> Ecto.Multi.insert(
+            {:pilot_allocation, pilot_id},
+            allocation_changeset,
+            on_conflict: {:replace, [:sp_to_skill, :sp_to_tokens, :sp_to_abilities, :edge_abilities_gained, :total_sp, :updated_at]},
+            conflict_target: [:sortie_id, :pilot_id]
+          )
         else
           multi
         end
       end)
 
-    # Add sortie update
+    # Add sortie update (just update finalization_step, no more pilot_allocations JSON)
     sortie_changeset =
-      Ecto.Changeset.change(socket.assigns.sortie, %{
-        pilot_allocations: saved_allocations,
+      Ecto.Changeset.change(sortie, %{
         finalization_step: "summary"
       })
 
