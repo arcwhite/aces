@@ -26,3 +26,4 @@
 - [x] Refactor 1.1 from .local-dev/refactor.txt - Business logic separated into Aces.Campaigns.SortieCompletion module (calculate_all_costs, calculate_pilot_earnings, reverse_pilot_allocations, distribute_sp_to_pilots, etc.)
 - [x] Refactor 1.2 from .local-dev/refactor.txt - Extracted pilot SP allocation logic to Aces.Campaigns.PilotAllocation module (build_fresh, build_from_saved, update_allocation, toggle_edge_ability, validate, to_pilot_changes). Also added Ecto.Multi transaction for atomic saves and safe integer parsing.
 - [x] Refactor 3.1 investigation - Investigated embedded schema for pilot allocations. Decided on separate table with unified allocation history (initial + sortie). Full specification written in specs/PILOT_ALLOCATIONS.md.
+- [x] Pilot allocations migration Phase 1.1 - Renamed PilotAllocation module to PilotAllocationState to make room for the new Ecto schema. Updated spend_sp.ex and tests accordingly.
