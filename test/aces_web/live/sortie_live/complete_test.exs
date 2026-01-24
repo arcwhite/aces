@@ -433,7 +433,7 @@ defmodule AcesWeb.SortieLive.CompleteTest do
       assert html =~ "Confirm Unit Status"
     end
 
-    test "summary step accessible as read-only for completed sorties", %{conn: conn, company: company, campaign: campaign, sortie: sortie} do
+    test "summary step redirects to show page for completed sorties", %{conn: conn, company: company, campaign: campaign, sortie: sortie} do
       # Mark sortie as completed with truncated timestamp
       {:ok, _} =
         sortie
@@ -446,12 +446,19 @@ defmodule AcesWeb.SortieLive.CompleteTest do
         })
         |> Aces.Repo.update()
 
-      {:ok, _live, html} =
+      # Summary page now redirects to show page for completed sorties
+      {:error, {:live_redirect, %{to: redirect_path}}} =
         live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/#{sortie.id}/complete/summary")
 
-      assert html =~ "Sortie Summary"
-      # Should show back to campaign link, not complete button
-      assert html =~ "Back to Campaign"
+      assert redirect_path =~ "/companies/#{company.id}/campaigns/#{campaign.id}/sorties/#{sortie.id}"
+      refute redirect_path =~ "/complete/summary"
+
+      # The show page displays the full summary for completed sorties
+      {:ok, _live, html} = live(conn, redirect_path)
+      assert html =~ "Sortie Completed - Victory!"
+      assert html =~ "Mission Details"
+      assert html =~ "Financial Summary"
+      assert html =~ "Back to"
       refute html =~ ">Complete Sortie<"
     end
   end

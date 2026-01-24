@@ -2,7 +2,7 @@ defmodule AcesWeb.SortieLive.Show do
   use AcesWeb, :live_view
 
   alias Aces.{Companies, Campaigns}
-  alias Aces.Companies.Authorization
+  alias Aces.Companies.{Authorization, Pilots}
   alias Aces.Campaigns.Deployment
   alias AcesWeb.SortieLive.Complete.Helpers, as: CompleteHelpers
 
@@ -43,6 +43,16 @@ defmodule AcesWeb.SortieLive.Show do
             true -> nil
           end
 
+        # For completed sorties, fetch pilot allocations for the summary
+        {pilot_allocations, all_pilots} =
+          if sortie.status == "completed" do
+            allocs = Campaigns.get_sortie_pilot_allocations(sortie.id)
+            pilots = Pilots.list_company_pilots(company)
+            {allocs, pilots}
+          else
+            {[], []}
+          end
+
         {:ok,
          socket
          |> assign(:company, company)
@@ -52,7 +62,9 @@ defmodule AcesWeb.SortieLive.Show do
          |> assign(:selected_force_commander_id, default_force_commander_id)
          |> assign(:page_title, "Sortie #{sortie.mission_number}: #{sortie.name}")
          |> assign(:can_edit, Authorization.can?(:edit_company, user, company))
-         |> assign(:show_fail_modal, false)}
+         |> assign(:show_fail_modal, false)
+         |> assign(:pilot_allocations, pilot_allocations)
+         |> assign(:all_pilots, all_pilots)}
       end
     end
   end
@@ -574,47 +586,20 @@ defmodule AcesWeb.SortieLive.Show do
       <% end %>
 
       <%= if @sortie.status == "completed" do %>
-        <div class="card bg-success/20 shadow-xl mb-8">
-          <div class="card-body">
-            <div class="flex items-start gap-4">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-success shrink-0 w-6 h-6 mt-1">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-              <div class="flex-1">
-                <h3 class="font-bold text-lg mb-2">Sortie Completed - Victory!</h3>
-                <div class="grid gap-4 md:grid-cols-3 mb-4">
-                  <div>
-                    <div class="text-sm opacity-70">Net Earnings</div>
-                    <div class={["font-bold text-lg", if(@sortie.net_earnings >= 0, do: "text-success", else: "text-error")]}>
-                      {@sortie.net_earnings || 0} SP
-                    </div>
-                  </div>
-                  <%= if @sortie.mvp_pilot do %>
-                    <div>
-                      <div class="text-sm opacity-70">MVP</div>
-                      <div class="font-bold text-lg">{@sortie.mvp_pilot.name}</div>
-                    </div>
-                  <% end %>
-                  <%= if @sortie.keywords_gained && length(@sortie.keywords_gained) > 0 do %>
-                    <div>
-                      <div class="text-sm opacity-70">Keywords Gained</div>
-                      <div class="flex flex-wrap gap-1 mt-1">
-                        <%= for keyword <- @sortie.keywords_gained do %>
-                          <span class="badge badge-primary badge-sm">{keyword}</span>
-                        <% end %>
-                      </div>
-                    </div>
-                  <% end %>
-                </div>
-                <.link
-                  navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{@sortie.id}/complete/summary"}
-                  class="btn btn-success btn-outline"
-                >
-                  View Full Summary
-                </.link>
-              </div>
-            </div>
+        <div class="mb-8">
+          <div class="flex items-center gap-3 mb-6">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-success shrink-0 w-8 h-8">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <h2 class="text-2xl font-bold text-success">Sortie Completed - Victory!</h2>
           </div>
+
+          <.sortie_summary
+            sortie={@sortie}
+            campaign={@campaign}
+            pilot_allocations={@pilot_allocations}
+            all_pilots={@all_pilots}
+          />
         </div>
       <% end %>
 

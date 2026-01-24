@@ -86,6 +86,8 @@ defmodule AcesWeb do
       import Phoenix.HTML
       # Core UI components
       import AcesWeb.CoreComponents
+      # Sortie summary component
+      import AcesWeb.Components.SortieSummary
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS
