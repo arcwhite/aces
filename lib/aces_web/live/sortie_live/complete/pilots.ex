@@ -6,6 +6,7 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
 
   alias Aces.{Companies, Campaigns}
   alias Aces.Companies.{Authorization, Pilots}
+  alias Aces.Campaigns.SortieCompletion
   alias AcesWeb.SortieLive.Complete.Helpers
 
   on_mount {AcesWeb.UserAuthLive, :default}
@@ -30,8 +31,8 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
         |> Enum.map(& &1.pilot_id)
         |> MapSet.new()
 
-      # Calculate pilot earnings
-      pilot_earnings = calculate_pilot_earnings(sortie, all_pilots, participating_pilot_ids)
+      # Calculate pilot earnings using business logic module
+      pilot_earnings = SortieCompletion.calculate_pilot_earnings(sortie, all_pilots, participating_pilot_ids)
 
       {:ok,
        socket
@@ -74,67 +75,6 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
     Helpers.validate_step_access(sortie, requested_step)
   end
 
-  defp calculate_pilot_earnings(sortie, all_pilots, participating_pilot_ids) do
-    net_earnings = sortie.net_earnings || 0
-    max_sp_per_pilot = sortie.sp_per_participating_pilot || 0
-
-    # Find killed pilots (they earn nothing)
-    killed_pilot_ids =
-      sortie.deployments
-      |> Enum.filter(&(&1.pilot_casualty == "killed" && &1.pilot_id))
-      |> Enum.map(& &1.pilot_id)
-      |> MapSet.new()
-
-    # First pass: calculate "desired" SP for each pilot (before pool constraint)
-    desired_earnings =
-      Enum.map(all_pilots, fn pilot ->
-        cond do
-          # Killed pilots earn nothing
-          MapSet.member?(killed_pilot_ids, pilot.id) ->
-            {pilot.id, %{desired_sp: 0, status: :killed, participated: true}}
-
-          # Deceased pilots don't earn
-          pilot.status == "deceased" ->
-            {pilot.id, %{desired_sp: 0, status: :deceased, participated: false}}
-
-          # Participating pilots want full share
-          MapSet.member?(participating_pilot_ids, pilot.id) ->
-            {pilot.id, %{desired_sp: max_sp_per_pilot, status: :active, participated: true}}
-
-          # Non-participating pilots want half share
-          true ->
-            {pilot.id, %{desired_sp: div(max_sp_per_pilot, 2), status: :active, participated: false}}
-        end
-      end)
-
-    # Calculate total desired SP
-    total_desired = Enum.reduce(desired_earnings, 0, fn {_id, data}, acc -> acc + data.desired_sp end)
-
-    # Determine if we need to scale down (can't give out more than net_earnings)
-    # If net_earnings <= 0, nobody gets anything
-    scale_factor =
-      cond do
-        net_earnings <= 0 -> 0.0
-        total_desired <= net_earnings -> 1.0
-        total_desired > 0 -> net_earnings / total_desired
-        true -> 0.0
-      end
-
-    # Second pass: apply scale factor to get actual SP
-    Enum.map(desired_earnings, fn {pilot_id, data} ->
-      actual_sp =
-        if data.desired_sp > 0 do
-          # Scale down and floor to integer
-          floor(data.desired_sp * scale_factor)
-        else
-          0
-        end
-
-      {pilot_id, %{sp: actual_sp, status: data.status, participated: data.participated}}
-    end)
-    |> Map.new()
-  end
-
   @impl true
   def handle_event("select_mvp", %{"pilot_id" => pilot_id}, socket) do
     mvp_id = if pilot_id == "", do: nil, else: String.to_integer(pilot_id)
@@ -164,37 +104,30 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
 
   defp handle_mvp_change_only(socket, sortie, new_mvp_id) do
     old_mvp_id = sortie.mvp_pilot_id
+    all_pilots = socket.assigns.all_pilots
 
     # Only process if MVP actually changed
     if old_mvp_id != new_mvp_id do
       # First, reverse any SP allocations that were made in spend_sp step
-      # This resets pilots to their baseline state before the allocations
-      reverse_pilot_allocations(sortie.pilot_allocations, socket.assigns.all_pilots)
+      apply_pilot_reversals(sortie.pilot_allocations, all_pilots)
 
-      # Remove MVP bonus from old MVP (if there was one)
-      if old_mvp_id do
-        old_mvp = Enum.find(socket.assigns.all_pilots, &(&1.id == old_mvp_id))
+      # Apply MVP changes using business logic module
+      mvp_changes = SortieCompletion.calculate_mvp_change(old_mvp_id, new_mvp_id, all_pilots)
+
+      if mvp_changes.old_mvp_changes do
+        old_mvp = Enum.find(all_pilots, &(&1.id == old_mvp_id))
         if old_mvp do
           old_mvp
-          |> Ecto.Changeset.change(%{
-            sp_earned: max((old_mvp.sp_earned || 0) - 20, 0),
-            sp_available: max((old_mvp.sp_available || 0) - 20, 0),
-            mvp_awards: max((old_mvp.mvp_awards || 0) - 1, 0)
-          })
+          |> Ecto.Changeset.change(mvp_changes.old_mvp_changes)
           |> Aces.Repo.update()
         end
       end
 
-      # Add MVP bonus to new MVP (if there is one)
-      if new_mvp_id do
-        new_mvp = Enum.find(socket.assigns.all_pilots, &(&1.id == new_mvp_id))
+      if mvp_changes.new_mvp_changes do
+        new_mvp = Enum.find(all_pilots, &(&1.id == new_mvp_id))
         if new_mvp do
           new_mvp
-          |> Ecto.Changeset.change(%{
-            sp_earned: (new_mvp.sp_earned || 0) + 20,
-            sp_available: (new_mvp.sp_available || 0) + 20,
-            mvp_awards: (new_mvp.mvp_awards || 0) + 1
-          })
+          |> Ecto.Changeset.change(mvp_changes.new_mvp_changes)
           |> Aces.Repo.update()
         end
       end
@@ -215,55 +148,27 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
     end
   end
 
-  defp reverse_pilot_allocations(nil, _pilots), do: :ok
-  defp reverse_pilot_allocations(allocations, pilots) when allocations == %{}, do: :ok
-  defp reverse_pilot_allocations(allocations, pilots) do
-    # For each pilot with saved allocations, reset their stats to baseline
-    # and restore their sp_available
-    Enum.each(allocations, fn {pilot_id_str, saved} ->
-      pilot_id = String.to_integer(pilot_id_str)
-      pilot = Enum.find(pilots, &(&1.id == pilot_id))
+  defp apply_pilot_reversals(allocations, all_pilots) do
+    reversals = SortieCompletion.reverse_pilot_allocations(allocations, all_pilots)
 
+    Enum.each(reversals, fn {pilot_id, changes} ->
+      pilot = Enum.find(all_pilots, &(&1.id == pilot_id))
       if pilot do
-        # Get the baseline values (what they had before this sortie's allocations)
-        baseline_skill = saved["baseline_skill"] || 0
-        baseline_tokens = saved["baseline_tokens"] || 0
-        baseline_abilities = saved["baseline_abilities"] || 0
-        baseline_edge_abilities = saved["baseline_edge_abilities"] || []
-        sp_to_spend = saved["sp_to_spend"] || 0
-
-        # Reset pilot to baseline and restore sp_available
         pilot
-        |> Ecto.Changeset.change(%{
-          sp_allocated_to_skill: baseline_skill,
-          sp_allocated_to_edge_tokens: baseline_tokens,
-          sp_allocated_to_edge_abilities: baseline_abilities,
-          edge_abilities: baseline_edge_abilities,
-          skill_level: Aces.Companies.Pilot.calculate_skill_from_sp(baseline_skill),
-          edge_tokens: Aces.Companies.Pilot.calculate_edge_tokens_from_sp(baseline_tokens),
-          sp_available: sp_to_spend
-        })
+        |> Ecto.Changeset.change(changes)
         |> Aces.Repo.update()
       end
     end)
   end
 
   defp distribute_sp_to_pilots(socket, sortie, mvp_id, pilot_earnings) do
-    # Calculate total pilot SP cost (sum of all SP awarded to pilots)
-    # NOTE: MVP bonus is NOT included - it's "free" and doesn't come from sortie earnings
-    total_pilot_sp_cost =
-      Enum.reduce(socket.assigns.all_pilots, 0, fn pilot, acc ->
-        earnings = Map.get(pilot_earnings, pilot.id)
-        if earnings && earnings.sp > 0 do
-          acc + earnings.sp
-        else
-          acc
-        end
-      end)
+    all_pilots = socket.assigns.all_pilots
+
+    # Use business logic module to calculate distribution
+    distribution = SortieCompletion.distribute_sp_to_pilots(all_pilots, pilot_earnings, mvp_id)
 
     # Recalculate expenses and net earnings including pilot SP cost
-    # total_expenses already includes repair + rearming + casualty from costs step
-    new_total_expenses = (sortie.total_expenses || 0) + total_pilot_sp_cost
+    new_total_expenses = (sortie.total_expenses || 0) + distribution.total_pilot_sp_cost
     new_net_earnings = (sortie.total_income || 0) - new_total_expenses
 
     # Update sortie with MVP and pilot SP cost
@@ -271,62 +176,32 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
       sortie
       |> Ecto.Changeset.change(%{
         mvp_pilot_id: mvp_id,
-        pilot_sp_cost: total_pilot_sp_cost,
+        pilot_sp_cost: distribution.total_pilot_sp_cost,
         total_expenses: new_total_expenses,
         net_earnings: new_net_earnings,
         finalization_step: "spend_sp"
       })
       |> Aces.Repo.update()
 
-    # Update each pilot's SP
-    Enum.each(socket.assigns.all_pilots, fn pilot ->
-      earnings = Map.get(pilot_earnings, pilot.id)
-
-      # Calculate base SP from earnings
-      base_sp = if earnings && earnings.sp > 0, do: earnings.sp, else: 0
-
-      # MVP bonus is given regardless of earnings (as long as pilot is eligible)
-      # MVP must have participated and not be killed/deceased
-      is_mvp = pilot.id == mvp_id
-      mvp_bonus = if is_mvp && earnings && earnings.participated && earnings.status == :active, do: 20, else: 0
-
-      total_sp = base_sp + mvp_bonus
-
-      # Only update if there's something to give (SP or MVP bonus) or if they participated
-      if total_sp > 0 || (earnings && earnings.participated) do
-        new_sp_earned = (pilot.sp_earned || 0) + total_sp
-        new_sp_available = (pilot.sp_available || 0) + total_sp
-        new_sorties = (pilot.sorties_participated || 0) + if(earnings && earnings.participated, do: 1, else: 0)
-        new_mvp_awards = (pilot.mvp_awards || 0) + if(is_mvp && mvp_bonus > 0, do: 1, else: 0)
-
+    # Apply pilot changes
+    Enum.each(distribution.pilot_changes, fn {pilot_id, changes} ->
+      pilot = Enum.find(all_pilots, &(&1.id == pilot_id))
+      if pilot do
         pilot
-        |> Ecto.Changeset.change(%{
-          sp_earned: new_sp_earned,
-          sp_available: new_sp_available,
-          sorties_participated: new_sorties,
-          mvp_awards: new_mvp_awards
-        })
+        |> Ecto.Changeset.change(changes)
         |> Aces.Repo.update()
       end
     end)
 
-    # Mark wounded/killed pilots
-    Enum.each(sortie.deployments, fn deployment ->
-      if deployment.pilot_id do
-        case deployment.pilot_casualty do
-          "wounded" ->
-            deployment.pilot
-            |> Ecto.Changeset.change(%{status: "wounded"})
-            |> Aces.Repo.update()
+    # Apply casualty updates using business logic module
+    casualty_updates = SortieCompletion.build_casualty_updates(sortie.deployments)
 
-          "killed" ->
-            deployment.pilot
-            |> Ecto.Changeset.change(%{status: "deceased"})
-            |> Aces.Repo.update()
-
-          _ ->
-            :ok
-        end
+    Enum.each(casualty_updates, fn {pilot_id, changes} ->
+      deployment = Enum.find(sortie.deployments, &(&1.pilot_id == pilot_id))
+      if deployment && deployment.pilot do
+        deployment.pilot
+        |> Ecto.Changeset.change(changes)
+        |> Aces.Repo.update()
       end
     end)
   end

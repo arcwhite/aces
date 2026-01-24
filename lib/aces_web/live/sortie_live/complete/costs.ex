@@ -5,8 +5,8 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
   use AcesWeb, :live_view
 
   alias Aces.{Companies, Campaigns}
-  alias Aces.Companies.{Authorization, Pilots, Pilot}
-  alias Aces.Campaigns.Deployment
+  alias Aces.Companies.{Authorization, Pilots}
+  alias Aces.Campaigns.SortieCompletion
   alias AcesWeb.SortieLive.Complete.Helpers
 
   on_mount {AcesWeb.UserAuthLive, :default}
@@ -21,8 +21,8 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
     with :ok <- authorize_access(user, company),
          :ok <- validate_sortie_belongs_to_campaign(sortie, campaign, company),
          :ok <- validate_sortie_status(sortie, "costs") do
-      # Calculate all costs
-      costs = calculate_all_costs(sortie)
+      # Calculate all costs using business logic module
+      costs = SortieCompletion.calculate_all_costs(sortie)
 
       {:ok,
        socket
@@ -62,86 +62,20 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
     Helpers.validate_step_access(sortie, requested_step)
   end
 
-  defp calculate_all_costs(sortie) do
-    deployments = sortie.deployments
-
-    # Calculate repair costs per deployment
-    # If a destroyed unit was salvaged, treat it as "salvageable" for cost purposes
-    repair_costs =
-      Enum.map(deployments, fn d ->
-        effective_status =
-          if d.damage_status == "destroyed" and d.was_salvaged do
-            "salvageable"
-          else
-            d.damage_status
-          end
-
-        repair_cost = Deployment.calculate_unit_repair_cost(d.company_unit.master_unit, effective_status)
-        {d.id, repair_cost}
-      end)
-      |> Map.new()
-
-    # Calculate rearming costs (20 SP per unit, unless ENE)
-    rearming_costs =
-      Enum.map(deployments, fn d ->
-        cost = Deployment.get_rearming_cost(d)
-        {d.id, cost}
-      end)
-      |> Map.new()
-
-    # Calculate casualty costs
-    casualty_costs =
-      Enum.map(deployments, fn d ->
-        cost = if d.pilot_casualty in ["wounded", "killed"], do: 100, else: 0
-        {d.id, cost}
-      end)
-      |> Map.new()
-
-    total_repair = Enum.sum(Map.values(repair_costs))
-    total_rearming = Enum.sum(Map.values(rearming_costs))
-    total_casualty = Enum.sum(Map.values(casualty_costs))
-    total_expenses = total_repair + total_rearming + total_casualty
-
-    # Calculate adjusted income
-    base_income =
-      (sortie.primary_objective_income || 0) +
-        (sortie.secondary_objectives_income || 0) +
-        (sortie.waypoints_income || 0) -
-        (sortie.recon_total_cost || 0)
-
-    adjusted_income = round(base_income * sortie.campaign.reward_modifier)
-    net_earnings = adjusted_income - total_expenses
-
-    %{
-      repair_costs: repair_costs,
-      rearming_costs: rearming_costs,
-      casualty_costs: casualty_costs,
-      total_repair: total_repair,
-      total_rearming: total_rearming,
-      total_casualty: total_casualty,
-      total_expenses: total_expenses,
-      base_income: base_income,
-      adjusted_income: adjusted_income,
-      net_earnings: net_earnings
-    }
-  end
-
   @impl true
   def handle_event("save", _params, socket) do
     sortie = socket.assigns.sortie
     costs = socket.assigns.costs
+    company = socket.assigns.company
 
-    # Check if operational costs have changed - if so, we need to reset pilot allocations
-    # because the available pool for pilots may have changed
-    old_operational_expenses = (sortie.total_expenses || 0) - (sortie.pilot_sp_cost || 0)
-    new_operational_expenses = costs.total_expenses
-    costs_changed = old_operational_expenses != new_operational_expenses
+    # Check if operational costs have changed using business logic module
+    costs_changed = SortieCompletion.costs_changed?(sortie, costs.total_expenses)
 
     # If costs changed and pilots already distributed SP, reset the pilot data
     {pilot_sp_cost, pilot_allocations} =
       if costs_changed and (sortie.pilot_sp_cost || 0) > 0 do
         # Reset pilot SP - they'll need to go through the pilots step again
-        reset_pilot_sp_for_cost_change(sortie, socket.assigns.company)
+        apply_pilot_reversals(sortie, company)
         {0, %{}}
       else
         # Preserve existing pilot data
@@ -230,7 +164,7 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
               </thead>
               <tbody>
                 <%= for deployment <- @sortie.deployments do %>
-                  <% effective_status = effective_damage_status(deployment) %>
+                  <% effective_status = SortieCompletion.effective_damage_status(deployment) %>
                   <tr>
                     <td>
                       {deployment.company_unit.custom_name || deployment.company_unit.master_unit.name}
@@ -412,12 +346,19 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
     """
   end
 
-  defp effective_damage_status(deployment) do
-    if deployment.damage_status == "destroyed" and deployment.was_salvaged do
-      "salvageable"
-    else
-      deployment.damage_status
-    end
+  # Apply pilot reversals when costs change
+  defp apply_pilot_reversals(sortie, company) do
+    all_pilots = Pilots.list_company_pilots(company)
+    reversals = SortieCompletion.reverse_pilot_allocations_full(sortie.pilot_allocations, all_pilots, sortie)
+
+    Enum.each(reversals, fn {pilot_id, changes} ->
+      pilot = Enum.find(all_pilots, &(&1.id == pilot_id))
+      if pilot do
+        pilot
+        |> Ecto.Changeset.change(changes)
+        |> Aces.Repo.update()
+      end
+    end)
   end
 
   defp damage_badge_class(status) do
@@ -459,48 +400,6 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
       "wounded" -> "Wounded"
       "killed" -> "Killed"
       _ -> String.capitalize(status || "unknown")
-    end
-  end
-
-  # Reset pilot SP when costs change - pilots will need to go through distribution again
-  defp reset_pilot_sp_for_cost_change(sortie, company) do
-    all_pilots = Pilots.list_company_pilots(company)
-
-    # First, reverse any allocations from spend_sp step using pilot_allocations
-    # This also tells us how much SP each pilot received (sp_to_spend field)
-    if sortie.pilot_allocations && sortie.pilot_allocations != %{} do
-      Enum.each(sortie.pilot_allocations, fn {pilot_id_str, saved} ->
-        pilot_id = String.to_integer(pilot_id_str)
-        pilot = Enum.find(all_pilots, &(&1.id == pilot_id))
-
-        if pilot do
-          baseline_skill = saved["baseline_skill"] || 0
-          baseline_tokens = saved["baseline_tokens"] || 0
-          baseline_abilities = saved["baseline_abilities"] || 0
-          baseline_edge_abilities = saved["baseline_edge_abilities"] || []
-          sp_received = saved["sp_to_spend"] || 0
-
-          # Check if this pilot was MVP (gets extra 20 SP)
-          mvp_bonus = if sortie.mvp_pilot_id == pilot_id, do: 20, else: 0
-          total_sp_to_remove = sp_received + mvp_bonus
-
-          # Reverse the spend_sp allocations AND the pilots step distribution
-          pilot
-          |> Ecto.Changeset.change(%{
-            sp_allocated_to_skill: baseline_skill,
-            sp_allocated_to_edge_tokens: baseline_tokens,
-            sp_allocated_to_edge_abilities: baseline_abilities,
-            edge_abilities: baseline_edge_abilities,
-            skill_level: Pilot.calculate_skill_from_sp(baseline_skill),
-            edge_tokens: Pilot.calculate_edge_tokens_from_sp(baseline_tokens),
-            sp_available: 0,
-            sp_earned: max((pilot.sp_earned || 0) - total_sp_to_remove, 0),
-            sorties_participated: max((pilot.sorties_participated || 0) - 1, 0),
-            mvp_awards: if(sortie.mvp_pilot_id == pilot_id, do: max((pilot.mvp_awards || 0) - 1, 0), else: pilot.mvp_awards)
-          })
-          |> Aces.Repo.update()
-        end
-      end)
     end
   end
 end
