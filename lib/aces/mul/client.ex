@@ -105,7 +105,7 @@ defmodule Aces.MUL.Client do
     end
   end
 
-  defp make_request(path, filters \\ %{}) do
+  defp make_request(path, filters) do
     query_string = build_query_string(filters)
     url = "#{@base_url}#{path}#{query_string}"
 
@@ -247,7 +247,7 @@ defmodule Aces.MUL.Client do
 
   defp parse_response(_, _), do: []
 
-  defp normalize_unit(api_data, faction_context \\ %{})
+  defp normalize_unit(api_data, faction_context)
 
   defp normalize_unit(nil, _faction_context), do: nil
 

@@ -4,6 +4,7 @@ defmodule AcesWeb.SortieLive.Show do
   alias Aces.{Companies, Campaigns}
   alias Aces.Companies.Authorization
   alias Aces.Campaigns.Deployment
+  alias AcesWeb.SortieLive.Complete.Helpers, as: CompleteHelpers
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
@@ -561,7 +562,7 @@ defmodule AcesWeb.SortieLive.Show do
                   This sortie is being finalized. Complete the remaining steps to record the mission outcome.
                 </p>
                 <.link
-                  navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{@sortie.id}/complete/#{@sortie.finalization_step}"}
+                  navigate={CompleteHelpers.complete_step_path(@company.id, @campaign.id, @sortie.id, @sortie.finalization_step)}
                   class="btn btn-warning"
                 >
                   Continue Finalization →

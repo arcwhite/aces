@@ -39,11 +39,11 @@ defmodule Aces.Campaigns.SortieCompletionTest do
       }))
 
       # Create deployments
-      {:ok, deployment1} = Aces.Campaigns.create_deployment(sortie, %{
+      {:ok, _deployment1} = Aces.Campaigns.create_deployment(sortie, %{
         company_unit_id: company_unit1.id,
         pilot_id: pilot1.id
       })
-      {:ok, deployment2} = Aces.Campaigns.create_deployment(sortie, %{
+      {:ok, _deployment2} = Aces.Campaigns.create_deployment(sortie, %{
         company_unit_id: company_unit2.id,
         pilot_id: pilot2.id
       })

@@ -13,6 +13,21 @@ defmodule AcesWeb.SortieLive.Complete.Helpers do
   def step_order, do: @step_order
 
   @doc """
+  Generates the path to a specific completion step.
+  Uses pattern matching to satisfy verified routes at compile time.
+  """
+  def complete_step_path(company_id, campaign_id, sortie_id, step) do
+    case step do
+      "outcome" -> ~p"/companies/#{company_id}/campaigns/#{campaign_id}/sorties/#{sortie_id}/complete/outcome"
+      "damage" -> ~p"/companies/#{company_id}/campaigns/#{campaign_id}/sorties/#{sortie_id}/complete/damage"
+      "costs" -> ~p"/companies/#{company_id}/campaigns/#{campaign_id}/sorties/#{sortie_id}/complete/costs"
+      "pilots" -> ~p"/companies/#{company_id}/campaigns/#{campaign_id}/sorties/#{sortie_id}/complete/pilots"
+      "spend_sp" -> ~p"/companies/#{company_id}/campaigns/#{campaign_id}/sorties/#{sortie_id}/complete/spend_sp"
+      "summary" -> ~p"/companies/#{company_id}/campaigns/#{campaign_id}/sorties/#{sortie_id}/complete/summary"
+    end
+  end
+
+  @doc """
   Returns the index of a step (0-based).
   """
   def step_index(step), do: Enum.find_index(@step_order, &(&1 == step))
@@ -49,7 +64,7 @@ defmodule AcesWeb.SortieLive.Complete.Helpers do
 
       not can_navigate_to?(sortie.finalization_step, requested_step) ->
         {:error, "Please complete the previous step first",
-         ~p"/companies/#{sortie.campaign.company_id}/campaigns/#{sortie.campaign_id}/sorties/#{sortie.id}/complete/#{sortie.finalization_step}"}
+         complete_step_path(sortie.campaign.company_id, sortie.campaign_id, sortie.id, sortie.finalization_step)}
 
       true ->
         :ok
