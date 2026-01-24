@@ -11,7 +11,7 @@
 - For complex migrations (like JSON to table), write a detailed spec first (see specs/PILOT_ALLOCATIONS.md). This captures context and decisions for future implementation.
 
 # High-priority items
-- [ ] Implement pilot allocations migration (see specs/PILOT_ALLOCATIONS.md) - migrate from JSON map to dedicated table with unified allocation history
+- [ ] Implement pilot allocations migration (see specs/PILOT_ALLOCATIONS.md) - Phase 2.1 complete, Phase 3 (update application code) remaining
 - [ ] Add more events and UI to show timelines of events on a Campaign, including Sortie outcomes, unit purchases, new pilots hired, units sold, etc.
 
 # Medium-priority items
@@ -28,3 +28,4 @@
 - [x] Refactor 3.1 investigation - Investigated embedded schema for pilot allocations. Decided on separate table with unified allocation history (initial + sortie). Full specification written in specs/PILOT_ALLOCATIONS.md.
 - [x] Pilot allocations migration Phase 1.1 - Renamed PilotAllocation module to PilotAllocationState to make room for the new Ecto schema. Updated spend_sp.ex and tests accordingly.
 - [x] Pilot allocations migration Phase 1.2 - Created new PilotAllocation Ecto schema with pilot_allocations table migration. Includes foreign keys to pilots/sorties, allocation_type field, SP allocation fields, edge_abilities_gained array, and unique constraints (one initial per pilot, one allocation per pilot per sortie). Added comprehensive tests for schema validations and database constraints.
+- [x] Pilot allocations migration Phase 2.1 - Created data migration to move existing pilot allocation data from JSON `pilot_allocations` column on sorties to the new `pilot_allocations` table. Creates "initial" allocation records from baseline values of first sorties, "sortie" allocation records from add_* values, and initial allocations for pilots with SP allocated but no sorties. Successfully migrated 7 initial allocations and 13 sortie allocations.
