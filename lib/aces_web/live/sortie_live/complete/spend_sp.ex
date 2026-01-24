@@ -7,7 +7,7 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
 
   alias Aces.{Companies, Campaigns}
   alias Aces.Companies.{Authorization, Pilots, Pilot}
-  alias Aces.Campaigns.PilotAllocation
+  alias Aces.Campaigns.PilotAllocationState
   alias AcesWeb.SortieLive.Complete.Helpers
 
   on_mount {AcesWeb.UserAuthLive, :default}
@@ -27,7 +27,7 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
 
       # Build allocation state - either from saved data or fresh
       {pilots_with_sp, pilot_allocations} =
-        PilotAllocation.build_all(all_pilots, sortie.pilot_allocations)
+        PilotAllocationState.build_all(all_pilots, sortie.pilot_allocations)
 
       {:ok,
        socket
@@ -74,7 +74,7 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
          %{} = allocation <- Map.get(socket.assigns.pilot_allocations, pilot_id) do
       field = params["field"]
       value = parse_int(params["value"])
-      updated_allocation = PilotAllocation.update_allocation(allocation, field, value)
+      updated_allocation = PilotAllocationState.update_allocation(allocation, field, value)
       new_allocations = Map.put(socket.assigns.pilot_allocations, pilot_id, updated_allocation)
 
       {:noreply, assign(socket, :pilot_allocations, new_allocations)}
@@ -87,7 +87,7 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
   def handle_event("toggle_edge_ability", %{"pilot_id" => pilot_id_str, "ability" => ability}, socket) do
     with {:ok, pilot_id} <- safe_parse_id(pilot_id_str),
          %{} = allocation <- Map.get(socket.assigns.pilot_allocations, pilot_id) do
-      updated_allocation = PilotAllocation.toggle_edge_ability(allocation, ability)
+      updated_allocation = PilotAllocationState.toggle_edge_ability(allocation, ability)
       new_allocations = Map.put(socket.assigns.pilot_allocations, pilot_id, updated_allocation)
 
       {:noreply, assign(socket, :pilot_allocations, new_allocations)}
@@ -101,10 +101,10 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
     allocations = socket.assigns.pilot_allocations
 
     # Check if all pilots have spent all their SP
-    if not PilotAllocation.all_valid?(allocations) do
+    if not PilotAllocationState.all_valid?(allocations) do
       {:noreply, put_flash(socket, :error, "All pilots must spend their entire SP allocation before proceeding")}
     else
-      saved_allocations = PilotAllocation.all_to_saved_format(allocations)
+      saved_allocations = PilotAllocationState.all_to_saved_format(allocations)
 
       # Build a transaction to save all changes atomically
       multi = build_save_transaction(socket, allocations, saved_allocations)
@@ -129,7 +129,7 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
         pilot = Enum.find(socket.assigns.pilots_with_sp, &(&1.id == pilot_id))
 
         if pilot do
-          changes = PilotAllocation.to_pilot_changes(alloc)
+          changes = PilotAllocationState.to_pilot_changes(alloc)
           changeset = Ecto.Changeset.change(pilot, changes)
           Ecto.Multi.update(multi, {:pilot, pilot_id}, changeset)
         else
@@ -391,7 +391,7 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
               </div>
 
               <!-- Edge Abilities Selection -->
-              <% total_abilities_count = PilotAllocation.total_abilities_count(allocation) %>
+              <% total_abilities_count = PilotAllocationState.total_abilities_count(allocation) %>
               <%= if allocation.max_abilities > 0 do %>
                 <div class="mt-4">
                   <h5 class="font-semibold mb-2">
@@ -475,7 +475,7 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
           type="button"
           class="btn btn-primary"
           phx-click="save"
-          disabled={not PilotAllocation.all_valid?(@pilot_allocations) or PilotAllocation.any_errors?(@pilot_allocations)}
+          disabled={not PilotAllocationState.all_valid?(@pilot_allocations) or PilotAllocationState.any_errors?(@pilot_allocations)}
         >
           Continue to Summary →
         </button>

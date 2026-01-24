@@ -1,7 +1,7 @@
-defmodule Aces.Campaigns.PilotAllocationTest do
+defmodule Aces.Campaigns.PilotAllocationStateTest do
   use Aces.DataCase
 
-  alias Aces.Campaigns.PilotAllocation
+  alias Aces.Campaigns.PilotAllocationState
   alias Aces.Companies.Pilot
 
   describe "build_fresh/1" do
@@ -17,7 +17,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         sp_available: 100
       }
 
-      allocation = PilotAllocation.build_fresh(pilot)
+      allocation = PilotAllocationState.build_fresh(pilot)
 
       assert allocation.pilot == pilot
       assert allocation.baseline_skill == 400
@@ -47,7 +47,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         sp_available: 150
       }
 
-      allocation = PilotAllocation.build_fresh(pilot)
+      allocation = PilotAllocationState.build_fresh(pilot)
 
       assert allocation.baseline_edge_abilities == []
     end
@@ -78,7 +78,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         "sp_to_spend" => 160
       }
 
-      allocation = PilotAllocation.build_from_saved(pilot, saved)
+      allocation = PilotAllocationState.build_from_saved(pilot, saved)
 
       assert allocation.baseline_skill == 400
       assert allocation.baseline_tokens == 60
@@ -110,7 +110,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         "sp_to_spend" => 100  # Less than add_skill + add_tokens
       }
 
-      allocation = PilotAllocation.build_from_saved(pilot, saved)
+      allocation = PilotAllocationState.build_from_saved(pilot, saved)
 
       assert allocation.sp_remaining == -50
       assert allocation.has_error == true
@@ -141,7 +141,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         sp_available: 0  # No SP to spend
       }
 
-      {pilots_with_sp, allocations} = PilotAllocation.build_all([pilot1, pilot2], nil)
+      {pilots_with_sp, allocations} = PilotAllocationState.build_all([pilot1, pilot2], nil)
 
       assert length(pilots_with_sp) == 1
       assert hd(pilots_with_sp).id == 1
@@ -175,7 +175,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         }
       }
 
-      {pilots_with_sp, allocations} = PilotAllocation.build_all([pilot], saved_allocations)
+      {pilots_with_sp, allocations} = PilotAllocationState.build_all([pilot], saved_allocations)
 
       assert length(pilots_with_sp) == 1
       assert Map.has_key?(allocations, 1)
@@ -196,12 +196,12 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         sp_available: 500
       }
 
-      allocation = PilotAllocation.build_fresh(pilot)
+      allocation = PilotAllocationState.build_fresh(pilot)
       %{allocation: allocation}
     end
 
     test "updates skill allocation", %{allocation: allocation} do
-      updated = PilotAllocation.update_allocation(allocation, "skill", 400)
+      updated = PilotAllocationState.update_allocation(allocation, "skill", 400)
 
       assert updated.add_skill == 400
       assert updated.sp_remaining == 100  # 500 - 400
@@ -209,7 +209,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
     end
 
     test "updates edge tokens allocation", %{allocation: allocation} do
-      updated = PilotAllocation.update_allocation(allocation, "edge_tokens", 200)
+      updated = PilotAllocationState.update_allocation(allocation, "edge_tokens", 200)
 
       assert updated.add_tokens == 200
       assert updated.sp_remaining == 300  # 500 - 200
@@ -217,7 +217,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
     end
 
     test "updates edge abilities allocation", %{allocation: allocation} do
-      updated = PilotAllocation.update_allocation(allocation, "edge_abilities", 180)
+      updated = PilotAllocationState.update_allocation(allocation, "edge_abilities", 180)
 
       assert updated.add_abilities == 180
       assert updated.sp_remaining == 320  # 500 - 180
@@ -225,7 +225,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
     end
 
     test "sets error when overspending", %{allocation: allocation} do
-      updated = PilotAllocation.update_allocation(allocation, "skill", 600)
+      updated = PilotAllocationState.update_allocation(allocation, "skill", 600)
 
       assert updated.add_skill == 600
       assert updated.sp_remaining == -100
@@ -233,7 +233,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
     end
 
     test "clamps negative values to zero", %{allocation: allocation} do
-      updated = PilotAllocation.update_allocation(allocation, "skill", -100)
+      updated = PilotAllocationState.update_allocation(allocation, "skill", -100)
 
       assert updated.add_skill == 0
     end
@@ -251,22 +251,22 @@ defmodule Aces.Campaigns.PilotAllocationTest do
       }
 
       # Build allocation and add abilities
-      allocation = PilotAllocation.build_fresh(pilot)
-      allocation = PilotAllocation.update_allocation(allocation, "edge_abilities", 360)  # 3 abilities
-      allocation = PilotAllocation.toggle_edge_ability(allocation, "Accurate")
-      allocation = PilotAllocation.toggle_edge_ability(allocation, "Dodge")
+      allocation = PilotAllocationState.build_fresh(pilot)
+      allocation = PilotAllocationState.update_allocation(allocation, "edge_abilities", 360)  # 3 abilities
+      allocation = PilotAllocationState.toggle_edge_ability(allocation, "Accurate")
+      allocation = PilotAllocationState.toggle_edge_ability(allocation, "Dodge")
 
       assert length(allocation.new_edge_abilities) == 2
 
       # Reduce abilities allocation
-      updated = PilotAllocation.update_allocation(allocation, "edge_abilities", 60)  # Only 1 ability
+      updated = PilotAllocationState.update_allocation(allocation, "edge_abilities", 60)  # Only 1 ability
 
       assert updated.max_abilities == 1
       assert length(updated.new_edge_abilities) == 1
     end
 
     test "ignores unknown fields", %{allocation: allocation} do
-      updated = PilotAllocation.update_allocation(allocation, "unknown", 100)
+      updated = PilotAllocationState.update_allocation(allocation, "unknown", 100)
 
       assert updated.add_skill == 0
       assert updated.add_tokens == 0
@@ -287,25 +287,25 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         sp_available: 200
       }
 
-      allocation = PilotAllocation.build_fresh(pilot)
+      allocation = PilotAllocationState.build_fresh(pilot)
       %{allocation: allocation}
     end
 
     test "adds new ability", %{allocation: allocation} do
-      updated = PilotAllocation.toggle_edge_ability(allocation, "Dodge")
+      updated = PilotAllocationState.toggle_edge_ability(allocation, "Dodge")
 
       assert "Dodge" in updated.new_edge_abilities
     end
 
     test "removes new ability", %{allocation: allocation} do
       allocation = %{allocation | new_edge_abilities: ["Dodge"]}
-      updated = PilotAllocation.toggle_edge_ability(allocation, "Dodge")
+      updated = PilotAllocationState.toggle_edge_ability(allocation, "Dodge")
 
       refute "Dodge" in updated.new_edge_abilities
     end
 
     test "cannot remove baseline ability", %{allocation: allocation} do
-      updated = PilotAllocation.toggle_edge_ability(allocation, "Accurate")
+      updated = PilotAllocationState.toggle_edge_ability(allocation, "Accurate")
 
       # Accurate is still in baseline, not added to new
       assert "Accurate" in updated.baseline_edge_abilities
@@ -314,11 +314,11 @@ defmodule Aces.Campaigns.PilotAllocationTest do
 
     test "cannot add more than max abilities", %{allocation: allocation} do
       # Max is 2, baseline has 1, so we can add 1 more
-      allocation = PilotAllocation.toggle_edge_ability(allocation, "Dodge")
+      allocation = PilotAllocationState.toggle_edge_ability(allocation, "Dodge")
       assert length(allocation.new_edge_abilities) == 1
 
       # Try to add a second - should not be added (at max)
-      updated = PilotAllocation.toggle_edge_ability(allocation, "Evasive")
+      updated = PilotAllocationState.toggle_edge_ability(allocation, "Evasive")
       assert length(updated.new_edge_abilities) == 1
       refute "Evasive" in updated.new_edge_abilities
     end
@@ -327,17 +327,17 @@ defmodule Aces.Campaigns.PilotAllocationTest do
   describe "validate/1" do
     test "returns :ok when allocation is complete" do
       allocation = %{sp_remaining: 0, has_error: false}
-      assert PilotAllocation.validate(allocation) == :ok
+      assert PilotAllocationState.validate(allocation) == :ok
     end
 
     test "returns error when overspent" do
       allocation = %{sp_remaining: -10, has_error: true}
-      assert PilotAllocation.validate(allocation) == {:error, :overspent}
+      assert PilotAllocationState.validate(allocation) == {:error, :overspent}
     end
 
     test "returns error when SP not fully spent" do
       allocation = %{sp_remaining: 50, has_error: false}
-      assert PilotAllocation.validate(allocation) == {:error, :sp_not_fully_spent}
+      assert PilotAllocationState.validate(allocation) == {:error, :sp_not_fully_spent}
     end
   end
 
@@ -348,7 +348,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         2 => %{sp_remaining: 0, has_error: false}
       }
 
-      assert PilotAllocation.all_valid?(allocations)
+      assert PilotAllocationState.all_valid?(allocations)
     end
 
     test "returns false when any allocation has remaining SP" do
@@ -357,7 +357,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         2 => %{sp_remaining: 10, has_error: false}
       }
 
-      refute PilotAllocation.all_valid?(allocations)
+      refute PilotAllocationState.all_valid?(allocations)
     end
 
     test "returns false when any allocation has error" do
@@ -366,11 +366,11 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         2 => %{sp_remaining: 0, has_error: false}
       }
 
-      refute PilotAllocation.all_valid?(allocations)
+      refute PilotAllocationState.all_valid?(allocations)
     end
 
     test "returns true for empty map" do
-      assert PilotAllocation.all_valid?(%{})
+      assert PilotAllocationState.all_valid?(%{})
     end
   end
 
@@ -381,7 +381,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         2 => %{has_error: false}
       }
 
-      refute PilotAllocation.any_errors?(allocations)
+      refute PilotAllocationState.any_errors?(allocations)
     end
 
     test "returns true when any has error" do
@@ -390,7 +390,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         2 => %{has_error: true}
       }
 
-      assert PilotAllocation.any_errors?(allocations)
+      assert PilotAllocationState.any_errors?(allocations)
     end
   end
 
@@ -408,7 +408,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         sp_to_spend: 220
       }
 
-      saved = PilotAllocation.to_saved_format(allocation)
+      saved = PilotAllocationState.to_saved_format(allocation)
 
       assert saved["baseline_skill"] == 400
       assert saved["baseline_tokens"] == 60
@@ -449,7 +449,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         }
       }
 
-      saved = PilotAllocation.all_to_saved_format(allocations)
+      saved = PilotAllocationState.all_to_saved_format(allocations)
 
       assert Map.has_key?(saved, "1")
       assert Map.has_key?(saved, "2")
@@ -471,7 +471,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         new_edge_abilities: ["Dodge", "Evasive"]
       }
 
-      changes = PilotAllocation.to_pilot_changes(allocation)
+      changes = PilotAllocationState.to_pilot_changes(allocation)
 
       assert changes.sp_allocated_to_skill == 900  # 400 + 500
       assert changes.sp_allocated_to_edge_tokens == 120  # 60 + 60
@@ -490,7 +490,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         new_edge_abilities: ["Evasive"]
       }
 
-      assert PilotAllocation.total_abilities_count(allocation) == 3
+      assert PilotAllocationState.total_abilities_count(allocation) == 3
     end
 
     test "returns 0 for empty abilities" do
@@ -499,7 +499,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         new_edge_abilities: []
       }
 
-      assert PilotAllocation.total_abilities_count(allocation) == 0
+      assert PilotAllocationState.total_abilities_count(allocation) == 0
     end
   end
 end

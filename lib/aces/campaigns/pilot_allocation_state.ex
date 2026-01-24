@@ -1,6 +1,6 @@
-defmodule Aces.Campaigns.PilotAllocation do
+defmodule Aces.Campaigns.PilotAllocationState do
   @moduledoc """
-  Business logic for pilot SP allocation during sortie completion.
+  Runtime state management for pilot SP allocation during sortie completion.
 
   This module manages the state and calculations for allocating earned SP
   to pilots across three pools: Skill, Edge Tokens, and Edge Abilities.
@@ -12,6 +12,9 @@ defmodule Aces.Campaigns.PilotAllocation do
 
   All functions in this module are pure calculations that don't interact
   with the database directly.
+
+  Note: This module was renamed from PilotAllocation to PilotAllocationState
+  to make room for the new PilotAllocation Ecto schema.
   """
 
   alias Aces.Companies.Pilot
