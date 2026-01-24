@@ -14,8 +14,10 @@ defmodule Aces.Companies.Pilots do
   Creates a pilot for a company.
   """
   def create_pilot(%Company{} = company, attrs \\ %{}) do
+    attrs = stringify_keys(attrs)
+
     %Pilot{}
-    |> Pilot.changeset(Map.put(attrs, :company_id, company.id))
+    |> Pilot.changeset(Map.put(attrs, "company_id", company.id))
     |> validate_pilot_limit(company)
     |> Repo.insert()
   end
@@ -38,7 +40,8 @@ defmodule Aces.Companies.Pilots do
           pilots_attrs
           |> Enum.with_index()
           |> Enum.map(fn {attrs, index} ->
-            changeset = Pilot.changeset(%Pilot{}, Map.put(attrs, :company_id, company.id))
+            attrs = stringify_keys(attrs)
+            changeset = Pilot.changeset(%Pilot{}, Map.put(attrs, "company_id", company.id))
             {:"pilot_#{index}", changeset}
           end)
 
@@ -114,9 +117,11 @@ defmodule Aces.Companies.Pilots do
   Hire a new pilot for an active company (SP cost).
   """
   def hire_pilot(%Company{} = company, attrs \\ %{}) do
+    attrs = stringify_keys(attrs)
+
     changeset =
       %Pilot{}
-      |> Pilot.changeset(Map.put(attrs, :company_id, company.id))
+      |> Pilot.changeset(Map.put(attrs, "company_id", company.id))
       |> validate_company_active_for_hiring(company)
       |> validate_sufficient_funds_for_hiring(company)
 
@@ -223,5 +228,12 @@ defmodule Aces.Companies.Pilots do
     else
       Ecto.Changeset.add_error(changeset, :sp_available, "insufficient SP (need #{sp_amount}, have #{available})")
     end
+  end
+
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn
+      {key, value} when is_atom(key) -> {Atom.to_string(key), value}
+      {key, value} -> {key, value}
+    end)
   end
 end
