@@ -353,7 +353,8 @@ defmodule AcesWeb.SortieLive.Show do
         </div>
       </div>
 
-      <!-- Deployment Status -->
+      <!-- Deployment Status (hidden for completed sorties - shown in summary instead) -->
+      <%= if @sortie.status != "completed" do %>
       <div class="mb-8">
         <h2 class="text-2xl font-bold mb-4">Deployment Status</h2>
         
@@ -465,6 +466,7 @@ defmodule AcesWeb.SortieLive.Show do
           </div>
         <% end %>
       </div>
+      <% end %>
 
       <!-- Mission Status -->
       <%= if @sortie.status == "setup" and @can_edit do %>
