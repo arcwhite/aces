@@ -11,7 +11,6 @@
 - For complex migrations (like JSON to table), write a detailed spec first (see specs/PILOT_ALLOCATIONS.md). This captures context and decisions for future implementation.
 
 # High-priority items
-- [ ] Implement pilot allocations migration (see specs/PILOT_ALLOCATIONS.md) - Phase 3 complete, Phase 4 (cleanup) remaining
 - [ ] Add more events and UI to show timelines of events on a Campaign, including Sortie outcomes, unit purchases, new pilots hired, units sold, etc.
 
 # Medium-priority items
@@ -31,3 +30,4 @@
 - [x] Pilot allocations migration Phase 2.1 - Created data migration to move existing pilot allocation data from JSON `pilot_allocations` column on sorties to the new `pilot_allocations` table. Creates "initial" allocation records from baseline values of first sorties, "sortie" allocation records from add_* values, and initial allocations for pilots with SP allocated but no sorties. Successfully migrated 7 initial allocations and 13 sortie allocations.
 - [x] Pilot allocations migration Phase 3 - Updated application code to read/write pilot allocations from the new pilot_allocations table instead of the JSON field. Changes: Sortie schema has_many relationship, Pilot schema has_many :allocations, Campaigns context CRUD functions (get_sortie_pilot_allocations_as_saved_map, save_sortie_pilot_allocations, delete_sortie_pilot_allocations), SortieCompletion reversal functions accept sortie_id, spend_sp.ex/pilots.ex/costs.ex updated to use new table. Old JSON column preserved for Phase 4 cleanup.
 - [x] Sortie summary component - Created reusable SortieSummary component displaying mission details, financial summary, unit status, and pilot SP allocations (skill/edge/abilities gained). Completed sorties now show full summary on the sortie show page instead of requiring separate "View Full Summary" link. Component used in both show.ex and finalization wizard summary step.
+- [x] Pilot allocations migration Phase 4 (cleanup) - Removed deprecated pilot_allocations JSON column from sorties table. Updated comments in PilotAllocationState to reference the new table structure. PilotAllocationState module retained for runtime state management during sortie completion wizard.
