@@ -7,23 +7,38 @@ defmodule Aces.Companies.Pilots do
   alias Aces.Repo
 
   alias Aces.Companies.{Company, Pilot}
+  alias Aces.Campaigns.PilotAllocation
 
   @hiring_cost 150
 
   @doc """
   Creates a pilot for a company.
+  Also creates an initial PilotAllocation record to track the 150 SP allocation.
   """
   def create_pilot(%Company{} = company, attrs \\ %{}) do
     attrs = stringify_keys(attrs)
 
-    %Pilot{}
-    |> Pilot.changeset(Map.put(attrs, "company_id", company.id))
-    |> validate_pilot_limit(company)
-    |> Repo.insert()
+    pilot_changeset =
+      %Pilot{}
+      |> Pilot.changeset(Map.put(attrs, "company_id", company.id))
+      |> validate_pilot_limit(company)
+
+    Ecto.Multi.new()
+    |> Ecto.Multi.insert(:pilot, pilot_changeset)
+    |> Ecto.Multi.insert(:initial_allocation, fn %{pilot: pilot} ->
+      build_initial_allocation_changeset(pilot)
+    end)
+    |> Repo.transaction()
+    |> case do
+      {:ok, %{pilot: pilot}} -> {:ok, pilot}
+      {:error, :pilot, changeset, _} -> {:error, changeset}
+      {:error, :initial_allocation, changeset, _} -> {:error, changeset}
+    end
   end
 
   @doc """
   Creates multiple pilots for a company (used during company creation).
+  Also creates initial PilotAllocation records for each pilot.
   """
   def create_pilots(%Company{} = company, pilots_attrs) when is_list(pilots_attrs) do
     if length(pilots_attrs) > 6 do
@@ -35,19 +50,24 @@ defmodule Aces.Companies.Pilots do
       {:error, changeset}
     else
       Ecto.Multi.new()
-      |> Ecto.Multi.run(:pilots, fn _repo, _changes ->
-        pilots_with_company_id =
+      |> Ecto.Multi.run(:pilots_and_allocations, fn _repo, _changes ->
+        # Build multi that inserts each pilot and their initial allocation
+        multi =
           pilots_attrs
           |> Enum.with_index()
-          |> Enum.map(fn {attrs, index} ->
+          |> Enum.reduce(Ecto.Multi.new(), fn {attrs, index}, acc ->
             attrs = stringify_keys(attrs)
-            changeset = Pilot.changeset(%Pilot{}, Map.put(attrs, "company_id", company.id))
-            {:"pilot_#{index}", changeset}
-          end)
+            pilot_changeset = Pilot.changeset(%Pilot{}, Map.put(attrs, "company_id", company.id))
+            pilot_key = :"pilot_#{index}"
+            allocation_key = :"allocation_#{index}"
 
-        multi = Enum.reduce(pilots_with_company_id, Ecto.Multi.new(), fn {name, changeset}, acc ->
-          Ecto.Multi.insert(acc, name, changeset)
-        end)
+            acc
+            |> Ecto.Multi.insert(pilot_key, pilot_changeset)
+            |> Ecto.Multi.insert(allocation_key, fn changes ->
+              pilot = Map.get(changes, pilot_key)
+              build_initial_allocation_changeset(pilot)
+            end)
+          end)
 
         case Repo.transaction(multi) do
           {:ok, results} ->
@@ -62,8 +82,8 @@ defmodule Aces.Companies.Pilots do
       end)
       |> Repo.transaction()
       |> case do
-        {:ok, %{pilots: pilots}} -> {:ok, pilots}
-        {:error, :pilots, error} -> {:error, error}
+        {:ok, %{pilots_and_allocations: pilots}} -> {:ok, pilots}
+        {:error, :pilots_and_allocations, error, _} -> {:error, error}
       end
     end
   end
@@ -115,6 +135,7 @@ defmodule Aces.Companies.Pilots do
 
   @doc """
   Hire a new pilot for an active company (SP cost).
+  Also creates an initial PilotAllocation record to track their 150 SP allocation.
   """
   def hire_pilot(%Company{} = company, attrs \\ %{}) do
     attrs = stringify_keys(attrs)
@@ -128,12 +149,17 @@ defmodule Aces.Companies.Pilots do
     if changeset.valid? do
       Ecto.Multi.new()
       |> Ecto.Multi.insert(:pilot, changeset)
+      |> Ecto.Multi.insert(:initial_allocation, fn %{pilot: pilot} ->
+        build_initial_allocation_changeset(pilot)
+      end)
       |> Ecto.Multi.update(:company, Company.changeset(company, %{warchest_balance: company.warchest_balance - @hiring_cost}))
       |> Repo.transaction()
       |> case do
         {:ok, %{pilot: pilot, company: updated_company}} ->
           {:ok, pilot, updated_company}
         {:error, :pilot, changeset, _} ->
+          {:error, changeset}
+        {:error, :initial_allocation, changeset, _} ->
           {:error, changeset}
         {:error, :company, changeset, _} ->
           {:error, changeset}
@@ -228,6 +254,23 @@ defmodule Aces.Companies.Pilots do
     else
       Ecto.Changeset.add_error(changeset, :sp_available, "insufficient SP (need #{sp_amount}, have #{available})")
     end
+  end
+
+  # Builds an initial PilotAllocation changeset from a newly created pilot's SP allocation
+  defp build_initial_allocation_changeset(%Pilot{} = pilot) do
+    sp_to_skill = pilot.sp_allocated_to_skill || 0
+    sp_to_tokens = pilot.sp_allocated_to_edge_tokens || 0
+    sp_to_abilities = pilot.sp_allocated_to_edge_abilities || 0
+    total_sp = sp_to_skill + sp_to_tokens + sp_to_abilities
+
+    PilotAllocation.initial_changeset(%PilotAllocation{}, %{
+      pilot_id: pilot.id,
+      sp_to_skill: sp_to_skill,
+      sp_to_tokens: sp_to_tokens,
+      sp_to_abilities: sp_to_abilities,
+      edge_abilities_gained: pilot.edge_abilities || [],
+      total_sp: total_sp
+    })
   end
 
   defp stringify_keys(map) when is_map(map) do

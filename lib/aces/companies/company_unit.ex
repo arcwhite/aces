@@ -153,7 +153,7 @@ defmodule Aces.Companies.CompanyUnit do
     all_battlemechs = get_all_battlemechs(company)
     paired_chassis = get_paired_chassis(all_battlemechs)
 
-    target_chassis = extract_chassis_from_variant(master_unit.variant)
+    target_chassis = extract_chassis_from_name(master_unit)
 
     cond do
       has_duplicate_variant?(existing_battlemechs, master_unit) ->
@@ -197,24 +197,30 @@ defmodule Aces.Companies.CompanyUnit do
   end
 
   # Optimized helper functions for validation
-  defp get_existing_units_by_chassis(%Company{company_units: units}, %MasterUnit{variant: variant}) do
-    target_chassis = extract_chassis_from_variant(variant)
+  defp get_existing_units_by_chassis(%Company{company_units: units}, %MasterUnit{} = master_unit) do
+    target_chassis = extract_chassis_from_name(master_unit)
 
     Enum.filter(units, fn unit ->
       unit.master_unit &&
       unit.master_unit.unit_type == "battlemech" &&
-      extract_chassis_from_variant(unit.master_unit.variant) == target_chassis
+      extract_chassis_from_name(unit.master_unit) == target_chassis
     end)
   end
 
-  defp extract_chassis_from_variant(variant) when is_binary(variant) do
-    case String.split(variant, "-", parts: 2) do
-      [chassis, _] -> chassis
-      [chassis] -> chassis
-    end
+  # Extracts the chassis name by removing the variant suffix from the full name.
+  # Examples:
+  #   "Fenris (Ice Ferret) E" with variant "E" -> "Fenris (Ice Ferret)"
+  #   "Fenris (Ice Ferret)" with variant "Prime" -> "Fenris (Ice Ferret)"
+  #   "BattleMaster BLR-4S" with variant "BLR-4S" -> "BattleMaster"
+  defp extract_chassis_from_name(%MasterUnit{name: name, variant: variant})
+       when is_binary(name) and is_binary(variant) do
+    name
+    |> String.trim_trailing(" " <> variant)
+    |> String.trim()
   end
 
-  defp extract_chassis_from_variant(_), do: nil
+  defp extract_chassis_from_name(%MasterUnit{name: name}) when is_binary(name), do: name
+  defp extract_chassis_from_name(_), do: nil
 
   defp get_all_battlemechs(%Company{company_units: units}) do
     Enum.filter(units, fn unit ->
@@ -224,9 +230,7 @@ defmodule Aces.Companies.CompanyUnit do
 
   defp get_paired_chassis(battlemechs) do
     battlemechs
-    |> Enum.group_by(fn unit -> 
-      extract_chassis_from_variant(unit.master_unit.variant) 
-    end)
+    |> Enum.group_by(fn unit -> extract_chassis_from_name(unit.master_unit) end)
     |> Enum.filter(fn {_chassis, units} -> length(units) >= 2 end)
     |> Enum.map(fn {chassis, _units} -> chassis end)
   end

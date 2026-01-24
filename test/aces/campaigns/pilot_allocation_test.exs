@@ -261,6 +261,8 @@ defmodule Aces.Campaigns.PilotAllocationTest do
     end
 
     test "pilot can only have one initial allocation", %{pilot: pilot} do
+      # Pilot fixture now automatically creates an initial allocation
+      # Verify that attempting to create a second one fails
       attrs = %{
         pilot_id: pilot.id,
         allocation_type: "initial",
@@ -270,13 +272,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         total_sp: 150
       }
 
-      # First insert should succeed
-      {:ok, _allocation} =
-        %PilotAllocation{}
-        |> PilotAllocation.changeset(attrs)
-        |> Aces.Repo.insert()
-
-      # Second insert should fail due to unique constraint
+      # Insert should fail due to unique constraint (pilot already has initial allocation from fixture)
       {:error, changeset} =
         %PilotAllocation{}
         |> PilotAllocation.changeset(attrs)
@@ -348,19 +344,13 @@ defmodule Aces.Campaigns.PilotAllocationTest do
     end
 
     test "deleting a pilot cascades to their allocations", %{pilot: pilot} do
-      attrs = %{
-        pilot_id: pilot.id,
-        allocation_type: "initial",
-        sp_to_skill: 100,
-        sp_to_tokens: 30,
-        sp_to_abilities: 20,
-        total_sp: 150
-      }
-
-      {:ok, allocation} =
-        %PilotAllocation{}
-        |> PilotAllocation.changeset(attrs)
-        |> Aces.Repo.insert()
+      # Pilot fixture now automatically creates an initial allocation
+      # Get the existing initial allocation
+      import Ecto.Query
+      allocation = Aces.Repo.one!(
+        from pa in PilotAllocation,
+        where: pa.pilot_id == ^pilot.id and pa.allocation_type == "initial"
+      )
 
       # Delete the pilot
       Aces.Repo.delete!(pilot)
