@@ -146,6 +146,7 @@ defmodule Aces.Companies do
     changeset
     |> validate_is_draft(company)
     |> validate_minimum_pilots(company)
+    |> validate_minimum_units(company)
   end
 
   defp validate_is_draft(changeset, company) do
@@ -161,6 +162,16 @@ defmodule Aces.Companies do
 
     if pilot_count < 2 do
       Ecto.Changeset.add_error(changeset, :pilots, "company must have at least 2 named pilots to finalize")
+    else
+      changeset
+    end
+  end
+
+  defp validate_minimum_units(changeset, company) do
+    unit_count = if company.company_units, do: length(company.company_units), else: 0
+
+    if unit_count < 8 do
+      Ecto.Changeset.add_error(changeset, :company_units, "company must have at least 8 units to finalize")
     else
       changeset
     end

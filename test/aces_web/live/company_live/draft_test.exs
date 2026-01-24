@@ -42,7 +42,7 @@ defmodule AcesWeb.CompanyLive.DraftTest do
       assert html =~ "13000"  # Future warchest: 1000 + (300 * 40)
     end
 
-    test "allows finalizing company with required pilots", %{conn: conn, user: user} do
+    test "allows finalizing company with required pilots and units", %{conn: conn, user: user} do
       company = company_fixture(
         user: user,
         status: "draft",
@@ -53,6 +53,12 @@ defmodule AcesWeb.CompanyLive.DraftTest do
       # Add required pilots (minimum 2)
       pilot_fixture(company: company, name: "Pilot One")
       pilot_fixture(company: company, name: "Pilot Two")
+
+      # Add required units (minimum 8) at 10 PV each = 80 PV used
+      master_unit = master_unit_fixture(point_value: 10)
+      for _ <- 1..8 do
+        company_unit_fixture(company: company, master_unit: master_unit)
+      end
 
       {:ok, draft_live, _html} = live(conn, ~p"/companies/#{company}/draft")
 
@@ -67,7 +73,8 @@ defmodule AcesWeb.CompanyLive.DraftTest do
       # Verify company was finalized
       updated_company = Aces.Companies.get_company!(company.id)
       assert updated_company.status == "active"
-      assert updated_company.warchest_balance == 17_000  # 1000 + (400 * 40)
+      # 1000 + (320 unused PV * 40) = 1000 + 12800 = 13800
+      assert updated_company.warchest_balance == 13_800
     end
 
     test "shows error when finalizing company without enough pilots", %{conn: conn, user: user} do
@@ -81,6 +88,12 @@ defmodule AcesWeb.CompanyLive.DraftTest do
       # Only add 1 pilot (need 2)
       pilot_fixture(company: company, name: "Solo Pilot")
 
+      # Add required units (minimum 8)
+      master_unit = master_unit_fixture(point_value: 10)
+      for _ <- 1..8 do
+        company_unit_fixture(company: company, master_unit: master_unit)
+      end
+
       {:ok, draft_live, _html} = live(conn, ~p"/companies/#{company}/draft")
 
       # Click finalize company button
@@ -91,6 +104,36 @@ defmodule AcesWeb.CompanyLive.DraftTest do
       # Should show error message, not redirect
       html = render(draft_live)
       assert html =~ "at least 2 named pilots"
+    end
+
+    test "shows error when finalizing company without enough units", %{conn: conn, user: user} do
+      company = company_fixture(
+        user: user,
+        status: "draft",
+        pv_budget: 400,
+        warchest_balance: 1000
+      )
+
+      # Add required pilots
+      pilot_fixture(company: company, name: "Pilot One")
+      pilot_fixture(company: company, name: "Pilot Two")
+
+      # Only add 5 units (need 8)
+      master_unit = master_unit_fixture(point_value: 10)
+      for _ <- 1..5 do
+        company_unit_fixture(company: company, master_unit: master_unit)
+      end
+
+      {:ok, draft_live, _html} = live(conn, ~p"/companies/#{company}/draft")
+
+      # Click finalize company button
+      draft_live
+      |> element("button[phx-click='finalize_company']")
+      |> render_click()
+
+      # Should show error message, not redirect
+      html = render(draft_live)
+      assert html =~ "at least 8 units"
     end
 
     test "shows finalization summary correctly", %{conn: conn, user: user} do

@@ -354,6 +354,14 @@ defmodule Aces.CompaniesTest do
   end
 
   describe "finalize_company/1" do
+    # Helper to add the minimum required units (8) to a company
+    defp add_minimum_units(company, pv_per_unit \\ 10) do
+      master_unit = master_unit_fixture(point_value: pv_per_unit)
+      for _ <- 1..8 do
+        company_unit_fixture(company: company, master_unit: master_unit)
+      end
+    end
+
     test "converts draft company to active and converts unused PV to SP" do
       company = company_fixture(
         status: "draft",
@@ -365,23 +373,22 @@ defmodule Aces.CompaniesTest do
       pilot_fixture(company: company, name: "Pilot One")
       pilot_fixture(company: company, name: "Pilot Two")
 
-      # Add a unit that uses 100 PV, leaving 300 PV unused
-      master_unit = master_unit_fixture(point_value: 100)
-      company_unit_fixture(company: company, master_unit: master_unit)
+      # Add 8 units at 10 PV each = 80 PV used, leaving 320 PV unused
+      add_minimum_units(company, 10)
 
       # Reload company with its units before finalizing
       company_with_units = Companies.get_company!(company.id)
       assert {:ok, finalized} = Companies.finalize_company(company_with_units)
 
       assert finalized.status == "active"
-      # 1000 base + (300 unused PV * 40) = 1000 + 12000 = 13000
-      assert finalized.warchest_balance == 13_000
+      # 1000 base + (320 unused PV * 40) = 1000 + 12800 = 13800
+      assert finalized.warchest_balance == 13_800
     end
 
     test "handles company with no unused PV" do
       company = company_fixture(
         status: "draft",
-        pv_budget: 100,
+        pv_budget: 80,
         warchest_balance: 2000
       )
 
@@ -389,9 +396,8 @@ defmodule Aces.CompaniesTest do
       pilot_fixture(company: company, name: "Pilot One")
       pilot_fixture(company: company, name: "Pilot Two")
 
-      # Add a unit that uses exactly all 100 PV
-      master_unit = master_unit_fixture(point_value: 100)
-      company_unit_fixture(company: company, master_unit: master_unit)
+      # Add 8 units at 10 PV each = exactly 80 PV (all budget used)
+      add_minimum_units(company, 10)
 
       # Reload company with its units before finalizing
       company_with_units = Companies.get_company!(company.id)
@@ -402,7 +408,7 @@ defmodule Aces.CompaniesTest do
       assert finalized.warchest_balance == 2000
     end
 
-    test "handles company with no units (all PV unused)" do
+    test "converts most unused PV to SP when using minimum units" do
       company = company_fixture(
         status: "draft",
         pv_budget: 400,
@@ -413,13 +419,16 @@ defmodule Aces.CompaniesTest do
       pilot_fixture(company: company, name: "Pilot One")
       pilot_fixture(company: company, name: "Pilot Two")
 
-      # Reload company with pilots
-      company_with_pilots = Companies.get_company!(company.id)
-      assert {:ok, finalized} = Companies.finalize_company(company_with_pilots)
+      # Add 8 units at 1 PV each = 8 PV used, leaving 392 PV unused
+      add_minimum_units(company, 1)
+
+      # Reload company with units
+      company_with_units = Companies.get_company!(company.id)
+      assert {:ok, finalized} = Companies.finalize_company(company_with_units)
 
       assert finalized.status == "active"
-      # 500 base + (400 unused PV * 40) = 500 + 16000 = 16500
-      assert finalized.warchest_balance == 16_500
+      # 500 base + (392 unused PV * 40) = 500 + 15680 = 16180
+      assert finalized.warchest_balance == 16_180
     end
 
     test "returns error when company is already active" do
@@ -450,6 +459,7 @@ defmodule Aces.CompaniesTest do
     test "returns error when company has only 1 pilot" do
       company = company_fixture(status: "draft")
       pilot_fixture(company: company, name: "Solo Pilot")
+      add_minimum_units(company)
 
       # Reload company with pilots
       company_with_pilot = Companies.get_company!(company.id)
@@ -458,15 +468,46 @@ defmodule Aces.CompaniesTest do
       assert %{pilots: ["company must have at least 2 named pilots to finalize"]} = errors_on(changeset)
     end
 
-    test "succeeds when company has exactly 2 pilots" do
+    test "returns error when company has fewer than 8 units" do
+      company = company_fixture(status: "draft")
+      pilot_fixture(company: company, name: "Pilot One")
+      pilot_fixture(company: company, name: "Pilot Two")
+
+      # Add only 7 units (one less than minimum)
+      master_unit = master_unit_fixture(point_value: 10)
+      for _ <- 1..7 do
+        company_unit_fixture(company: company, master_unit: master_unit)
+      end
+
+      # Reload company
+      company_with_units = Companies.get_company!(company.id)
+
+      assert {:error, %Ecto.Changeset{} = changeset} = Companies.finalize_company(company_with_units)
+      assert %{company_units: ["company must have at least 8 units to finalize"]} = errors_on(changeset)
+    end
+
+    test "returns error when company has no units" do
+      company = company_fixture(status: "draft")
+      pilot_fixture(company: company, name: "Pilot One")
+      pilot_fixture(company: company, name: "Pilot Two")
+
+      # Reload company (no units added)
+      company_reloaded = Companies.get_company!(company.id)
+
+      assert {:error, %Ecto.Changeset{} = changeset} = Companies.finalize_company(company_reloaded)
+      assert %{company_units: ["company must have at least 8 units to finalize"]} = errors_on(changeset)
+    end
+
+    test "succeeds when company has exactly 2 pilots and 8 units" do
       company = company_fixture(status: "draft", pv_budget: 100, warchest_balance: 0)
       pilot_fixture(company: company, name: "Pilot Alpha")
       pilot_fixture(company: company, name: "Pilot Beta")
+      add_minimum_units(company, 1)
 
-      # Reload company with pilots
-      company_with_pilots = Companies.get_company!(company.id)
+      # Reload company with pilots and units
+      company_with_all = Companies.get_company!(company.id)
 
-      assert {:ok, finalized} = Companies.finalize_company(company_with_pilots)
+      assert {:ok, finalized} = Companies.finalize_company(company_with_all)
       assert finalized.status == "active"
     end
   end
