@@ -141,10 +141,26 @@ defmodule Aces.Companies do
   end
 
   defp validate_can_finalize(changeset) do
-    original_status = changeset.data.status
+    company = changeset.data
 
-    if original_status != "draft" do
-      Ecto.Changeset.add_error(changeset, :status, "company is already #{original_status}, cannot finalize")
+    changeset
+    |> validate_is_draft(company)
+    |> validate_minimum_pilots(company)
+  end
+
+  defp validate_is_draft(changeset, company) do
+    if company.status != "draft" do
+      Ecto.Changeset.add_error(changeset, :status, "company is already #{company.status}, cannot finalize")
+    else
+      changeset
+    end
+  end
+
+  defp validate_minimum_pilots(changeset, company) do
+    pilot_count = if company.pilots, do: length(company.pilots), else: 0
+
+    if pilot_count < 2 do
+      Ecto.Changeset.add_error(changeset, :pilots, "company must have at least 2 named pilots to finalize")
     else
       changeset
     end

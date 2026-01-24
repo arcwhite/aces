@@ -92,14 +92,16 @@ defmodule Aces.CompaniesFixtures do
     Aces.Repo.preload(company_unit, [:master_unit, :company], force: true)
   end
 
+  def unique_callsign, do: "Ace#{System.unique_integer([:positive])}"
+
   def valid_pilot_attributes(attrs \\ %{}) do
     # Default pilot with proper SP allocation for 2 edge tokens
     edge_tokens = Map.get(attrs, :edge_tokens, 2)
     sp_for_tokens = if edge_tokens > 1, do: 60, else: 0  # 2 tokens requires 60 SP
-    
+
     Enum.into(attrs, %{
       name: "John Smith",
-      callsign: "Ace",
+      callsign: unique_callsign(),
       skill_level: 4,
       edge_tokens: edge_tokens,
       status: "active",

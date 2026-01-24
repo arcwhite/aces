@@ -361,6 +361,10 @@ defmodule Aces.CompaniesTest do
         warchest_balance: 1000
       )
 
+      # Add required pilots (minimum 2)
+      pilot_fixture(company: company, name: "Pilot One")
+      pilot_fixture(company: company, name: "Pilot Two")
+
       # Add a unit that uses 100 PV, leaving 300 PV unused
       master_unit = master_unit_fixture(point_value: 100)
       company_unit_fixture(company: company, master_unit: master_unit)
@@ -380,6 +384,10 @@ defmodule Aces.CompaniesTest do
         pv_budget: 100,
         warchest_balance: 2000
       )
+
+      # Add required pilots (minimum 2)
+      pilot_fixture(company: company, name: "Pilot One")
+      pilot_fixture(company: company, name: "Pilot Two")
 
       # Add a unit that uses exactly all 100 PV
       master_unit = master_unit_fixture(point_value: 100)
@@ -401,7 +409,13 @@ defmodule Aces.CompaniesTest do
         warchest_balance: 500
       )
 
-      assert {:ok, finalized} = Companies.finalize_company(company)
+      # Add required pilots (minimum 2)
+      pilot_fixture(company: company, name: "Pilot One")
+      pilot_fixture(company: company, name: "Pilot Two")
+
+      # Reload company with pilots
+      company_with_pilots = Companies.get_company!(company.id)
+      assert {:ok, finalized} = Companies.finalize_company(company_with_pilots)
 
       assert finalized.status == "active"
       # 500 base + (400 unused PV * 40) = 500 + 16000 = 16500
@@ -424,6 +438,36 @@ defmodule Aces.CompaniesTest do
 
       assert {:error, %Ecto.Changeset{} = changeset} = Companies.finalize_company(reloaded)
       assert %{status: ["company is already unknown, cannot finalize"]} = errors_on(changeset)
+    end
+
+    test "returns error when company has no pilots" do
+      company = company_fixture(status: "draft")
+
+      assert {:error, %Ecto.Changeset{} = changeset} = Companies.finalize_company(company)
+      assert %{pilots: ["company must have at least 2 named pilots to finalize"]} = errors_on(changeset)
+    end
+
+    test "returns error when company has only 1 pilot" do
+      company = company_fixture(status: "draft")
+      pilot_fixture(company: company, name: "Solo Pilot")
+
+      # Reload company with pilots
+      company_with_pilot = Companies.get_company!(company.id)
+
+      assert {:error, %Ecto.Changeset{} = changeset} = Companies.finalize_company(company_with_pilot)
+      assert %{pilots: ["company must have at least 2 named pilots to finalize"]} = errors_on(changeset)
+    end
+
+    test "succeeds when company has exactly 2 pilots" do
+      company = company_fixture(status: "draft", pv_budget: 100, warchest_balance: 0)
+      pilot_fixture(company: company, name: "Pilot Alpha")
+      pilot_fixture(company: company, name: "Pilot Beta")
+
+      # Reload company with pilots
+      company_with_pilots = Companies.get_company!(company.id)
+
+      assert {:ok, finalized} = Companies.finalize_company(company_with_pilots)
+      assert finalized.status == "active"
     end
   end
 
