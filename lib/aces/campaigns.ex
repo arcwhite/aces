@@ -7,7 +7,7 @@ defmodule Aces.Campaigns do
   alias Aces.Repo
 
   alias Aces.Companies.{Company, CompanyUnit, Pilot}
-  alias Aces.Campaigns.{Campaign, Sortie, Deployment, CampaignEvent, PilotCampaignStats, PilotAllocation}
+  alias Aces.Campaigns.{Campaign, Sortie, Deployment, CampaignEvent, PilotAllocation}
   alias Aces.Units.MasterUnit
 
   ## Campaign CRUD
@@ -20,8 +20,7 @@ defmodule Aces.Campaigns do
     |> preload([
       :company,
       sorties: [deployments: [:company_unit, :pilot]],
-      campaign_events: [],
-      pilot_campaign_stats: [:pilot]
+      campaign_events: []
     ])
     |> Repo.get!(id)
   end
@@ -34,8 +33,7 @@ defmodule Aces.Campaigns do
     |> where(company_id: ^company_id, status: "active")
     |> preload([
       sorties: [deployments: [:company_unit, :pilot]],
-      campaign_events: [],
-      pilot_campaign_stats: [:pilot]
+      campaign_events: []
     ])
     |> Repo.one()
   end
@@ -72,9 +70,6 @@ defmodule Aces.Campaigns do
         event_type: "campaign_started",
         description: "Campaign started: #{campaign.name}"
       })
-    end)
-    |> Ecto.Multi.run(:pilot_stats, fn _repo, %{campaign: campaign} ->
-      create_pilot_campaign_stats(company, campaign)
     end)
     |> Repo.transaction()
     |> case do
@@ -311,38 +306,6 @@ defmodule Aces.Campaigns do
     Repo.aggregate(from(p in Pilot, where: p.company_id == ^company_id), :sum, :sp_earned) || 0
   end
 
-  defp create_pilot_campaign_stats(%Company{pilots: pilots}, %Campaign{} = campaign) when is_list(pilots) do
-    stats_data = 
-      Enum.map(pilots, fn pilot ->
-        %{
-          pilot_id: pilot.id,
-          campaign_id: campaign.id,
-          inserted_at: DateTime.truncate(DateTime.utc_now(), :second),
-          updated_at: DateTime.truncate(DateTime.utc_now(), :second)
-        }
-      end)
-    
-    {count, _} = Repo.insert_all(PilotCampaignStats, stats_data)
-    {:ok, count}
-  end
-
-  defp create_pilot_campaign_stats(%Company{id: company_id}, %Campaign{} = campaign) do
-    pilot_ids = Repo.all(from(p in Pilot, where: p.company_id == ^company_id, select: p.id))
-    
-    stats_data = 
-      Enum.map(pilot_ids, fn pilot_id ->
-        %{
-          pilot_id: pilot_id,
-          campaign_id: campaign.id,
-          inserted_at: DateTime.truncate(DateTime.utc_now(), :second),
-          updated_at: DateTime.truncate(DateTime.utc_now(), :second)
-        }
-      end)
-    
-    {count, _} = Repo.insert_all(PilotCampaignStats, stats_data)
-    {:ok, count}
-  end
-
   defp update_deployment_results(_sortie, []), do: {:ok, []}
   defp update_deployment_results(_sortie, deployment_results) do
     updated_deployments = 
@@ -393,35 +356,19 @@ defmodule Aces.Campaigns do
     |> maybe_add_mvp_award(sortie)
   end
 
-  defp add_pilot_sp_awards(multi, pilots, sp_amount, campaign_id, participated?) do
+  defp add_pilot_sp_awards(multi, pilots, sp_amount, _campaign_id, _participated?) do
     Enum.reduce(pilots, multi, fn pilot, acc ->
-      # Award SP to pilot
       pilot_changeset = Pilot.changeset(pilot, %{
         sp_earned: pilot.sp_earned + sp_amount,
         sp_available: pilot.sp_available + sp_amount
       })
 
-      # Update campaign stats
-      stats = Repo.get_by(PilotCampaignStats, pilot_id: pilot.id, campaign_id: campaign_id)
-      stats_changes =
-        if participated? do
-          %{
-            sorties_participated: stats.sorties_participated + 1,
-            sp_earned: stats.sp_earned + sp_amount
-          }
-        else
-          %{sp_earned: stats.sp_earned + sp_amount}
-        end
-      stats_changeset = PilotCampaignStats.changeset(stats, stats_changes)
-
-      acc
-      |> Ecto.Multi.update({:award_sp, pilot.id}, pilot_changeset)
-      |> Ecto.Multi.update({:update_stats, pilot.id}, stats_changeset)
+      Ecto.Multi.update(acc, {:award_sp, pilot.id}, pilot_changeset)
     end)
   end
 
   defp maybe_add_mvp_award(multi, %Sortie{mvp_pilot_id: nil}), do: multi
-  defp maybe_add_mvp_award(multi, %Sortie{mvp_pilot_id: mvp_pilot_id, campaign_id: campaign_id}) do
+  defp maybe_add_mvp_award(multi, %Sortie{mvp_pilot_id: mvp_pilot_id}) do
     mvp_pilot = Repo.get!(Pilot, mvp_pilot_id)
     mvp_changeset = Pilot.changeset(mvp_pilot, %{
       sp_earned: mvp_pilot.sp_earned + 20,
@@ -429,14 +376,7 @@ defmodule Aces.Campaigns do
       mvp_awards: mvp_pilot.mvp_awards + 1
     })
 
-    stats = Repo.get_by(PilotCampaignStats, pilot_id: mvp_pilot_id, campaign_id: campaign_id)
-    stats_changeset = PilotCampaignStats.changeset(stats, %{
-      mvp_awards: stats.mvp_awards + 1
-    })
-
-    multi
-    |> Ecto.Multi.update(:award_mvp, mvp_changeset)
-    |> Ecto.Multi.update(:update_mvp_stats, stats_changeset)
+    Ecto.Multi.update(multi, :award_mvp, mvp_changeset)
   end
 
   defp get_participating_pilots(%Sortie{deployments: deployments}) do
@@ -670,5 +610,83 @@ defmodule Aces.Campaigns do
       |> Repo.delete_all()
 
     {:ok, deleted}
+  end
+
+  @doc """
+  Calculate pilot performance stats for a campaign from actual sortie data.
+
+  Returns a list of maps with pilot info and computed stats:
+  - :pilot - the pilot struct
+  - :sp_earned - total SP earned across all sorties in this campaign
+  - :sorties_participated - number of sorties the pilot deployed in
+  - :mvp_awards - number of times selected as MVP
+  """
+  def calculate_pilot_performance(%Campaign{} = campaign) do
+    campaign_id = campaign.id
+
+    # Get all completed sorties for this campaign
+    completed_sortie_ids =
+      Sortie
+      |> where(campaign_id: ^campaign_id)
+      |> where(status: "completed")
+      |> select([s], s.id)
+      |> Repo.all()
+
+    # Get SP earned per pilot from pilot_allocations
+    sp_by_pilot =
+      PilotAllocation
+      |> where([pa], pa.sortie_id in ^completed_sortie_ids)
+      |> group_by([pa], pa.pilot_id)
+      |> select([pa], {pa.pilot_id, sum(pa.total_sp)})
+      |> Repo.all()
+      |> Map.new()
+
+    # Get sortie participation counts from deployments
+    participation_by_pilot =
+      Deployment
+      |> join(:inner, [d], s in Sortie, on: d.sortie_id == s.id)
+      |> where([d, s], s.id in ^completed_sortie_ids)
+      |> where([d, s], not is_nil(d.pilot_id))
+      |> group_by([d, s], d.pilot_id)
+      |> select([d, s], {d.pilot_id, count(d.id)})
+      |> Repo.all()
+      |> Map.new()
+
+    # Get MVP awards per pilot
+    mvp_by_pilot =
+      Sortie
+      |> where([s], s.id in ^completed_sortie_ids)
+      |> where([s], not is_nil(s.mvp_pilot_id))
+      |> group_by([s], s.mvp_pilot_id)
+      |> select([s], {s.mvp_pilot_id, count(s.id)})
+      |> Repo.all()
+      |> Map.new()
+
+    # Get all pilots who have any stats
+    all_pilot_ids =
+      MapSet.new(Map.keys(sp_by_pilot))
+      |> MapSet.union(MapSet.new(Map.keys(participation_by_pilot)))
+      |> MapSet.union(MapSet.new(Map.keys(mvp_by_pilot)))
+      |> MapSet.to_list()
+
+    # Fetch pilot records
+    pilots =
+      Pilot
+      |> where([p], p.id in ^all_pilot_ids)
+      |> Repo.all()
+      |> Map.new(&{&1.id, &1})
+
+    # Build result list sorted by SP earned (descending)
+    all_pilot_ids
+    |> Enum.map(fn pilot_id ->
+      %{
+        pilot: Map.get(pilots, pilot_id),
+        sp_earned: Map.get(sp_by_pilot, pilot_id, 0),
+        sorties_participated: Map.get(participation_by_pilot, pilot_id, 0),
+        mvp_awards: Map.get(mvp_by_pilot, pilot_id, 0)
+      }
+    end)
+    |> Enum.filter(& &1.pilot)  # Filter out any pilots that might have been deleted
+    |> Enum.sort_by(& &1.sp_earned, :desc)
   end
 end

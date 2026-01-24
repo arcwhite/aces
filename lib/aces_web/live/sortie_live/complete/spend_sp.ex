@@ -127,12 +127,20 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
 
   defp build_save_transaction(socket, allocations, _saved_allocations) do
     alias Aces.Campaigns.PilotAllocation
+    import Ecto.Query
 
     sortie = socket.assigns.sortie
 
-    # Start with pilot updates
+    # First, delete any existing allocations for this sortie
+    delete_query = from(pa in PilotAllocation, where: pa.sortie_id == ^sortie.id)
+
     multi =
-      Enum.reduce(allocations, Ecto.Multi.new(), fn {pilot_id, alloc}, multi ->
+      Ecto.Multi.new()
+      |> Ecto.Multi.delete_all(:delete_existing_allocations, delete_query)
+
+    # Then add pilot updates and fresh allocation inserts
+    multi =
+      Enum.reduce(allocations, multi, fn {pilot_id, alloc}, multi ->
         pilot = Enum.find(socket.assigns.pilots_with_sp, &(&1.id == pilot_id))
 
         if pilot do
@@ -155,12 +163,7 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
 
           multi
           |> Ecto.Multi.update({:pilot, pilot_id}, changeset)
-          |> Ecto.Multi.insert(
-            {:pilot_allocation, pilot_id},
-            allocation_changeset,
-            on_conflict: {:replace, [:sp_to_skill, :sp_to_tokens, :sp_to_abilities, :edge_abilities_gained, :total_sp, :updated_at]},
-            conflict_target: [:sortie_id, :pilot_id]
-          )
+          |> Ecto.Multi.insert({:pilot_allocation, pilot_id}, allocation_changeset)
         else
           multi
         end

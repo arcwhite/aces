@@ -373,9 +373,9 @@ defmodule AcesWeb.SortieLive.Show do
                   <th>Unit</th>
                   <th>Pilot</th>
                   <th>PV</th>
+                  <th>Unit Stats</th>
                   <th>Damage Status</th>
                   <th>Pilot Status</th>
-                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -398,6 +398,28 @@ defmodule AcesWeb.SortieLive.Show do
                       <% end %>
                     </td>
                     <td class="font-mono">{deployment.company_unit.master_unit.point_value} PV</td>
+                    <td>
+                      <div class="text-xs space-y-1">
+                        <div class="flex gap-2">
+                          <span class="font-semibold">Move:</span>
+                          <span class="font-mono">{deployment.company_unit.master_unit.bf_move || "—"}</span>
+                        </div>
+                        <div class="flex gap-2">
+                          <span class="font-semibold">Dmg:</span>
+                          <span class="font-mono">
+                            {deployment.company_unit.master_unit.bf_damage_short || "0"}/{deployment.company_unit.master_unit.bf_damage_medium || "0"}/{deployment.company_unit.master_unit.bf_damage_long || "0"}
+                          </span>
+                        </div>
+                        <%= if deployment.company_unit.master_unit.bf_abilities && deployment.company_unit.master_unit.bf_abilities != "" do %>
+                          <div class="flex gap-2">
+                            <span class="font-semibold">Spc:</span>
+                            <span class="opacity-70 max-w-xs truncate" title={deployment.company_unit.master_unit.bf_abilities}>
+                              {deployment.company_unit.master_unit.bf_abilities}
+                            </span>
+                          </div>
+                        <% end %>
+                      </div>
+                    </td>
                     <td>
                       <%= if @sortie.status == "in_progress" and @can_edit do %>
                         <form phx-change="update_damage_status" id={"damage-form-#{deployment.id}"}>
@@ -453,11 +475,6 @@ defmodule AcesWeb.SortieLive.Show do
                           <div class="text-xs text-gray-500 mt-1">Crew casualty: 100 SP cost</div>
                         <% end %>
                       <% end %>
-                    </td>
-                    <td>
-                      <div class="text-sm opacity-70">
-                        Damage tracking live
-                      </div>
                     </td>
                   </tr>
                 <% end %>

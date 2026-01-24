@@ -79,21 +79,29 @@ defmodule Aces.Campaigns.SortieCompletion do
 
   Returns a map of pilot_id => %{sp: integer, status: atom, participated: boolean}
 
+  ## Options
+  - `:net_earnings` - Override the net earnings value (useful when sortie has stale data)
+
   ## Examples
 
       iex> calculate_pilot_earnings(sortie, all_pilots, participating_pilot_ids)
       %{1 => %{sp: 50, status: :active, participated: true}, ...}
+
+      iex> calculate_pilot_earnings(sortie, all_pilots, participating_pilot_ids, net_earnings: 500)
+      %{1 => %{sp: 50, status: :active, participated: true}, ...}
   """
-  def calculate_pilot_earnings(%Sortie{} = sortie, all_pilots, participating_pilot_ids) do
-    net_earnings = sortie.net_earnings || 0
+  def calculate_pilot_earnings(%Sortie{} = sortie, all_pilots, participating_pilot_ids, opts \\ []) do
+    net_earnings = Keyword.get(opts, :net_earnings, sortie.net_earnings) || 0
     max_sp_per_pilot = sortie.sp_per_participating_pilot || 0
     killed_pilot_ids = get_killed_pilot_ids(sortie)
+    wounded_pilot_ids = get_wounded_pilot_ids(sortie)
 
     # First pass: calculate "desired" SP for each pilot
     desired_earnings = calculate_desired_earnings(
       all_pilots,
       participating_pilot_ids,
       killed_pilot_ids,
+      wounded_pilot_ids,
       max_sp_per_pilot
     )
 
@@ -352,7 +360,14 @@ defmodule Aces.Campaigns.SortieCompletion do
     |> MapSet.new()
   end
 
-  defp calculate_desired_earnings(all_pilots, participating_pilot_ids, killed_pilot_ids, max_sp_per_pilot) do
+  defp get_wounded_pilot_ids(%Sortie{deployments: deployments}) do
+    deployments
+    |> Enum.filter(&(&1.pilot_casualty == "wounded" && &1.pilot_id))
+    |> Enum.map(& &1.pilot_id)
+    |> MapSet.new()
+  end
+
+  defp calculate_desired_earnings(all_pilots, participating_pilot_ids, killed_pilot_ids, wounded_pilot_ids, max_sp_per_pilot) do
     Enum.map(all_pilots, fn pilot ->
       cond do
         MapSet.member?(killed_pilot_ids, pilot.id) ->
@@ -360,6 +375,9 @@ defmodule Aces.Campaigns.SortieCompletion do
 
         pilot.status == "deceased" ->
           {pilot.id, %{desired_sp: 0, status: :deceased, participated: false}}
+
+        MapSet.member?(wounded_pilot_ids, pilot.id) ->
+          {pilot.id, %{desired_sp: max_sp_per_pilot, status: :wounded, participated: true}}
 
         MapSet.member?(participating_pilot_ids, pilot.id) ->
           {pilot.id, %{desired_sp: max_sp_per_pilot, status: :active, participated: true}}

@@ -31,14 +31,24 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
         |> Enum.map(& &1.pilot_id)
         |> MapSet.new()
 
-      # Calculate pilot earnings using business logic module
-      pilot_earnings = SortieCompletion.calculate_pilot_earnings(sortie, all_pilots, participating_pilot_ids)
+      # Calculate operational costs (same as Costs screen) to get the correct net earnings
+      # before pilot SP distribution
+      costs = SortieCompletion.calculate_all_costs(sortie)
+
+      # Calculate pilot earnings using business logic module, passing the correct net earnings
+      pilot_earnings = SortieCompletion.calculate_pilot_earnings(
+        sortie,
+        all_pilots,
+        participating_pilot_ids,
+        net_earnings: costs.net_earnings
+      )
 
       {:ok,
        socket
        |> assign(:company, company)
        |> assign(:campaign, campaign)
        |> assign(:sortie, sortie)
+       |> assign(:costs, costs)
        |> assign(:all_pilots, all_pilots)
        |> assign(:participating_pilot_ids, participating_pilot_ids)
        |> assign(:pilot_earnings, pilot_earnings)
@@ -250,9 +260,9 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
               <div class="stat-title">Net Earnings</div>
               <div class={[
                 "stat-value",
-                if(@sortie.net_earnings >= 0, do: "text-success", else: "text-error")
+                if(@costs.net_earnings >= 0, do: "text-success", else: "text-error")
               ]}>
-                {@sortie.net_earnings} SP
+                {@costs.net_earnings} SP
               </div>
             </div>
             <div class="stat">
@@ -300,6 +310,8 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
                           <span class="badge badge-error">Killed in Action</span>
                         <% :deceased -> %>
                           <span class="badge badge-error">Deceased</span>
+                        <% :wounded -> %>
+                          <span class="badge badge-warning">Wounded</span>
                         <% _ -> %>
                           <span class="badge badge-success">Active</span>
                       <% end %>

@@ -25,10 +25,14 @@ defmodule AcesWeb.CampaignLive.Show do
          |> put_flash(:error, "Campaign not found")
          |> redirect(to: ~p"/companies/#{company_id}")}
       else
+        # Calculate pilot performance from actual sortie data
+        pilot_performance = Campaigns.calculate_pilot_performance(campaign)
+
         {:ok,
          socket
          |> assign(:company, company)
          |> assign(:campaign, campaign)
+         |> assign(:pilot_performance, pilot_performance)
          |> assign(:page_title, campaign.name)
          |> assign(:can_edit, Authorization.can?(:edit_company, user, company))}
       end
@@ -296,9 +300,9 @@ defmodule AcesWeb.CampaignLive.Show do
       <div class="mb-8">
         <h2 class="text-2xl font-bold mb-4">Pilot Performance</h2>
 
-        <%= if length(@campaign.pilot_campaign_stats) == 0 do %>
+        <%= if Enum.empty?(@pilot_performance) do %>
           <div class="alert alert-info">
-            <span>No pilot stats available.</span>
+            <span>No pilot stats available. Complete sorties to see pilot performance.</span>
           </div>
         <% else %>
           <div class="overflow-x-auto">
@@ -306,18 +310,29 @@ defmodule AcesWeb.CampaignLive.Show do
               <thead>
                 <tr>
                   <th>Pilot</th>
-                  <th>SP Earned</th>
-                  <th>Sorties</th>
-                  <th>MVP Awards</th>
+                  <th class="text-right">SP Earned</th>
+                  <th class="text-center">Sorties</th>
+                  <th class="text-center">MVP Awards</th>
                 </tr>
               </thead>
               <tbody>
-                <%= for stats <- @campaign.pilot_campaign_stats do %>
+                <%= for stats <- @pilot_performance do %>
                   <tr>
-                    <td class="font-semibold">{stats.pilot.name}</td>
-                    <td>{stats.sp_earned} SP</td>
-                    <td>{stats.sorties_participated}</td>
-                    <td>{stats.mvp_awards}</td>
+                    <td>
+                      <div class="font-semibold">{stats.pilot.name}</div>
+                      <%= if stats.pilot.callsign do %>
+                        <div class="text-sm opacity-70">"{stats.pilot.callsign}"</div>
+                      <% end %>
+                    </td>
+                    <td class="text-right font-mono">{stats.sp_earned} SP</td>
+                    <td class="text-center">{stats.sorties_participated}</td>
+                    <td class="text-center">
+                      <%= if stats.mvp_awards > 0 do %>
+                        <span class="badge badge-warning">{stats.mvp_awards}</span>
+                      <% else %>
+                        <span class="opacity-50">0</span>
+                      <% end %>
+                    </td>
                   </tr>
                 <% end %>
               </tbody>

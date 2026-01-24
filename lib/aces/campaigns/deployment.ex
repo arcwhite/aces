@@ -108,7 +108,11 @@ defmodule Aces.Campaigns.Deployment do
     end
   end
 
-  defp get_repair_size(%{unit_type: unit_type, bf_size: bf_size}) do
+  @doc """
+  Get the effective size for repair cost calculations.
+  Combat Vehicles, Battle Armour, and Infantry count as half size.
+  """
+  def get_repair_size(%{unit_type: unit_type, bf_size: bf_size}) do
     # Use bf_size from MUL API, defaulting to 1 if not available
     base_size = bf_size || 1
 

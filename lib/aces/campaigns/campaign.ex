@@ -6,7 +6,7 @@ defmodule Aces.Campaigns.Campaign do
   import Ecto.Changeset
 
   alias Aces.Companies.Company
-  alias Aces.Campaigns.{Sortie, CampaignEvent, PilotCampaignStats}
+  alias Aces.Campaigns.{Sortie, CampaignEvent}
 
   @difficulty_levels ~w(rookie standard veteran elite legendary)
   @campaign_status ~w(active completed failed)
@@ -27,7 +27,6 @@ defmodule Aces.Campaigns.Campaign do
     belongs_to :company, Company
     has_many :sorties, Sortie, preload_order: [asc: :mission_number]
     has_many :campaign_events, CampaignEvent, preload_order: [desc: :occurred_at]
-    has_many :pilot_campaign_stats, PilotCampaignStats
 
     timestamps(type: :utc_datetime)
   end

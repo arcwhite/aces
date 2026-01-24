@@ -158,6 +158,7 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
               <thead>
                 <tr>
                   <th>Unit</th>
+                  <th>Size</th>
                   <th>Damage Status</th>
                   <th class="text-right">Repair Cost</th>
                 </tr>
@@ -168,6 +169,9 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
                   <tr>
                     <td>
                       {deployment.company_unit.custom_name || deployment.company_unit.master_unit.name}
+                    </td>
+                    <td class="font-mono">
+                      {format_unit_size(deployment.company_unit.master_unit)}
                     </td>
                     <td>
                       <span class={damage_badge_class(effective_status)}>
@@ -182,7 +186,7 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
               </tbody>
               <tfoot>
                 <tr class="font-bold">
-                  <td colspan="2">Total Repair Costs</td>
+                  <td colspan="3">Total Repair Costs</td>
                   <td class="text-right font-mono">{@costs.total_repair} SP</td>
                 </tr>
               </tfoot>
@@ -403,6 +407,23 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
       "wounded" -> "Wounded"
       "killed" -> "Killed"
       _ -> String.capitalize(status || "unknown")
+    end
+  end
+
+  defp format_unit_size(master_unit) do
+    alias Aces.Campaigns.Deployment
+
+    actual_size = master_unit.bf_size || 1
+    effective_size = Deployment.get_repair_size(master_unit)
+
+    if effective_size != actual_size do
+      # Show actual size with effective size in brackets
+      effective_display = if effective_size == trunc(effective_size),
+        do: trunc(effective_size),
+        else: :erlang.float_to_binary(effective_size, decimals: 1)
+      "#{actual_size} (#{effective_display})"
+    else
+      "#{actual_size}"
     end
   end
 end
