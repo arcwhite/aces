@@ -682,8 +682,8 @@ defmodule AcesWeb.SortieLive.Show do
         </div>
       <% end %>
 
-      <!-- Notes -->
-      <%= if @sortie.recon_notes && String.trim(@sortie.recon_notes) != "" do %>
+      <!-- Notes (hidden for completed sorties - shown in summary instead) -->
+      <%= if @sortie.status != "completed" and @sortie.recon_notes && String.trim(@sortie.recon_notes) != "" do %>
         <div class="mb-8">
           <h3 class="text-xl font-semibold mb-4">Mission Notes</h3>
           <div class="card bg-base-200 p-4">

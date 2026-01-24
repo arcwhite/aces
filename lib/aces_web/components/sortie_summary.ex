@@ -45,20 +45,24 @@ defmodule AcesWeb.Components.SortieSummary do
     """
   end
 
-  defp enrich_allocations(%{pilot_allocations: allocations, all_pilots: pilots}) do
+  defp enrich_allocations(%{pilot_allocations: allocations, all_pilots: pilots, sortie: sortie}) do
+    mvp_pilot_id = sortie.mvp_pilot_id
+
     allocations
     |> Enum.filter(&(&1.allocation_type == "sortie"))
     |> Enum.map(fn alloc ->
       pilot = Enum.find(pilots, &(&1.id == alloc.pilot_id))
 
       %{
+        pilot_id: alloc.pilot_id,
         pilot_name: if(pilot, do: pilot.name, else: "Unknown Pilot"),
         pilot_callsign: if(pilot, do: pilot.callsign, else: nil),
         sp_to_skill: alloc.sp_to_skill || 0,
         sp_to_tokens: alloc.sp_to_tokens || 0,
         sp_to_abilities: alloc.sp_to_abilities || 0,
         total_sp: alloc.total_sp || 0,
-        edge_abilities_gained: alloc.edge_abilities_gained || []
+        edge_abilities_gained: alloc.edge_abilities_gained || [],
+        is_mvp: alloc.pilot_id == mvp_pilot_id
       }
     end)
     |> Enum.sort_by(& &1.pilot_name)
@@ -121,6 +125,13 @@ defmodule AcesWeb.Components.SortieSummary do
                 <span class="badge badge-primary">{keyword}</span>
               <% end %>
             </div>
+          </div>
+        <% end %>
+
+        <%= if @sortie.recon_notes && String.trim(@sortie.recon_notes) != "" do %>
+          <div class="mt-4">
+            <div class="text-sm opacity-70 mb-2">Mission Notes</div>
+            <p class="whitespace-pre-wrap text-sm bg-base-300 p-3 rounded-lg">{@sortie.recon_notes}</p>
           </div>
         <% end %>
       </div>
@@ -322,7 +333,8 @@ defmodule AcesWeb.Components.SortieSummary do
             <thead>
               <tr>
                 <th>Pilot</th>
-                <th class="text-right">Total SP</th>
+                <th class="text-center">MVP</th>
+                <th class="text-right">SP Earned</th>
                 <th class="text-right">To Skill</th>
                 <th class="text-right">To Edge Tokens</th>
                 <th class="text-right">To Abilities</th>
@@ -336,6 +348,13 @@ defmodule AcesWeb.Components.SortieSummary do
                     <div class="font-semibold">{alloc.pilot_name}</div>
                     <%= if alloc.pilot_callsign do %>
                       <div class="text-xs opacity-70">"{alloc.pilot_callsign}"</div>
+                    <% end %>
+                  </td>
+                  <td class="text-center">
+                    <%= if alloc.is_mvp do %>
+                      <span class="badge badge-warning badge-sm">MVP</span>
+                    <% else %>
+                      <span class="opacity-50">—</span>
                     <% end %>
                   </td>
                   <td class="text-right font-mono font-semibold">{alloc.total_sp} SP</td>
