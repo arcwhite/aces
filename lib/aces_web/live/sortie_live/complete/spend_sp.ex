@@ -7,6 +7,7 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
 
   alias Aces.{Companies, Campaigns}
   alias Aces.Companies.{Authorization, Pilots, Pilot}
+  alias Aces.Campaigns.PilotAllocation
   alias AcesWeb.SortieLive.Complete.Helpers
 
   on_mount {AcesWeb.UserAuthLive, :default}
@@ -24,11 +25,9 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
       # Get all pilots in the company
       all_pilots = Pilots.list_company_pilots(company)
 
-      # Check if we have saved allocations from a previous visit
-      saved_allocations = sortie.pilot_allocations || %{}
-
       # Build allocation state - either from saved data or fresh
-      {pilots_with_sp, pilot_allocations} = build_pilot_allocations_with_saved(all_pilots, saved_allocations)
+      {pilots_with_sp, pilot_allocations} =
+        PilotAllocation.build_all(all_pilots, sortie.pilot_allocations)
 
       {:ok,
        socket
@@ -69,169 +68,31 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
     Helpers.validate_step_access(sortie, requested_step)
   end
 
-  defp build_pilot_allocations_with_saved(all_pilots, saved_allocations) do
-    # Build allocation state for pilots with SP or saved allocations
-    allocations =
-      Enum.filter(all_pilots, fn pilot ->
-        # Include if pilot has SP to spend OR has saved allocations
-        pilot_id_str = to_string(pilot.id)
-        (pilot.sp_available || 0) > 0 or Map.has_key?(saved_allocations, pilot_id_str)
-      end)
-      |> Enum.map(fn pilot ->
-        pilot_id_str = to_string(pilot.id)
-        saved = Map.get(saved_allocations, pilot_id_str)
-
-        if saved do
-          # Restore from saved allocations
-          build_allocation_from_saved(pilot, saved)
-        else
-          # Fresh allocation (first visit)
-          build_fresh_allocation(pilot)
-        end
-      end)
-      |> Map.new()
-
-    # Get the list of pilots for display
-    pilots_with_sp = Enum.filter(all_pilots, fn pilot ->
-      pilot_id_str = to_string(pilot.id)
-      (pilot.sp_available || 0) > 0 or Map.has_key?(saved_allocations, pilot_id_str)
-    end)
-
-    {pilots_with_sp, allocations}
-  end
-
-  defp build_fresh_allocation(pilot) do
-    # Store baseline allocations - these are locked from before this sortie
-    baseline_skill = pilot.sp_allocated_to_skill
-    baseline_tokens = pilot.sp_allocated_to_edge_tokens
-    baseline_abilities = pilot.sp_allocated_to_edge_abilities
-    baseline_edge_abilities = pilot.edge_abilities || []
-
-    {pilot.id, %{
-      pilot: pilot,
-      # Baseline (locked) allocations from before this sortie
-      baseline_skill: baseline_skill,
-      baseline_tokens: baseline_tokens,
-      baseline_abilities: baseline_abilities,
-      baseline_edge_abilities: baseline_edge_abilities,
-      # Additional SP to allocate (starts at 0)
-      add_skill: 0,
-      add_tokens: 0,
-      add_abilities: 0,
-      # New edge abilities selected this sortie
-      new_edge_abilities: [],
-      # SP available to spend this sortie
-      sp_to_spend: pilot.sp_available,
-      sp_remaining: pilot.sp_available,
-      # Derived values (will be recalculated)
-      skill_level: pilot.skill_level,
-      edge_tokens: pilot.edge_tokens,
-      max_abilities: Pilot.calculate_edge_abilities_from_sp(baseline_abilities),
-      has_error: false
-    }}
-  end
-
-  defp build_allocation_from_saved(pilot, saved) do
-    # Restore baselines from saved data (these are the TRUE baselines from before this sortie)
-    baseline_skill = saved["baseline_skill"] || 0
-    baseline_tokens = saved["baseline_tokens"] || 0
-    baseline_abilities = saved["baseline_abilities"] || 0
-    baseline_edge_abilities = saved["baseline_edge_abilities"] || []
-
-    # Restore the add values from saved data
-    add_skill = saved["add_skill"] || 0
-    add_tokens = saved["add_tokens"] || 0
-    add_abilities = saved["add_abilities"] || 0
-    new_edge_abilities = saved["new_edge_abilities"] || []
-
-    # SP to spend is the sum of what was allocated
-    sp_to_spend = saved["sp_to_spend"] || (add_skill + add_tokens + add_abilities)
-
-    # Calculate derived values
-    total_skill = baseline_skill + add_skill
-    total_tokens = baseline_tokens + add_tokens
-    total_abilities = baseline_abilities + add_abilities
-
-    skill_level = Pilot.calculate_skill_from_sp(total_skill)
-    edge_tokens = Pilot.calculate_edge_tokens_from_sp(total_tokens)
-    max_abilities = Pilot.calculate_edge_abilities_from_sp(total_abilities)
-
-    sp_remaining = sp_to_spend - add_skill - add_tokens - add_abilities
-
-    {pilot.id, %{
-      pilot: pilot,
-      baseline_skill: baseline_skill,
-      baseline_tokens: baseline_tokens,
-      baseline_abilities: baseline_abilities,
-      baseline_edge_abilities: baseline_edge_abilities,
-      add_skill: add_skill,
-      add_tokens: add_tokens,
-      add_abilities: add_abilities,
-      new_edge_abilities: new_edge_abilities,
-      sp_to_spend: sp_to_spend,
-      sp_remaining: sp_remaining,
-      skill_level: skill_level,
-      edge_tokens: edge_tokens,
-      max_abilities: max_abilities,
-      has_error: sp_remaining < 0
-    }}
-  end
-
   @impl true
   def handle_event("update_allocation", params, socket) do
-    pilot_id = String.to_integer(params["pilot_id"])
-    field = params["field"]
-    value = parse_int(params["value"])
-
-    allocation = Map.get(socket.assigns.pilot_allocations, pilot_id)
-
-    if allocation do
-      updated_allocation = update_pilot_allocation(allocation, field, value)
+    with {:ok, pilot_id} <- safe_parse_id(params["pilot_id"]),
+         %{} = allocation <- Map.get(socket.assigns.pilot_allocations, pilot_id) do
+      field = params["field"]
+      value = parse_int(params["value"])
+      updated_allocation = PilotAllocation.update_allocation(allocation, field, value)
       new_allocations = Map.put(socket.assigns.pilot_allocations, pilot_id, updated_allocation)
 
       {:noreply, assign(socket, :pilot_allocations, new_allocations)}
     else
-      {:noreply, socket}
+      _ -> {:noreply, socket}
     end
   end
 
   @impl true
   def handle_event("toggle_edge_ability", %{"pilot_id" => pilot_id_str, "ability" => ability}, socket) do
-    pilot_id = String.to_integer(pilot_id_str)
-    allocation = Map.get(socket.assigns.pilot_allocations, pilot_id)
-
-    if allocation do
-      # Calculate current max abilities based on total SP allocated to abilities
-      total_abilities_sp = allocation.baseline_abilities + allocation.add_abilities
-      max_allowed = Pilot.calculate_edge_abilities_from_sp(total_abilities_sp)
-
-      # All current abilities = baseline + new
-      all_current = allocation.baseline_edge_abilities ++ allocation.new_edge_abilities
-
-      new_abilities = cond do
-        # Can't remove baseline abilities
-        ability in allocation.baseline_edge_abilities ->
-          allocation.new_edge_abilities
-
-        # Toggle off if already in new abilities
-        ability in allocation.new_edge_abilities ->
-          List.delete(allocation.new_edge_abilities, ability)
-
-        # Add if we have room
-        length(all_current) < max_allowed ->
-          [ability | allocation.new_edge_abilities]
-
-        # At max, can't add
-        true ->
-          allocation.new_edge_abilities
-      end
-
-      updated_allocation = %{allocation | new_edge_abilities: new_abilities}
+    with {:ok, pilot_id} <- safe_parse_id(pilot_id_str),
+         %{} = allocation <- Map.get(socket.assigns.pilot_allocations, pilot_id) do
+      updated_allocation = PilotAllocation.toggle_edge_ability(allocation, ability)
       new_allocations = Map.put(socket.assigns.pilot_allocations, pilot_id, updated_allocation)
 
       {:noreply, assign(socket, :pilot_allocations, new_allocations)}
     else
-      {:noreply, socket}
+      _ -> {:noreply, socket}
     end
   end
 
@@ -240,109 +101,50 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
     allocations = socket.assigns.pilot_allocations
 
     # Check if all pilots have spent all their SP
-    all_sp_spent = Enum.all?(allocations, fn {_id, alloc} -> alloc.sp_remaining == 0 end)
-
-    if not all_sp_spent do
+    if not PilotAllocation.all_valid?(allocations) do
       {:noreply, put_flash(socket, :error, "All pilots must spend their entire SP allocation before proceeding")}
     else
-      # Build the pilot_allocations map to save to sortie
-      saved_allocations =
-        Enum.map(allocations, fn {pilot_id, alloc} ->
-          {to_string(pilot_id), %{
-            "baseline_skill" => alloc.baseline_skill,
-            "baseline_tokens" => alloc.baseline_tokens,
-            "baseline_abilities" => alloc.baseline_abilities,
-            "baseline_edge_abilities" => alloc.baseline_edge_abilities,
-            "add_skill" => alloc.add_skill,
-            "add_tokens" => alloc.add_tokens,
-            "add_abilities" => alloc.add_abilities,
-            "new_edge_abilities" => alloc.new_edge_abilities,
-            "sp_to_spend" => alloc.sp_to_spend
-          }}
-        end)
-        |> Map.new()
+      saved_allocations = PilotAllocation.all_to_saved_format(allocations)
 
-      # Save all pilot allocations to their records
-      Enum.each(allocations, fn {pilot_id, alloc} ->
-        pilot = Enum.find(socket.assigns.pilots_with_sp, &(&1.id == pilot_id))
+      # Build a transaction to save all changes atomically
+      multi = build_save_transaction(socket, allocations, saved_allocations)
 
-        if pilot do
-          # Calculate final totals
-          total_skill = alloc.baseline_skill + alloc.add_skill
-          total_tokens = alloc.baseline_tokens + alloc.add_tokens
-          total_abilities = alloc.baseline_abilities + alloc.add_abilities
-          all_abilities = alloc.baseline_edge_abilities ++ alloc.new_edge_abilities
+      case Aces.Repo.transaction(multi) do
+        {:ok, _results} ->
+          {:noreply,
+           push_navigate(socket,
+             to: ~p"/companies/#{socket.assigns.company.id}/campaigns/#{socket.assigns.campaign.id}/sorties/#{socket.assigns.sortie.id}/complete/summary"
+           )}
 
-          pilot
-          |> Ecto.Changeset.change(%{
-            sp_allocated_to_skill: total_skill,
-            sp_allocated_to_edge_tokens: total_tokens,
-            sp_allocated_to_edge_abilities: total_abilities,
-            edge_abilities: all_abilities,
-            skill_level: Pilot.calculate_skill_from_sp(total_skill),
-            edge_tokens: Pilot.calculate_edge_tokens_from_sp(total_tokens),
-            sp_available: 0
-          })
-          |> Aces.Repo.update()
-        end
-      end)
-
-      # Update sortie with saved allocations and next step
-      {:ok, _} =
-        socket.assigns.sortie
-        |> Ecto.Changeset.change(%{
-          pilot_allocations: saved_allocations,
-          finalization_step: "summary"
-        })
-        |> Aces.Repo.update()
-
-      {:noreply,
-       push_navigate(socket,
-         to: ~p"/companies/#{socket.assigns.company.id}/campaigns/#{socket.assigns.campaign.id}/sorties/#{socket.assigns.sortie.id}/complete/summary"
-       )}
+        {:error, _failed_operation, _failed_changeset, _changes_so_far} ->
+          {:noreply, put_flash(socket, :error, "Failed to save pilot allocations. Please try again.")}
+      end
     end
   end
 
-  defp update_pilot_allocation(allocation, field, value) do
-    # Clamp value to be non-negative
-    value = max(0, value)
+  defp build_save_transaction(socket, allocations, saved_allocations) do
+    # Start with pilot updates
+    multi =
+      Enum.reduce(allocations, Ecto.Multi.new(), fn {pilot_id, alloc}, multi ->
+        pilot = Enum.find(socket.assigns.pilots_with_sp, &(&1.id == pilot_id))
 
-    # Update the specific field
-    updated = case field do
-      "skill" -> %{allocation | add_skill: value}
-      "edge_tokens" -> %{allocation | add_tokens: value}
-      "edge_abilities" -> %{allocation | add_abilities: value}
-      _ -> allocation
-    end
+        if pilot do
+          changes = PilotAllocation.to_pilot_changes(alloc)
+          changeset = Ecto.Changeset.change(pilot, changes)
+          Ecto.Multi.update(multi, {:pilot, pilot_id}, changeset)
+        else
+          multi
+        end
+      end)
 
-    # Recalculate sp_remaining
-    total_added = updated.add_skill + updated.add_tokens + updated.add_abilities
-    sp_remaining = updated.sp_to_spend - total_added
+    # Add sortie update
+    sortie_changeset =
+      Ecto.Changeset.change(socket.assigns.sortie, %{
+        pilot_allocations: saved_allocations,
+        finalization_step: "summary"
+      })
 
-    # Recalculate derived values based on total SP (baseline + additional)
-    total_skill = updated.baseline_skill + updated.add_skill
-    total_tokens = updated.baseline_tokens + updated.add_tokens
-    total_abilities = updated.baseline_abilities + updated.add_abilities
-
-    skill_level = Pilot.calculate_skill_from_sp(total_skill)
-    edge_tokens = Pilot.calculate_edge_tokens_from_sp(total_tokens)
-    max_abilities = Pilot.calculate_edge_abilities_from_sp(total_abilities)
-
-    # Trim new edge abilities if max reduced
-    baseline_count = length(updated.baseline_edge_abilities)
-    available_new_slots = max(0, max_abilities - baseline_count)
-    trimmed_new_abilities = Enum.take(updated.new_edge_abilities, available_new_slots)
-
-    has_error = sp_remaining < 0
-
-    %{updated |
-      sp_remaining: sp_remaining,
-      skill_level: skill_level,
-      edge_tokens: edge_tokens,
-      max_abilities: max_abilities,
-      new_edge_abilities: trimmed_new_abilities,
-      has_error: has_error
-    }
+    Ecto.Multi.update(multi, :sortie, sortie_changeset)
   end
 
   defp parse_int(value) when is_binary(value) do
@@ -354,13 +156,14 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
   defp parse_int(value) when is_integer(value), do: value
   defp parse_int(_), do: 0
 
-  defp all_sp_spent?(allocations) do
-    Enum.all?(allocations, fn {_id, alloc} -> alloc.sp_remaining == 0 and not alloc.has_error end)
+  defp safe_parse_id(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, _} -> {:ok, int}
+      :error -> :error
+    end
   end
-
-  defp any_errors?(allocations) do
-    Enum.any?(allocations, fn {_id, alloc} -> alloc.has_error end)
-  end
+  defp safe_parse_id(value) when is_integer(value), do: {:ok, value}
+  defp safe_parse_id(_), do: :error
 
   @impl true
   def render(assigns) do
@@ -588,7 +391,7 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
               </div>
 
               <!-- Edge Abilities Selection -->
-              <% total_abilities_count = length(allocation.baseline_edge_abilities) + length(allocation.new_edge_abilities) %>
+              <% total_abilities_count = PilotAllocation.total_abilities_count(allocation) %>
               <%= if allocation.max_abilities > 0 do %>
                 <div class="mt-4">
                   <h5 class="font-semibold mb-2">
@@ -672,7 +475,7 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
           type="button"
           class="btn btn-primary"
           phx-click="save"
-          disabled={not all_sp_spent?(@pilot_allocations) or any_errors?(@pilot_allocations)}
+          disabled={not PilotAllocation.all_valid?(@pilot_allocations) or PilotAllocation.any_errors?(@pilot_allocations)}
         >
           Continue to Summary →
         </button>
