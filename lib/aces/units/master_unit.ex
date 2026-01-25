@@ -1,6 +1,19 @@
 defmodule Aces.Units.MasterUnit do
   @moduledoc """
   Schema for master unit list entries from masterunitlist.info
+
+  ## Factions Field Format
+
+  The `factions` field stores era-aware faction availability as a map:
+
+      %{
+        "ilclan" => ["mercenary", "capellan_confederation"],
+        "dark_age" => ["mercenary", "free_worlds_league"]
+      }
+
+  This format allows tracking which factions have access to a unit in each era,
+  since faction availability can change between eras (e.g., a unit might become
+  more widely available in later eras as technology spreads).
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -8,6 +21,7 @@ defmodule Aces.Units.MasterUnit do
   alias Aces.Companies.CompanyUnit
 
   @valid_unit_types ~w(battlemech combat_vehicle battle_armor conventional_infantry protomech other)
+  @valid_eras ~w(ilclan dark_age late_republic early_republic jihad civil_war clan_invasion)
 
   schema "master_units" do
     field :mul_id, :integer
@@ -108,18 +122,93 @@ defmodule Aces.Units.MasterUnit do
   end
 
   @doc """
-  Checks if a unit is available to a specific faction
+  Returns valid era names for faction availability
   """
-  def available_to_faction?(%__MODULE__{factions: nil}, _faction), do: false
-  def available_to_faction?(%__MODULE__{factions: factions}, faction) when is_map(factions) do
-    Map.has_key?(factions, faction)
+  def valid_eras, do: @valid_eras
+
+  @doc """
+  Checks if a unit is available to a specific faction in a specific era.
+
+  ## Examples
+
+      iex> available_to_faction?(unit, "ilclan", "mercenary")
+      true
+
+      iex> available_to_faction?(unit, "dark_age", "clan_wolf")
+      false
+  """
+  def available_to_faction?(%__MODULE__{factions: nil}, _era, _faction), do: false
+  def available_to_faction?(%__MODULE__{factions: factions}, era, faction) when is_map(factions) do
+    case Map.get(factions, era) do
+      nil -> false
+      faction_list when is_list(faction_list) -> faction in faction_list
+      _ -> false
+    end
   end
 
   @doc """
-  Returns a list of faction names the unit is available to
+  Checks if a unit is available to a faction in ANY era.
+  """
+  def available_to_faction?(%__MODULE__{factions: nil}, _faction), do: false
+  def available_to_faction?(%__MODULE__{factions: factions}, faction) when is_map(factions) do
+    Enum.any?(factions, fn {_era, faction_list} ->
+      is_list(faction_list) and faction in faction_list
+    end)
+  end
+
+  @doc """
+  Returns a list of faction names the unit is available to in a specific era.
+
+  ## Examples
+
+      iex> available_factions(unit, "ilclan")
+      ["mercenary", "capellan_confederation"]
+  """
+  def available_factions(%__MODULE__{factions: nil}, _era), do: []
+  def available_factions(%__MODULE__{factions: factions}, era) when is_map(factions) do
+    case Map.get(factions, era) do
+      faction_list when is_list(faction_list) -> faction_list
+      _ -> []
+    end
+  end
+
+  @doc """
+  Returns all unique faction names the unit is available to across all eras.
   """
   def available_factions(%__MODULE__{factions: nil}), do: []
   def available_factions(%__MODULE__{factions: factions}) when is_map(factions) do
+    factions
+    |> Map.values()
+    |> List.flatten()
+    |> Enum.uniq()
+  end
+
+  @doc """
+  Returns all eras where this unit has faction availability data.
+  """
+  def available_eras(%__MODULE__{factions: nil}), do: []
+  def available_eras(%__MODULE__{factions: factions}) when is_map(factions) do
     Map.keys(factions)
+  end
+
+  @doc """
+  Merges new faction availability into existing factions map.
+  Used when seeding units multiple times with different era/faction combinations.
+
+  ## Examples
+
+      iex> merge_factions(%{"ilclan" => ["mercenary"]}, "dark_age", ["mercenary", "capellan"])
+      %{"ilclan" => ["mercenary"], "dark_age" => ["mercenary", "capellan"]}
+
+      iex> merge_factions(%{"ilclan" => ["mercenary"]}, "ilclan", ["capellan"])
+      %{"ilclan" => ["mercenary", "capellan"]}
+  """
+  def merge_factions(existing_factions, era, new_faction_list) when is_list(new_faction_list) do
+    existing_factions = existing_factions || %{}
+
+    existing_for_era = Map.get(existing_factions, era, [])
+    merged_for_era = Enum.uniq(existing_for_era ++ new_faction_list)
+
+    Map.put(existing_factions, era, merged_for_era)
   end
 end

@@ -35,3 +35,5 @@ aces-*.tar
 npm-debug.log
 /assets/node_modules/
 
+# Ignore log output
+log/*

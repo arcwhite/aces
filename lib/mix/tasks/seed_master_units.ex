@@ -6,22 +6,38 @@ defmodule Mix.Tasks.SeedMasterUnits do
   in the local database. It's designed to be respectful of the API with
   built-in rate limiting and careful filtering.
 
+  ## Required Arguments
+
+  Both --era and --faction are required to properly track faction availability
+  per era. This allows running the task multiple times with different combinations
+  to build up a complete picture of unit availability.
+
   ## Examples
 
-      # Seed IlClan era BattleMechs (recommended for initial setup)
-      mix seed_master_units --era ilclan --types battlemech
+      # Seed IlClan era mercenary BattleMechs
+      mix seed_master_units --era ilclan --faction mercenary --types battlemech
 
-      # Seed all IlClan era units
-      mix seed_master_units --era ilclan
+      # Seed Dark Age mercenary units
+      mix seed_master_units --era dark_age --faction mercenary --force
+
+      # Seed IlClan Capellan units (adds to existing data)
+      mix seed_master_units --era ilclan --faction capellan_confederation --force
 
       # Seed specific tonnage ranges
-      mix seed_master_units --era ilclan --min-tons 50 --max-tons 75
-
-      # Seed mercenary units only
-      mix seed_master_units --era ilclan --faction mercenary
+      mix seed_master_units --era ilclan --faction mercenary --min-tons 50 --max-tons 75
 
       # Dry run to see what would be fetched
       mix seed_master_units --era ilclan --faction mercenary --dry-run
+
+  ## Valid Eras
+
+      ilclan, dark_age, republic, jihad, civil_war, clan_invasion
+
+  ## Valid Factions
+
+      mercenary, capellan_confederation, draconis_combine, federated_suns,
+      free_worlds_league, lyran_commonwealth, clan_wolf, clan_jade_falcon,
+      and many more (see Aces.MUL.Client.available_factions/0)
   """
 
   use Mix.Task
@@ -34,11 +50,16 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
   @type_mappings %{
     "battlemech" => 18,
+    "mech" => 18,
     "combat_vehicle" => 19,
+    "vehicle" => 19,
     "battle_armor" => 21,
     "infantry" => 22,
+    "conventional_infantry" => 22,
     "protomech" => 20
   }
+
+  @valid_eras ~w(ilclan dark_age late_republic early_republic jihad civil_war clan_invasion)
 
   def run(args) do
     Mix.Task.run("app.start")
@@ -64,10 +85,50 @@ defmodule Mix.Tasks.SeedMasterUnits do
       ]
     )
 
-    if opts[:dry_run] do
-      dry_run(opts)
-    else
-      perform_seed(opts)
+    case validate_required_opts(opts) do
+      :ok ->
+        if opts[:dry_run] do
+          dry_run(opts)
+        else
+          perform_seed(opts)
+        end
+
+      {:error, message} ->
+        IO.puts("❌ #{message}")
+        IO.puts("")
+        IO.puts("Usage: mix seed_master_units --era <era> --faction <faction> [options]")
+        IO.puts("")
+        IO.puts("Required:")
+        IO.puts("  --era, -e      Era name (#{Enum.join(@valid_eras, ", ")})")
+        IO.puts("  --faction, -f  Faction name (e.g., mercenary, capellan_confederation)")
+        IO.puts("")
+        IO.puts("Options:")
+        IO.puts("  --types, -t    Unit type (battlemech, combat_vehicle, etc.) - can repeat")
+        IO.puts("  --min-tons     Minimum tonnage filter")
+        IO.puts("  --max-tons     Maximum tonnage filter")
+        IO.puts("  --force, -F    Allow seeding when units already exist")
+        IO.puts("  --limit, -l    Limit number of units to import")
+        IO.puts("  --dry-run, -d  Show what would be fetched without importing")
+        System.halt(1)
+    end
+  end
+
+  defp validate_required_opts(opts) do
+    era = opts[:era]
+    faction = opts[:faction]
+
+    cond do
+      is_nil(era) ->
+        {:error, "Missing required argument: --era"}
+
+      era not in @valid_eras ->
+        {:error, "Invalid era '#{era}'. Valid eras: #{Enum.join(@valid_eras, ", ")}"}
+
+      is_nil(faction) ->
+        {:error, "Missing required argument: --faction"}
+
+      true ->
+        :ok
     end
   end
 
@@ -216,8 +277,9 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
   defp import_units(units) do
     start_time = System.monotonic_time()
-    
-    results = %{success: 0, errors: 0, error_details: []}
+    log_file = open_error_log()
+
+    results = %{success: 0, errors: 0, error_details: [], log_file: log_file}
 
     final_results =
       units
@@ -228,18 +290,21 @@ defmodule Mix.Tasks.SeedMasterUnits do
         end
 
         case Units.create_or_update_master_unit(unit_data) do
-          {:ok, _unit} -> 
+          {:ok, _unit} ->
             %{acc | success: acc.success + 1}
 
-          {:error, changeset} -> 
+          {:error, changeset} ->
             error_msg = format_changeset_errors(changeset)
+            log_error_details(acc.log_file, unit_data, changeset)
             %{
-              acc | 
+              acc |
               errors: acc.errors + 1,
               error_details: [error_msg | acc.error_details]
             }
         end
       end)
+
+    close_error_log(log_file)
 
     elapsed = System.monotonic_time() - start_time
     elapsed_ms = System.convert_time_unit(elapsed, :native, :millisecond)
@@ -247,7 +312,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
     IO.write("\r")  # Clear progress line
     IO.puts("✅ Import completed in #{elapsed_ms}ms")
 
-    final_results
+    Map.delete(final_results, :log_file)
   end
 
   defp display_import_results(%{success: success, errors: errors, error_details: error_details}) do
@@ -267,6 +332,9 @@ defmodule Mix.Tasks.SeedMasterUnits do
       if length(error_details) > 5 do
         IO.puts("  ... and #{length(error_details) - 5} more errors")
       end
+
+      IO.puts("")
+      IO.puts("📝 Full error details written to: #{error_log_path()}")
     end
 
     total_cached = Units.count_cached_units()
@@ -280,5 +348,46 @@ defmodule Mix.Tasks.SeedMasterUnits do
     changeset.errors
     |> Enum.map(fn {field, {msg, _opts}} -> "#{field}: #{msg}" end)
     |> Enum.join(", ")
+  end
+
+  # Error logging helpers
+
+  defp error_log_path do
+    Path.join([File.cwd!(), "log", "seed_master_units_errors.log"])
+  end
+
+  defp open_error_log do
+    path = error_log_path()
+    File.mkdir_p!(Path.dirname(path))
+
+    {:ok, file} = File.open(path, [:write, :utf8])
+
+    IO.write(file, "# Master Unit Seed Errors - #{DateTime.utc_now()}\n")
+    IO.write(file, "# ================================================\n\n")
+
+    file
+  end
+
+  defp close_error_log(file) do
+    File.close(file)
+  end
+
+  defp log_error_details(file, unit_data, changeset) do
+    unit_name = unit_data[:full_name] || unit_data[:name] || "Unknown"
+    mul_id = unit_data[:mul_id] || "N/A"
+
+    IO.write(file, "## Unit: #{unit_name} (MUL ID: #{mul_id})\n\n")
+
+    IO.write(file, "### Validation Errors:\n")
+    Enum.each(changeset.errors, fn {field, {msg, opts}} ->
+      IO.write(file, "  - #{field}: #{msg} (#{inspect(opts)})\n")
+    end)
+
+    IO.write(file, "\n### Raw Data:\n")
+    Enum.each(unit_data, fn {key, value} ->
+      IO.write(file, "  #{key}: #{inspect(value)}\n")
+    end)
+
+    IO.write(file, "\n---\n\n")
   end
 end

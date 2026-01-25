@@ -81,7 +81,11 @@ defmodule Aces.Units do
   end
 
   @doc """
-  Create or update a master unit from API data
+  Create or update a master unit from API data.
+
+  When updating an existing unit, the factions field is merged rather than replaced,
+  allowing faction availability to accumulate across multiple seed operations with
+  different era/faction combinations.
   """
   def create_or_update_master_unit(attrs) when is_map(attrs) do
     case Repo.get_by(MasterUnit, mul_id: attrs[:mul_id] || attrs["mul_id"]) do
@@ -91,10 +95,27 @@ defmodule Aces.Units do
         |> Repo.insert()
 
       existing ->
+        # Merge factions instead of replacing
+        merged_attrs = merge_faction_attrs(existing, attrs)
+
         existing
-        |> MasterUnit.changeset(attrs)
+        |> MasterUnit.changeset(merged_attrs)
         |> Repo.update()
     end
+  end
+
+  # Merge new faction data with existing faction data
+  defp merge_faction_attrs(existing, attrs) do
+    new_factions = attrs[:factions] || attrs["factions"] || %{}
+    existing_factions = existing.factions || %{}
+
+    # Merge each era's faction list
+    merged_factions =
+      Enum.reduce(new_factions, existing_factions, fn {era, faction_list}, acc ->
+        MasterUnit.merge_factions(acc, era, faction_list)
+      end)
+
+    Map.put(attrs, :factions, merged_factions)
   end
 
   @doc """
@@ -120,8 +141,9 @@ defmodule Aces.Units do
   end
 
   defp search_and_cache_from_api(search_term, opts) do
-    filters = %{name: search_term}
-              |> Map.merge(Enum.into(opts, %{}))
+    # Convert internal filter format to Client-compatible format
+    api_filters = translate_filters_for_api(opts)
+    filters = Map.put(api_filters, :name, search_term)
 
     case Client.fetch_units(filters) do
       {:ok, api_units} ->
@@ -135,6 +157,25 @@ defmodule Aces.Units do
 
       error -> error
     end
+  end
+
+  # Translate internal filter format to MUL API format
+  defp translate_filters_for_api(opts) do
+    Enum.reduce(opts, %{}, fn
+      {:era_faction, {eras, faction}}, acc ->
+        # Convert era_faction tuple to separate eras and factions filters
+        acc
+        |> Map.put(:eras, eras)
+        |> Map.put(:factions, [faction])
+
+      {:unit_type, type}, acc ->
+        # Pass through unit_type as-is (Client handles it)
+        Map.put(acc, :unit_type, type)
+
+      {key, value}, acc ->
+        # Pass through other filters
+        Map.put(acc, key, value)
+    end)
   end
 
   defp fetch_and_cache_unit(_mul_id) do
@@ -191,32 +232,90 @@ defmodule Aces.Units do
     |> apply_filters(rest)
   end
 
-  defp apply_filters(query, [{:era, era} | rest]) when era in ["ilclan", "dark_age", "republic", "clan_invasion"] do
-    era_id = case era do
-      "ilclan" -> 14
-      "dark_age" -> 13
-      "republic" -> 11
-      "clan_invasion" -> 4
-    end
+  # Era ID mapping for filtering by unit introduction era
+  # Note: This filters by when the unit was INTRODUCED, not faction availability
+  @era_ids %{
+    "ilclan" => 257,
+    "dark_age" => 16,
+    "late_republic" => 254,
+    "republic" => 254,
+    "early_republic" => 15,
+    "jihad" => 14,
+    "civil_war" => 247,
+    "clan_invasion" => 13,
+    "late_succession_war" => 256,
+    "early_succession_war" => 11,
+    "star_league" => 10
+  }
 
-    query
-    |> where([u], u.era_id == ^era_id)
-    |> apply_filters(rest)
+  defp apply_filters(query, [{:era, era} | rest]) when is_binary(era) do
+    case Map.get(@era_ids, era) do
+      nil ->
+        apply_filters(query, rest)
+
+      era_id ->
+        query
+        |> where([u], u.era_id == ^era_id)
+        |> apply_filters(rest)
+    end
   end
 
   defp apply_filters(query, [{:faction, faction} | rest]) when is_binary(faction) do
-    # Use PostgreSQL JSON query to check if faction exists in the factions map
+    # Legacy filter - check if faction exists as a top-level key (old format)
+    # or in any era's faction list (new format)
+    lowercase_faction = String.downcase(faction)
+
     query
-    |> where([u], fragment("? \\? ?", u.factions, ^String.downcase(faction)))
+    |> where(
+      [u],
+      fragment(
+        """
+        (? \\? ?) OR
+        EXISTS (
+          SELECT 1 FROM jsonb_each(?) AS era_data
+          WHERE era_data.value @> to_jsonb(?::text)
+        )
+        """,
+        u.factions,
+        ^lowercase_faction,
+        u.factions,
+        ^lowercase_faction
+      )
+    )
     |> apply_filters(rest)
   end
 
   defp apply_filters(query, [{:factions, factions} | rest]) when is_list(factions) do
-    # Check if unit is available to any of the specified factions
+    # Check if unit is available to any of the specified factions (legacy)
     lowercase_factions = Enum.map(factions, &String.downcase/1)
-    
+
     query
     |> where([u], fragment("? \\?| ?", u.factions, ^lowercase_factions))
+    |> apply_filters(rest)
+  end
+
+  defp apply_filters(query, [{:era_faction, {eras, faction}} | rest])
+       when is_list(eras) and is_binary(faction) do
+    # Era-aware faction filter: check if faction is available in ANY of the specified eras
+    # New factions format: %{"ilclan" => ["mercenary", "capellan"], "dark_age" => ["mercenary"]}
+    lowercase_faction = String.downcase(faction)
+
+    query
+    |> where(
+      [u],
+      fragment(
+        """
+        EXISTS (
+          SELECT 1 FROM jsonb_each(?) AS era_data
+          WHERE era_data.key = ANY(?)
+          AND era_data.value @> to_jsonb(?::text)
+        )
+        """,
+        u.factions,
+        ^eras,
+        ^lowercase_faction
+      )
+    )
     |> apply_filters(rest)
   end
 

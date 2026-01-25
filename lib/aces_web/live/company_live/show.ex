@@ -36,6 +36,9 @@ defmodule AcesWeb.CompanyLive.Show do
          |> assign(:unit_search_term, "")
          |> assign(:search_results, [])
          |> assign(:search_loading, false)
+         |> assign(:search_filter_eras, ["ilclan", "dark_age"])
+         |> assign(:search_filter_faction, "mercenary")
+         |> assign(:search_filter_type, nil)
          |> assign(:show_pilot_form, false)
          |> assign(:show_unit_edit, false)
          |> assign(:editing_unit, nil)}
@@ -51,13 +54,18 @@ defmodule AcesWeb.CompanyLive.Show do
   @impl true
   def handle_event("add_unit", _params, socket) do
     company = socket.assigns.company
-    
+
     if company.status == "active" do
-      {:noreply, 
+      {:noreply,
        socket
        |> put_flash(:error, "Cannot add units with PV to finalized companies. Units must be purchased with SP.")}
     else
-      {:noreply, assign(socket, :show_unit_search, true)}
+      {:noreply,
+       socket
+       |> assign(:show_unit_search, true)
+       |> assign(:search_filter_eras, ["ilclan", "dark_age"])
+       |> assign(:search_filter_faction, "mercenary")
+       |> assign(:search_filter_type, nil)}
     end
   end
 
@@ -70,26 +78,50 @@ defmodule AcesWeb.CompanyLive.Show do
      |> assign(:search_loading, false)}
   end
 
+  def handle_event("toggle_era_filter", %{"era" => era}, socket) do
+    current_eras = socket.assigns.search_filter_eras
+
+    new_eras =
+      if era in current_eras do
+        List.delete(current_eras, era)
+      else
+        [era | current_eras]
+      end
+
+    socket = assign(socket, :search_filter_eras, new_eras)
+
+    # Re-run search immediately if we have a search term
+    {:noreply, maybe_run_search(socket)}
+  end
+
+  def handle_event("set_faction_filter", %{"faction" => faction}, socket) do
+    socket = assign(socket, :search_filter_faction, faction)
+
+    # Re-run search immediately if we have a search term
+    {:noreply, maybe_run_search(socket)}
+  end
+
+  def handle_event("set_type_filter", %{"type" => type}, socket) do
+    type_value = if type == "", do: nil, else: type
+    socket = assign(socket, :search_filter_type, type_value)
+
+    # Re-run search immediately if we have a search term
+    {:noreply, maybe_run_search(socket)}
+  end
+
   def handle_event("search_units", %{"value" => search_term}, socket) do
     search_term = String.trim(search_term)
-    require Logger
-    Logger.debug("Search event received for term: '#{search_term}'")
 
     socket =
       if String.length(search_term) >= 2 do
-        Logger.debug("Term length >= 2, starting search...")
-
         socket =
           socket
           |> assign(:unit_search_term, search_term)
           |> assign(:search_loading, true)
 
-        # Perform search asynchronously
-        Logger.debug("Sending perform_search message to self()")
         send(self(), {:perform_search, search_term})
         socket
       else
-        Logger.debug("Term too short, clearing results")
         socket
         |> assign(:unit_search_term, search_term)
         |> assign(:search_results, [])
@@ -206,25 +238,19 @@ defmodule AcesWeb.CompanyLive.Show do
   end
 
   def handle_info({:perform_search, search_term}, socket) do
-    require Logger
-    Logger.debug("handle_info received perform_search for: '#{search_term}'")
-    Logger.debug("Current unit_search_term: '#{socket.assigns.unit_search_term}'")
-
     # Only perform search if the search term hasn't changed
     if socket.assigns.unit_search_term == search_term do
-      Logger.debug("Search terms match, performing search...")
       try do
-        search_results = Units.search_units(search_term, unit_type: "battlemech")
-        Logger.debug("Search returned #{length(search_results)} results")
+        # Build search options from filters
+        opts = build_search_opts(socket.assigns)
+        search_results = Units.search_units(search_term, opts)
 
         {:noreply,
          socket
          |> assign(:search_results, search_results)
          |> assign(:search_loading, false)}
       rescue
-        error ->
-          Logger.error("Search failed for '#{search_term}': #{inspect(error)}")
-
+        _error ->
           {:noreply,
            socket
            |> assign(:search_results, [])
@@ -232,8 +258,52 @@ defmodule AcesWeb.CompanyLive.Show do
            |> put_flash(:error, "Search failed. Please try again.")}
       end
     else
-      Logger.debug("Search terms don't match, ignoring stale search")
       {:noreply, socket}
+    end
+  end
+
+  defp build_search_opts(assigns) do
+    opts = []
+
+    # Add unit type filter if set
+    opts =
+      if assigns.search_filter_type do
+        [{:unit_type, assigns.search_filter_type} | opts]
+      else
+        opts
+      end
+
+    # Add era + faction filter if both are set
+    opts =
+      if length(assigns.search_filter_eras) > 0 and assigns.search_filter_faction do
+        [{:era_faction, {assigns.search_filter_eras, assigns.search_filter_faction}} | opts]
+      else
+        opts
+      end
+
+    opts
+  end
+
+  # Helper to run search immediately when filters change
+  defp maybe_run_search(socket) do
+    search_term = socket.assigns.unit_search_term
+
+    if String.length(search_term) >= 2 do
+      try do
+        opts = build_search_opts(socket.assigns)
+        search_results = Units.search_units(search_term, opts)
+
+        socket
+        |> assign(:search_results, search_results)
+        |> assign(:search_loading, false)
+      rescue
+        _error ->
+          socket
+          |> assign(:search_results, [])
+          |> assign(:search_loading, false)
+      end
+    else
+      socket
     end
   end
 
@@ -656,6 +726,110 @@ defmodule AcesWeb.CompanyLive.Show do
               </p>
             </div>
 
+            <!-- Filters -->
+            <div class="bg-base-200 p-4 rounded-lg mb-4">
+              <div class="flex flex-wrap gap-4">
+                <!-- Era Filter -->
+                <div>
+                  <label class="label">
+                    <span class="label-text font-semibold">Era</span>
+                  </label>
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      phx-click="toggle_era_filter"
+                      phx-value-era="ilclan"
+                      class={"btn btn-sm #{if "ilclan" in @search_filter_eras, do: "btn-primary", else: "btn-outline"}"}
+                    >
+                      ilClan
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="toggle_era_filter"
+                      phx-value-era="dark_age"
+                      class={"btn btn-sm #{if "dark_age" in @search_filter_eras, do: "btn-primary", else: "btn-outline"}"}
+                    >
+                      Dark Age
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="toggle_era_filter"
+                      phx-value-era="late_republic"
+                      class={"btn btn-sm #{if "late_republic" in @search_filter_eras, do: "btn-primary", else: "btn-outline"}"}
+                    >
+                      Late Republic
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="toggle_era_filter"
+                      phx-value-era="early_republic"
+                      class={"btn btn-sm #{if "early_republic" in @search_filter_eras, do: "btn-primary", else: "btn-outline"}"}
+                    >
+                      Early Republic
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="toggle_era_filter"
+                      phx-value-era="clan_invasion"
+                      class={"btn btn-sm #{if "clan_invasion" in @search_filter_eras, do: "btn-primary", else: "btn-outline"}"}
+                    >
+                      Clan Invasion
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Faction Filter -->
+                <div>
+                  <label class="label">
+                    <span class="label-text font-semibold">Faction</span>
+                  </label>
+                  <form phx-change="set_faction_filter">
+                    <select
+                      class="select select-bordered select-sm"
+                      name="faction"
+                    >
+                      <option value="mercenary" selected={@search_filter_faction == "mercenary"}>Mercenary</option>
+                      <optgroup label="Inner Sphere">
+                        <option value="capellan_confederation" selected={@search_filter_faction == "capellan_confederation"}>Capellan Confederation</option>
+                        <option value="draconis_combine" selected={@search_filter_faction == "draconis_combine"}>Draconis Combine</option>
+                        <option value="federated_suns" selected={@search_filter_faction == "federated_suns"}>Federated Suns</option>
+                        <option value="free_worlds_league" selected={@search_filter_faction == "free_worlds_league"}>Free Worlds League</option>
+                        <option value="lyran_commonwealth" selected={@search_filter_faction == "lyran_commonwealth"}>Lyran Commonwealth</option>
+                        <option value="republic_of_the_sphere" selected={@search_filter_faction == "republic_of_the_sphere"}>Republic of the Sphere</option>
+                      </optgroup>
+                      <optgroup label="Clans">
+                        <option value="clan_wolf" selected={@search_filter_faction == "clan_wolf"}>Clan Wolf</option>
+                        <option value="clan_jade_falcon" selected={@search_filter_faction == "clan_jade_falcon"}>Clan Jade Falcon</option>
+                        <option value="clan_ghost_bear" selected={@search_filter_faction == "clan_ghost_bear"}>Clan Ghost Bear</option>
+                        <option value="clan_sea_fox" selected={@search_filter_faction == "clan_sea_fox"}>Clan Sea Fox</option>
+                        <option value="clan_hell_horses" selected={@search_filter_faction == "clan_hell_horses"}>Clan Hell's Horses</option>
+                      </optgroup>
+                    </select>
+                  </form>
+                </div>
+
+                <!-- Unit Type Filter -->
+                <div>
+                  <label class="label">
+                    <span class="label-text font-semibold">Unit Type</span>
+                  </label>
+                  <form phx-change="set_type_filter">
+                    <select
+                      class="select select-bordered select-sm"
+                      name="type"
+                    >
+                      <option value="" selected={@search_filter_type == nil}>All Types</option>
+                      <option value="battlemech" selected={@search_filter_type == "battlemech"}>BattleMech</option>
+                      <option value="combat_vehicle" selected={@search_filter_type == "combat_vehicle"}>Combat Vehicle</option>
+                      <option value="battle_armor" selected={@search_filter_type == "battle_armor"}>Battle Armor</option>
+                      <option value="conventional_infantry" selected={@search_filter_type == "conventional_infantry"}>Infantry</option>
+                      <option value="protomech" selected={@search_filter_type == "protomech"}>ProtoMech</option>
+                    </select>
+                  </form>
+                </div>
+              </div>
+            </div>
+
             <div class="divider"></div>
 
             <div class="max-h-96 overflow-y-auto">
@@ -687,6 +861,26 @@ defmodule AcesWeb.CompanyLive.Show do
                               </div>
                               <%= if unit.role do %>
                                 <p class="text-sm text-gray-600 mt-1">Role: {unit.role}</p>
+                              <% end %>
+                              <!-- Alpha Strike Stats -->
+                              <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-gray-600">
+                                <%= if unit.bf_move do %>
+                                  <span title="Movement"><span class="font-semibold">MV:</span> {unit.bf_move}</span>
+                                <% end %>
+                                <%= if unit.bf_armor || unit.bf_structure do %>
+                                  <span title="Armor / Structure"><span class="font-semibold">A/S:</span> {unit.bf_armor || 0}/{unit.bf_structure || 0}</span>
+                                <% end %>
+                                <%= if unit.bf_damage_short || unit.bf_damage_medium || unit.bf_damage_long do %>
+                                  <span title="Damage (Short/Medium/Long)"><span class="font-semibold">DMG:</span> {unit.bf_damage_short || "-"}/{unit.bf_damage_medium || "-"}/{unit.bf_damage_long || "-"}</span>
+                                <% end %>
+                                <%= if unit.bf_overheat && unit.bf_overheat > 0 do %>
+                                  <span title="Overheat"><span class="font-semibold">OV:</span> {unit.bf_overheat}</span>
+                                <% end %>
+                              </div>
+                              <%= if unit.bf_abilities && unit.bf_abilities != "" do %>
+                                <p class="text-xs text-gray-500 mt-1" title="Special Abilities">
+                                  <span class="font-semibold">Specials:</span> {unit.bf_abilities}
+                                </p>
                               <% end %>
                               <%= if unit.factions && map_size(unit.factions) > 0 do %>
                                 <div class="flex gap-1 mt-2">

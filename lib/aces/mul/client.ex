@@ -30,7 +30,8 @@ defmodule Aces.MUL.Client do
       {:error, :rate_limited} ->
         {:error, "Rate limited - please try again later"}
 
-      {:error, %{status: status}} when status >= 400 ->
+      {:error, %{status: status, body: body}} ->
+        Logger.warning("MUL API error #{status}: #{inspect(body)}")
         {:error, "MUL API returned error status #{status}"}
 
       {:error, reason} ->
@@ -111,9 +112,17 @@ defmodule Aces.MUL.Client do
 
     set_last_request_time()
 
-    Logger.debug("Making MUL API request to: #{url}")
+    Logger.info("MUL API request: #{url}")
+    Logger.info("MUL API filters: #{inspect(filters)}")
 
     case Req.get(url, receive_timeout: @request_timeout) do
+      {:ok, %{status: 429}} ->
+        Logger.warning("MUL API rate limited us (429)")
+        {:error, :rate_limited}
+
+      {:ok, %{status: status} = response} when status >= 400 ->
+        {:error, %{status: status, body: response.body}}
+
       {:ok, response} ->
         # Ensure consistent body parsing - decode JSON if it's a string
         body = case response.body do
@@ -125,7 +134,9 @@ defmodule Aces.MUL.Client do
           body -> body  # Already parsed or other format
         end
         {:ok, %{response | body: body}}
-      error -> error
+
+      error ->
+        error
     end
   end
 
@@ -143,16 +154,43 @@ defmodule Aces.MUL.Client do
     params =
       filters
       |> Enum.map(fn {key, value} -> encode_param(key, value) end)
-      |> Enum.reject(&is_nil/1)
+      |> Enum.reject(fn p -> is_nil(p) or p == "" end)
       |> Enum.join("&")
 
     if params == "", do: "", else: "?" <> params
   end
 
-  defp encode_param(:era, "ilclan"), do: "AvailableEras=14"
-  defp encode_param(:era, "dark_age"), do: "AvailableEras=13"
-  defp encode_param(:era, "republic"), do: "AvailableEras=11"
-  defp encode_param(:era, "clan_invasion"), do: "AvailableEras=4"
+  # Era IDs from https://masterunitlist.azurewebsites.net/Era/Index
+  # IMPORTANT: These must match the actual MUL era IDs
+  @era_ids %{
+    "ilclan" => 257,
+    "dark_age" => 16,
+    "late_republic" => 254,
+    "republic" => 254,  # Alias for late_republic
+    "early_republic" => 15,
+    "jihad" => 14,
+    "civil_war" => 247,
+    "clan_invasion" => 13,
+    "late_succession_war" => 256,
+    "early_succession_war" => 11,
+    "star_league" => 10
+  }
+
+  # Single era
+  defp encode_param(:era, era) when is_binary(era) do
+    case Map.get(@era_ids, era) do
+      nil -> nil
+      id -> "AvailableEras=#{id}"
+    end
+  end
+
+  # Multiple eras (list)
+  defp encode_param(:eras, eras) when is_list(eras) do
+    eras
+    |> Enum.map(&Map.get(@era_ids, &1))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map_join("&", fn id -> "AvailableEras=#{id}" end)
+  end
 
   defp encode_param(:types, types) when is_list(types) do
     Enum.map_join(types, "&", fn t -> "Types=#{t}" end)
@@ -253,28 +291,28 @@ defmodule Aces.MUL.Client do
 
   defp normalize_unit(api_data, faction_context) do
     %{
-      mul_id: api_data["Id"],
+      mul_id: safe_integer(api_data["Id"]),
       name: api_data["Class"] || api_data["Name"],
       variant: api_data["Variant"],
       full_name: api_data["Name"],
       unit_type: map_unit_type(extract_type_name(api_data["Type"])),
-      tonnage: api_data["Tonnage"],
-      point_value: api_data["BFPointValue"],
-      battle_value: api_data["BattleValue"],
+      tonnage: safe_integer(api_data["Tonnage"]),
+      point_value: safe_integer(api_data["BFPointValue"]),
+      battle_value: safe_integer(api_data["BattleValue"]),
       technology_base: extract_technology(api_data["Technology"]),
       rules_level: api_data["Rules"],
       role: extract_role(api_data["Role"]),
-      cost: api_data["Cost"],
-      date_introduced: api_data["DateIntroduced"],
-      era_id: api_data["EraId"],
+      cost: safe_integer(api_data["Cost"]),
+      date_introduced: safe_integer(api_data["DateIntroduced"]),
+      era_id: safe_integer(api_data["EraId"]),
       bf_move: api_data["BFMove"],
-      bf_size: api_data["BFSize"],
-      bf_armor: api_data["BFArmor"],
-      bf_structure: api_data["BFStructure"],
+      bf_size: safe_integer(api_data["BFSize"]),
+      bf_armor: safe_integer(api_data["BFArmor"]),
+      bf_structure: safe_integer(api_data["BFStructure"]),
       bf_damage_short: to_string(api_data["BFDamageShort"] || ""),
       bf_damage_medium: to_string(api_data["BFDamageMedium"] || ""),
       bf_damage_long: to_string(api_data["BFDamageLong"] || ""),
-      bf_overheat: api_data["BFOverheat"],
+      bf_overheat: safe_integer(api_data["BFOverheat"]),
       bf_abilities: api_data["BFAbilities"],
       image_url: api_data["ImageUrl"],
       is_published: api_data["IsPublished"],
@@ -320,23 +358,36 @@ defmodule Aces.MUL.Client do
   
   defp parse_factions(_), do: %{}
 
-  # Build faction context from filters to store with units
+  # Build era-aware faction context from filters to store with units
+  # Returns format: %{"ilclan" => ["mercenary", "capellan_confederation"]}
   defp build_faction_context(filters) do
-    case Map.get(filters, :factions) do
-      factions when is_list(factions) ->
-        # Convert faction names to a map indicating availability
-        factions
-        |> Enum.reduce(%{}, fn faction, acc ->
-          Map.put(acc, String.downcase(faction), true)
-        end)
-      
-      _ -> %{}
+    # Support both :era (single) and :eras (multiple)
+    eras = case {Map.get(filters, :era), Map.get(filters, :eras)} do
+      {nil, eras} when is_list(eras) -> eras
+      {era, _} when is_binary(era) -> [era]
+      _ -> []
+    end
+
+    factions = Map.get(filters, :factions, [])
+
+    if length(eras) > 0 and length(factions) > 0 do
+      faction_list = Enum.map(factions, &String.downcase/1)
+      # Create entry for each era
+      Enum.reduce(eras, %{}, fn era, acc ->
+        Map.put(acc, era, faction_list)
+      end)
+    else
+      %{}
     end
   end
 
   # Merge API faction data with context from our request filters
+  # Both should now be in era-aware format: %{"era" => ["faction1", "faction2"]}
   defp merge_faction_data(api_factions, filter_context) when is_map(api_factions) and is_map(filter_context) do
-    Map.merge(api_factions, filter_context)
+    # Deep merge: combine faction lists for each era
+    Map.merge(api_factions, filter_context, fn _era, api_list, filter_list ->
+      Enum.uniq((api_list || []) ++ (filter_list || []))
+    end)
   end
 
   defp merge_faction_data(_api_factions, filter_context) when is_map(filter_context) do
@@ -363,4 +414,17 @@ defmodule Aces.MUL.Client do
   defp extract_type_name(%{"Name" => name}), do: name
   defp extract_type_name(name) when is_binary(name), do: name
   defp extract_type_name(_), do: nil
+
+  # Safely parse integer values from API responses
+  # Handles nil, integers, floats, and string representations
+  defp safe_integer(nil), do: nil
+  defp safe_integer(val) when is_integer(val), do: val
+  defp safe_integer(val) when is_float(val), do: trunc(val)
+  defp safe_integer(val) when is_binary(val) do
+    case Integer.parse(val) do
+      {int, _} -> int
+      :error -> nil
+    end
+  end
+  defp safe_integer(_), do: nil
 end
