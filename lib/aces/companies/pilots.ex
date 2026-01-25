@@ -3,6 +3,9 @@ defmodule Aces.Companies.Pilots do
   Pilot lifecycle and progression management for mercenary companies.
   """
 
+  # Dialyzer false positive: Ecto.Multi opaque type warnings when piping
+  @dialyzer :no_opaque
+
   import Ecto.Query, warn: false
   alias Aces.Repo
 

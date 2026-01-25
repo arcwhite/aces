@@ -6,6 +6,9 @@ defmodule Aces.Companies do
   For pilot management, see `Aces.Companies.Pilots`.
   """
 
+  # Dialyzer false positive: Ecto.Multi opaque type warnings when piping
+  @dialyzer :no_opaque
+
   import Ecto.Query, warn: false
   alias Aces.Repo
 

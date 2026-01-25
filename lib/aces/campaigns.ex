@@ -3,6 +3,9 @@ defmodule Aces.Campaigns do
   The Campaigns context - business logic for campaign and sortie management
   """
 
+  # Dialyzer false positive: Ecto.Multi opaque type warnings when piping
+  @dialyzer :no_opaque
+
   import Ecto.Query, warn: false
   alias Aces.Repo
 

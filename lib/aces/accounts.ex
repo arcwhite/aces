@@ -3,6 +3,9 @@ defmodule Aces.Accounts do
   The Accounts context.
   """
 
+  # Dialyzer false positive: Ecto.Multi opaque type warnings when piping
+  @dialyzer :no_opaque
+
   import Ecto.Query, warn: false
   alias Aces.Repo
 

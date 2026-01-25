@@ -3,6 +3,10 @@ defmodule AcesWeb.SortieLive.Complete.SpendSP do
   Step 5 of sortie completion wizard: Allocate earned SP to pilots.
   Pilots must spend all their available SP before proceeding.
   """
+
+  # Dialyzer false positive: Ecto.Multi opaque type warnings when piping
+  @dialyzer :no_opaque
+
   use AcesWeb, :live_view
 
   alias Aces.{Companies, Campaigns}
