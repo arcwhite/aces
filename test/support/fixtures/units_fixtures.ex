@@ -72,11 +72,47 @@ defmodule Aces.UnitsFixtures do
     attrs
     |> Enum.into(%{
       name: "Demolisher",
-      variant: "DMO-1V", 
+      variant: "DMO-1V",
       full_name: "Demolisher DMO-1V",
       unit_type: "combat_vehicle",
       tonnage: 80,
       point_value: 36
+    })
+    |> units_master_unit_fixture()
+  end
+
+  @doc """
+  Creates an OMNI unit (has OMNI in bf_abilities).
+  """
+  def omni_mech_fixture(attrs \\ %{}) do
+    attrs
+    |> Enum.into(%{
+      name: "Mad Cat",
+      variant: "Prime",
+      full_name: "Mad Cat Prime",
+      unit_type: "battlemech",
+      tonnage: 75,
+      point_value: 45,
+      bf_size: 3,
+      bf_abilities: "OMNI, CASE, ENE"
+    })
+    |> units_master_unit_fixture()
+  end
+
+  @doc """
+  Creates an OMNI variant with the same chassis name but different variant.
+  """
+  def omni_variant_fixture(chassis_name, attrs \\ %{}) do
+    attrs
+    |> Enum.into(%{
+      name: chassis_name,
+      variant: "A",
+      full_name: "#{chassis_name} A",
+      unit_type: "battlemech",
+      tonnage: 75,
+      point_value: 42,
+      bf_size: 3,
+      bf_abilities: "OMNI, CASE"
     })
     |> units_master_unit_fixture()
   end

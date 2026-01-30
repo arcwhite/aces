@@ -271,11 +271,299 @@ defmodule Aces.CampaignsTest do
 
     test "returns sortie with preloaded associations", %{sortie: sortie, campaign: campaign} do
       retrieved_sortie = Campaigns.get_sortie!(sortie.id)
-      
+
       assert retrieved_sortie.id == sortie.id
       assert retrieved_sortie.campaign.id == campaign.id
       assert Ecto.assoc_loaded?(retrieved_sortie.campaign)
       assert Ecto.assoc_loaded?(retrieved_sortie.deployments)
+    end
+  end
+
+  describe "calculate_pending_refit_cost/3" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+      pilot = pilot_fixture(company: company)
+
+      # Create OMNI unit and variants
+      omni_unit = omni_mech_fixture(%{name: "Timber Wolf", variant: "Prime", point_value: 45, bf_size: 3})
+      variant_a = omni_variant_fixture("Timber Wolf", %{variant: "A", point_value: 42})
+      variant_b = omni_variant_fixture("Timber Wolf", %{variant: "B", point_value: 50})
+
+      company_unit = company_unit_fixture(company: company, master_unit: omni_unit)
+
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "OMNI Test",
+        "pv_limit" => 200
+      })
+
+      {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+        company_unit_id: company_unit.id,
+        pilot_id: pilot.id
+      })
+
+      sortie = Campaigns.get_sortie!(sortie.id)
+      deployment = hd(sortie.deployments)
+
+      omni_variants = %{deployment.id => [omni_unit, variant_a, variant_b]}
+
+      %{
+        sortie: sortie,
+        deployment: deployment,
+        omni_unit: omni_unit,
+        variant_a: variant_a,
+        variant_b: variant_b,
+        omni_variants: omni_variants
+      }
+    end
+
+    test "returns 0 when no pending changes", %{sortie: sortie, omni_variants: omni_variants} do
+      pending_changes = %{}
+      assert Campaigns.calculate_pending_refit_cost(sortie, pending_changes, omni_variants) == 0
+    end
+
+    test "calculates size*5 cost for lower PV variant", %{
+      sortie: sortie,
+      deployment: deployment,
+      variant_a: variant_a,
+      omni_variants: omni_variants
+    } do
+      # variant_a has PV 42, which is less than Prime's 45
+      pending_changes = %{deployment.id => variant_a.id}
+      # Cost should be bf_size * 5 = 3 * 5 = 15
+      assert Campaigns.calculate_pending_refit_cost(sortie, pending_changes, omni_variants) == 15
+    end
+
+    test "calculates size*40 cost for higher PV variant", %{
+      sortie: sortie,
+      deployment: deployment,
+      variant_b: variant_b,
+      omni_variants: omni_variants
+    } do
+      # variant_b has PV 50, which is more than Prime's 45
+      pending_changes = %{deployment.id => variant_b.id}
+      # Cost should be bf_size * 40 = 3 * 40 = 120
+      assert Campaigns.calculate_pending_refit_cost(sortie, pending_changes, omni_variants) == 120
+    end
+  end
+
+  describe "calculate_effective_deployed_pv/3" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+      pilot = pilot_fixture(company: company)
+
+      # Create OMNI unit and variants
+      omni_unit = omni_mech_fixture(%{name: "Dire Wolf", variant: "Prime", point_value: 60, bf_size: 4})
+      variant_a = omni_variant_fixture("Dire Wolf", %{variant: "A", point_value: 55})
+
+      company_unit = company_unit_fixture(company: company, master_unit: omni_unit)
+
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "PV Test",
+        "pv_limit" => 200
+      })
+
+      {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+        company_unit_id: company_unit.id,
+        pilot_id: pilot.id
+      })
+
+      sortie = Campaigns.get_sortie!(sortie.id)
+      deployment = hd(sortie.deployments)
+
+      omni_variants = %{deployment.id => [omni_unit, variant_a]}
+
+      %{
+        sortie: sortie,
+        deployment: deployment,
+        omni_unit: omni_unit,
+        variant_a: variant_a,
+        omni_variants: omni_variants
+      }
+    end
+
+    test "returns base PV when no pending changes", %{
+      sortie: sortie,
+      omni_unit: omni_unit,
+      omni_variants: omni_variants
+    } do
+      pending_changes = %{}
+      # Should return the original PV of 60
+      assert Campaigns.calculate_effective_deployed_pv(sortie, pending_changes, omni_variants) == omni_unit.point_value
+    end
+
+    test "returns new variant PV when pending change exists", %{
+      sortie: sortie,
+      deployment: deployment,
+      variant_a: variant_a,
+      omni_variants: omni_variants
+    } do
+      pending_changes = %{deployment.id => variant_a.id}
+      # Should return variant_a's PV of 55
+      assert Campaigns.calculate_effective_deployed_pv(sortie, pending_changes, omni_variants) == variant_a.point_value
+    end
+  end
+
+  describe "start_sortie_with_refits/5" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company, %{"warchest_balance" => 5000})
+      pilot = pilot_fixture(company: company)
+
+      # Create OMNI unit and variant
+      omni_unit = omni_mech_fixture(%{name: "Summoner", variant: "Prime", point_value: 45, bf_size: 3})
+      variant_a = omni_variant_fixture("Summoner", %{variant: "A", point_value: 42})
+
+      company_unit = company_unit_fixture(company: company, master_unit: omni_unit)
+
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "Start Test",
+        "pv_limit" => 100
+      })
+
+      {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+        company_unit_id: company_unit.id,
+        pilot_id: pilot.id
+      })
+
+      sortie = Campaigns.get_sortie!(sortie.id)
+      deployment = hd(sortie.deployments)
+
+      omni_variants = %{deployment.id => [omni_unit, variant_a]}
+
+      %{
+        sortie: sortie,
+        deployment: deployment,
+        campaign: campaign,
+        company: company,
+        pilot: pilot,
+        omni_unit: omni_unit,
+        variant_a: variant_a,
+        omni_variants: omni_variants
+      }
+    end
+
+    test "starts sortie without refits successfully", %{
+      sortie: sortie,
+      campaign: campaign,
+      pilot: pilot,
+      omni_variants: omni_variants
+    } do
+      pending_changes = %{}
+
+      assert {:ok, updated_sortie, updated_campaign} =
+               Campaigns.start_sortie_with_refits(sortie, pending_changes, omni_variants, pilot.id, campaign)
+
+      assert updated_sortie.status == "in_progress"
+      assert updated_sortie.force_commander_id == pilot.id
+      # No refits, so warchest should be unchanged
+      assert updated_campaign.warchest_balance == campaign.warchest_balance
+    end
+
+    test "starts sortie with refits and deducts cost", %{
+      sortie: sortie,
+      deployment: deployment,
+      campaign: campaign,
+      pilot: pilot,
+      variant_a: variant_a,
+      omni_variants: omni_variants
+    } do
+      pending_changes = %{deployment.id => variant_a.id}
+      # Cost should be bf_size * 5 = 3 * 5 = 15 (lower PV variant)
+
+      assert {:ok, updated_sortie, updated_campaign} =
+               Campaigns.start_sortie_with_refits(sortie, pending_changes, omni_variants, pilot.id, campaign)
+
+      assert updated_sortie.status == "in_progress"
+      assert updated_campaign.warchest_balance == campaign.warchest_balance - 15
+    end
+
+    test "fails when force commander not deployed", %{
+      sortie: sortie,
+      campaign: campaign,
+      company: company,
+      omni_variants: omni_variants
+    } do
+      # Create a pilot that is NOT deployed
+      other_pilot = pilot_fixture(company: company, name: "Other Pilot")
+
+      assert {:error, message} =
+               Campaigns.start_sortie_with_refits(sortie, %{}, omni_variants, other_pilot.id, campaign)
+
+      assert message =~ "Force Commander must be one of the deployed pilots"
+    end
+
+    test "fails when insufficient warchest for refits", _ctx do
+      # Create a separate company/campaign with very low warchest
+      user = user_fixture()
+      poor_company = company_fixture(user: user)
+      {:ok, poor_campaign} =
+        Campaigns.create_campaign(poor_company, %{
+          "name" => "Poor Campaign",
+          "warchest_balance" => 5
+        })
+
+      poor_pilot = pilot_fixture(company: poor_company)
+
+      # Create sortie for the poor campaign
+      {:ok, poor_sortie} =
+        Campaigns.create_sortie(poor_campaign, %{
+          "mission_number" => "1",
+          "name" => "Poor Test",
+          "pv_limit" => 100
+        })
+
+      # Create deployment
+      omni_unit = omni_mech_fixture(%{name: "Hellbringer", variant: "Prime", point_value: 40, bf_size: 3})
+      variant_high = omni_variant_fixture("Hellbringer", %{variant: "C", point_value: 50})
+
+      company_unit = company_unit_fixture(company: poor_company, master_unit: omni_unit)
+
+      {:ok, _dep} = Campaigns.create_deployment(poor_sortie, %{
+        company_unit_id: company_unit.id,
+        pilot_id: poor_pilot.id
+      })
+
+      poor_sortie = Campaigns.get_sortie!(poor_sortie.id)
+      poor_deployment = hd(poor_sortie.deployments)
+
+      poor_omni_variants = %{poor_deployment.id => [omni_unit, variant_high]}
+      pending_changes = %{poor_deployment.id => variant_high.id}
+
+      # Higher PV variant costs size*40 = 3*40 = 120 SP
+
+      assert {:error, message} =
+               Campaigns.start_sortie_with_refits(poor_sortie, pending_changes, poor_omni_variants, poor_pilot.id, poor_campaign)
+
+      assert message =~ "Insufficient warchest"
+    end
+
+    test "fails when PV exceeds limit after refits", %{
+      sortie: sortie,
+      deployment: deployment,
+      campaign: campaign,
+      pilot: pilot,
+      omni_unit: _omni_unit,
+      omni_variants: omni_variants
+    } do
+      # Create a high PV variant that would exceed the limit
+      high_pv_variant = omni_variant_fixture("Summoner", %{variant: "X", point_value: 150})
+      updated_variants = Map.update!(omni_variants, deployment.id, fn variants -> variants ++ [high_pv_variant] end)
+      pending_changes = %{deployment.id => high_pv_variant.id}
+
+      # Sortie PV limit is 100, variant has PV 150
+      assert {:error, message} =
+               Campaigns.start_sortie_with_refits(sortie, pending_changes, updated_variants, pilot.id, campaign)
+
+      assert message =~ "Deployed PV"
+      assert message =~ "exceeds sortie limit"
     end
   end
 end

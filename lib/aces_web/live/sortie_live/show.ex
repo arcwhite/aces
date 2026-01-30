@@ -117,36 +117,27 @@ defmodule AcesWeb.SortieLive.Show do
   def handle_event("start_sortie", _params, socket) do
     with :ok <- require_can_edit(socket),
          :ok <- require_sortie_status(socket, "setup"),
-         {:ok, force_commander_id} <- require_force_commander_selected(socket),
-         :ok <- require_force_commander_deployed(socket, force_commander_id),
-         :ok <- require_no_in_progress_sorties(socket),
-         :ok <- require_sufficient_warchest_for_refits(socket),
-         :ok <- require_pv_within_limit(socket) do
-
-      # First commit all pending variant changes
-      pending_changes = socket.assigns.pending_variant_changes
+         {:ok, force_commander_id} <- require_force_commander_selected(socket) do
+      # Delegate all validation and business logic to the context
       campaign = Campaigns.get_campaign!(socket.assigns.campaign.id)
 
-      case commit_pending_variant_changes(socket, pending_changes, campaign) do
-        {:ok, updated_campaign} ->
-          # Now start the sortie
-          case Campaigns.start_sortie(socket.assigns.sortie, force_commander_id) do
-            {:ok, updated_sortie} ->
-              {:noreply,
-               socket
-               |> assign(:sortie, updated_sortie)
-               |> assign(:campaign, updated_campaign)
-               |> assign(:pending_variant_changes, %{})
-               |> put_flash(:info, "Sortie started successfully!")}
-
-            {:error, %Ecto.Changeset{} = changeset} ->
-              {:noreply,
-               socket
-               |> put_flash(:error, "Cannot start sortie: #{format_changeset_errors(changeset)}")}
-          end
+      case Campaigns.start_sortie_with_refits(
+             socket.assigns.sortie,
+             socket.assigns.pending_variant_changes,
+             socket.assigns.omni_variants,
+             force_commander_id,
+             campaign
+           ) do
+        {:ok, updated_sortie, updated_campaign} ->
+          {:noreply,
+           socket
+           |> assign(:sortie, updated_sortie)
+           |> assign(:campaign, updated_campaign)
+           |> assign(:pending_variant_changes, %{})
+           |> put_flash(:info, "Sortie started successfully!")}
 
         {:error, message} ->
-          {:noreply, put_flash(socket, :error, message)}
+          {:noreply, put_flash(socket, :error, "Cannot start sortie: #{message}")}
       end
     else
       {:error, message} -> {:noreply, put_flash(socket, :error, message)}
@@ -294,31 +285,16 @@ defmodule AcesWeb.SortieLive.Show do
   end
 
   # Calculate total cost of all pending variant changes
+  # Delegates to Campaigns context for business logic
   # Accepts either a socket or assigns map
   defp calculate_pending_refit_cost(%{assigns: assigns}), do: calculate_pending_refit_cost(assigns)
 
   defp calculate_pending_refit_cost(assigns) do
-    pending = assigns.pending_variant_changes
-    deployments = assigns.sortie.deployments
-    omni_variants = assigns.omni_variants
-
-    Enum.reduce(pending, 0, fn {deployment_id, new_variant_id}, total ->
-      deployment = Enum.find(deployments, &(&1.id == deployment_id))
-
-      if deployment do
-        variants = Map.get(omni_variants, deployment_id, [])
-        current_unit = deployment.company_unit.master_unit
-        new_unit = Enum.find(variants, &(&1.id == new_variant_id))
-
-        if new_unit do
-          total + Campaigns.calculate_omni_refit_cost(current_unit, new_unit)
-        else
-          total
-        end
-      else
-        total
-      end
-    end)
+    Campaigns.calculate_pending_refit_cost(
+      assigns.sortie,
+      assigns.pending_variant_changes,
+      assigns.omni_variants
+    )
   end
 
   # Get the selected variant ID for a deployment (pending or current)
@@ -327,34 +303,16 @@ defmodule AcesWeb.SortieLive.Show do
   end
 
   # Calculate effective deployed PV considering pending variant changes
+  # Delegates to Campaigns context for business logic
   # Accepts either a socket or assigns map
   defp calculate_effective_deployed_pv(%{assigns: assigns}), do: calculate_effective_deployed_pv(assigns)
 
   defp calculate_effective_deployed_pv(assigns) do
-    pending = assigns.pending_variant_changes
-    omni_variants = assigns.omni_variants
-    deployments = assigns.sortie.deployments
-
-    Enum.reduce(deployments, 0, fn deployment, total ->
-      base_pv = deployment.company_unit.master_unit.point_value || 0
-
-      # Check if this deployment has a pending variant change
-      case Map.get(pending, deployment.id) do
-        nil ->
-          total + base_pv
-
-        new_variant_id ->
-          # Find the new variant's PV
-          variants = Map.get(omni_variants, deployment.id, [])
-          new_variant = Enum.find(variants, &(&1.id == new_variant_id))
-
-          if new_variant do
-            total + (new_variant.point_value || 0)
-          else
-            total + base_pv
-          end
-      end
-    end)
+    Campaigns.calculate_effective_deployed_pv(
+      assigns.sortie,
+      assigns.pending_variant_changes,
+      assigns.omni_variants
+    )
   end
 
 
@@ -379,70 +337,6 @@ defmodule AcesWeb.SortieLive.Show do
     {:error, "Please select a Force Commander"}
   end
   defp require_force_commander_selected(%{assigns: %{selected_force_commander_id: id}}), do: {:ok, id}
-
-  defp require_force_commander_deployed(socket, force_commander_id) do
-    deployed_pilot_ids =
-      socket.assigns.sortie.deployments
-      |> Enum.filter(& &1.pilot_id)
-      |> Enum.map(& &1.pilot_id)
-
-    if force_commander_id in deployed_pilot_ids do
-      :ok
-    else
-      {:error, "Force Commander must be one of the deployed pilots"}
-    end
-  end
-
-  defp require_no_in_progress_sorties(socket) do
-    campaign = Campaigns.get_campaign!(socket.assigns.campaign.id)
-    in_progress_sorties = Enum.filter(campaign.sorties, &(&1.status == "in_progress"))
-
-    if length(in_progress_sorties) > 0 do
-      {:error, "Only one sortie can be in progress at a time. Complete the current sortie before starting a new one."}
-    else
-      :ok
-    end
-  end
-
-  defp require_sufficient_warchest_for_refits(socket) do
-    total_cost = calculate_pending_refit_cost(socket)
-    warchest = socket.assigns.campaign.warchest_balance
-
-    if total_cost > warchest do
-      {:error, "Insufficient warchest for OMNI refits. Need #{total_cost} SP, have #{warchest} SP."}
-    else
-      :ok
-    end
-  end
-
-  defp require_pv_within_limit(socket) do
-    effective_pv = calculate_effective_deployed_pv(socket.assigns)
-    pv_limit = socket.assigns.sortie.pv_limit
-
-    if effective_pv > pv_limit do
-      {:error, "Deployed PV (#{effective_pv}) exceeds sortie limit (#{pv_limit}). Adjust OMNI variants to reduce PV."}
-    else
-      :ok
-    end
-  end
-
-  # Commits all pending variant changes to the database
-  # Returns {:ok, updated_campaign} or {:error, message}
-  defp commit_pending_variant_changes(_socket, pending_changes, campaign) when map_size(pending_changes) == 0 do
-    {:ok, campaign}
-  end
-
-  defp commit_pending_variant_changes(socket, pending_changes, campaign) do
-    case Campaigns.commit_omni_refits(
-           socket.assigns.sortie,
-           pending_changes,
-           socket.assigns.omni_variants,
-           campaign
-         ) do
-      {:ok, updated_campaign} -> {:ok, updated_campaign}
-      {:error, reason} -> {:error, reason}
-    end
-  end
 
   defp extract_damage_params(params) do
     case Enum.find_value(params, fn
@@ -1141,12 +1035,6 @@ defmodule AcesWeb.SortieLive.Show do
       "killed" -> "select-error"
       _ -> ""
     end
-  end
-
-  defp format_changeset_errors(changeset) do
-    changeset.errors
-    |> Enum.map(fn {field, {msg, _opts}} -> "#{field} #{msg}" end)
-    |> Enum.join(", ")
   end
 
   defp format_damage_status(status) do

@@ -798,6 +798,176 @@ defmodule Aces.Campaigns do
   end
 
   @doc """
+  Calculate the total SP cost for all pending OMNI variant changes.
+
+  Takes a sortie with deployments, a map of deployment_id => new_variant_id,
+  and a map of deployment_id => [available variants].
+
+  Returns the total SP cost as an integer.
+  """
+  def calculate_pending_refit_cost(%Sortie{} = sortie, pending_changes, omni_variants)
+      when is_map(pending_changes) and is_map(omni_variants) do
+    Enum.reduce(pending_changes, 0, fn {deployment_id, new_variant_id}, total ->
+      deployment = Enum.find(sortie.deployments, &(&1.id == deployment_id))
+
+      if deployment do
+        variants = Map.get(omni_variants, deployment_id, [])
+        current_unit = deployment.company_unit.master_unit
+        new_unit = Enum.find(variants, &(&1.id == new_variant_id))
+
+        if new_unit do
+          total + calculate_omni_refit_cost(current_unit, new_unit)
+        else
+          total
+        end
+      else
+        total
+      end
+    end)
+  end
+
+  @doc """
+  Calculate effective deployed PV considering pending OMNI variant changes.
+
+  Takes a sortie with deployments, a map of deployment_id => new_variant_id,
+  and a map of deployment_id => [available variants].
+
+  Returns the total PV as an integer, using pending variant PVs where applicable.
+  """
+  def calculate_effective_deployed_pv(%Sortie{} = sortie, pending_changes, omni_variants)
+      when is_map(pending_changes) and is_map(omni_variants) do
+    Enum.reduce(sortie.deployments, 0, fn deployment, total ->
+      base_pv = deployment.company_unit.master_unit.point_value || 0
+
+      case Map.get(pending_changes, deployment.id) do
+        nil ->
+          total + base_pv
+
+        new_variant_id ->
+          variants = Map.get(omni_variants, deployment.id, [])
+          new_variant = Enum.find(variants, &(&1.id == new_variant_id))
+
+          if new_variant do
+            total + (new_variant.point_value || 0)
+          else
+            total + base_pv
+          end
+      end
+    end)
+  end
+
+  @doc """
+  Starts a sortie with OMNI refits, performing all validations and updates atomically.
+
+  This function:
+  1. Validates no other sortie is in progress for the campaign
+  2. Validates the force commander is deployed
+  3. Validates sufficient warchest for OMNI refits
+  4. Validates effective PV is within the sortie limit
+  5. Commits all pending variant changes
+  6. Starts the sortie
+
+  Returns {:ok, updated_sortie, updated_campaign} or {:error, message}.
+  """
+  def start_sortie_with_refits(
+        %Sortie{} = sortie,
+        pending_changes,
+        omni_variants,
+        force_commander_id,
+        %Campaign{id: campaign_id}
+      )
+      when is_map(pending_changes) and is_map(omni_variants) do
+    # Re-fetch campaign to ensure we have fresh data for validations
+    campaign = get_campaign!(campaign_id)
+
+    with :ok <- validate_no_in_progress_sorties(campaign, sortie.id),
+         :ok <- validate_force_commander_deployed(sortie, force_commander_id),
+         :ok <- validate_warchest_for_refits(sortie, pending_changes, omni_variants, campaign),
+         :ok <- validate_pv_within_limit(sortie, pending_changes, omni_variants) do
+      # Commit variant changes first (if any)
+      case commit_variant_changes_if_any(sortie, pending_changes, omni_variants, campaign) do
+        {:ok, updated_campaign} ->
+          # Now start the sortie
+          case start_sortie(sortie, force_commander_id) do
+            {:ok, updated_sortie} ->
+              {:ok, updated_sortie, updated_campaign}
+
+            {:error, changeset} when is_struct(changeset, Ecto.Changeset) ->
+              {:error, format_changeset_errors(changeset)}
+
+            {:error, message} ->
+              {:error, message}
+          end
+
+        {:error, message} ->
+          {:error, message}
+      end
+    end
+  end
+
+  # Validation helpers for start_sortie_with_refits
+
+  defp validate_no_in_progress_sorties(%Campaign{sorties: sorties}, current_sortie_id) do
+    in_progress_sorties = Enum.filter(sorties, fn s ->
+      s.status == "in_progress" and s.id != current_sortie_id
+    end)
+
+    if length(in_progress_sorties) > 0 do
+      {:error, "Only one sortie can be in progress at a time. Complete the current sortie before starting a new one."}
+    else
+      :ok
+    end
+  end
+
+  defp validate_force_commander_deployed(%Sortie{} = sortie, force_commander_id) do
+    deployed_pilot_ids =
+      sortie.deployments
+      |> Enum.filter(& &1.pilot_id)
+      |> Enum.map(& &1.pilot_id)
+
+    if force_commander_id in deployed_pilot_ids do
+      :ok
+    else
+      {:error, "Force Commander must be one of the deployed pilots"}
+    end
+  end
+
+  defp validate_warchest_for_refits(sortie, pending_changes, omni_variants, campaign) do
+    total_cost = calculate_pending_refit_cost(sortie, pending_changes, omni_variants)
+
+    if total_cost > campaign.warchest_balance do
+      {:error, "Insufficient warchest for OMNI refits. Need #{total_cost} SP, have #{campaign.warchest_balance} SP."}
+    else
+      :ok
+    end
+  end
+
+  defp validate_pv_within_limit(sortie, pending_changes, omni_variants) do
+    effective_pv = calculate_effective_deployed_pv(sortie, pending_changes, omni_variants)
+
+    if effective_pv > sortie.pv_limit do
+      {:error, "Deployed PV (#{effective_pv}) exceeds sortie limit (#{sortie.pv_limit}). Adjust OMNI variants to reduce PV."}
+    else
+      :ok
+    end
+  end
+
+  defp commit_variant_changes_if_any(_sortie, pending_changes, _omni_variants, campaign)
+       when map_size(pending_changes) == 0 do
+    {:ok, campaign}
+  end
+
+  defp commit_variant_changes_if_any(sortie, pending_changes, omni_variants, campaign) do
+    commit_omni_refits(sortie, pending_changes, omni_variants, campaign)
+  end
+
+  defp format_changeset_errors(changeset) do
+    changeset.errors
+    |> Enum.map(fn {field, {msg, _opts}} -> "#{field} #{msg}" end)
+    |> Enum.join(", ")
+  end
+
+  @doc """
   Commits all pending OMNI variant changes when starting a sortie.
 
   This function:
