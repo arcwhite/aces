@@ -584,17 +584,37 @@ defmodule AcesWeb.SortieLive.Show do
               </thead>
               <tbody>
                 <%= for deployment <- @sortie.deployments do %>
-                  <% master_unit = deployment.company_unit.master_unit %>
+                  <% original_unit = deployment.company_unit.master_unit %>
                   <% is_omni = Map.has_key?(@omni_variants, deployment.id) %>
-                  <tr>
+                  <% has_pending_change = Map.has_key?(@pending_variant_changes, deployment.id) %>
+                  <% # Get the display unit - either the pending variant or the original
+                     display_unit = if has_pending_change do
+                       variants = Map.get(@omni_variants, deployment.id, [])
+                       selected_id = Map.get(@pending_variant_changes, deployment.id)
+                       Enum.find(variants, &(&1.id == selected_id)) || original_unit
+                     else
+                       original_unit
+                     end
+                  %>
+                  <tr class={has_pending_change && "bg-warning/10"}>
                     <td>
                       <div class="font-semibold text-sm">
-                        {deployment.company_unit.custom_name || master_unit.name}
+                        {deployment.company_unit.custom_name || original_unit.name}
                       </div>
-                      <div class="text-xs opacity-70">
-                        {master_unit.variant}
-                        <span class="badge badge-accent badge-xs ml-1">{master_unit.point_value} PV</span>
-                      </div>
+                      <%= if has_pending_change do %>
+                        <div class="text-xs">
+                          <span class="opacity-50">{original_unit.variant}</span>
+                          <span class="badge badge-ghost badge-xs">{original_unit.point_value}</span>
+                          <span class="text-warning mx-1">→</span>
+                          <span class="text-warning font-semibold">{display_unit.variant}</span>
+                          <span class="badge badge-warning badge-xs">{display_unit.point_value}</span>
+                        </div>
+                      <% else %>
+                        <div class="text-xs opacity-70">
+                          {original_unit.variant}
+                          <span class="badge badge-accent badge-xs ml-1">{original_unit.point_value} PV</span>
+                        </div>
+                      <% end %>
                       <!-- Show pilot on mobile only -->
                       <div class="sm:hidden text-xs mt-1">
                         <%= if deployment.pilot do %>
@@ -605,7 +625,7 @@ defmodule AcesWeb.SortieLive.Show do
                       </div>
                       <!-- Show mobile stats -->
                       <div class="md:hidden text-xs mt-1 opacity-70">
-                        Dmg: {master_unit.bf_damage_short || "0"}/{master_unit.bf_damage_medium || "0"}/{master_unit.bf_damage_long || "0"}
+                        Dmg: {display_unit.bf_damage_short || "0"}/{display_unit.bf_damage_medium || "0"}/{display_unit.bf_damage_long || "0"}
                       </div>
                     </td>
                     <td class="hidden sm:table-cell">
@@ -617,18 +637,18 @@ defmodule AcesWeb.SortieLive.Show do
                       <% end %>
                     </td>
                     <td class="text-center font-mono text-sm">
-                      <span class="text-info">{master_unit.bf_armor || 0}</span>/<span class="text-warning">{master_unit.bf_structure || 0}</span>
+                      <span class="text-info">{display_unit.bf_armor || 0}</span>/<span class="text-warning">{display_unit.bf_structure || 0}</span>
                     </td>
                     <td class="hidden md:table-cell text-center font-mono text-sm">
-                      {master_unit.bf_damage_short || "0"}/{master_unit.bf_damage_medium || "0"}/{master_unit.bf_damage_long || "0"}
+                      {display_unit.bf_damage_short || "0"}/{display_unit.bf_damage_medium || "0"}/{display_unit.bf_damage_long || "0"}
                     </td>
                     <td class="hidden lg:table-cell font-mono text-sm">
-                      {master_unit.bf_move || "—"}
+                      {display_unit.bf_move || "—"}
                     </td>
                     <td class="hidden xl:table-cell">
-                      <%= if master_unit.bf_abilities && master_unit.bf_abilities != "" do %>
-                        <span class="text-xs opacity-70 max-w-xs truncate block" title={master_unit.bf_abilities}>
-                          {master_unit.bf_abilities}
+                      <%= if display_unit.bf_abilities && display_unit.bf_abilities != "" do %>
+                        <span class="text-xs opacity-70 max-w-xs truncate block" title={display_unit.bf_abilities}>
+                          {display_unit.bf_abilities}
                         </span>
                       <% else %>
                         <span class="opacity-50">—</span>
@@ -638,9 +658,8 @@ defmodule AcesWeb.SortieLive.Show do
                       <td>
                         <%= if is_omni do %>
                           <% variants = Map.get(@omni_variants, deployment.id, []) %>
-                          <% original_variant_id = master_unit.id %>
+                          <% original_variant_id = original_unit.id %>
                           <% selected_variant_id = get_selected_variant_id(deployment, @pending_variant_changes) %>
-                          <% has_pending_change = Map.has_key?(@pending_variant_changes, deployment.id) %>
                           <form phx-change="change_variant" id={"variant-form-#{deployment.id}"}>
                             <input type="hidden" name="deployment_id" value={deployment.id} />
                             <select
@@ -648,7 +667,7 @@ defmodule AcesWeb.SortieLive.Show do
                               class={["select select-xs sm:select-sm w-full max-w-[140px]", has_pending_change && "select-warning"]}
                             >
                               <%= for variant <- variants do %>
-                                <% refit_cost = if variant.id != original_variant_id, do: Campaigns.calculate_omni_refit_cost(master_unit, variant), else: 0 %>
+                                <% refit_cost = if variant.id != original_variant_id, do: Campaigns.calculate_omni_refit_cost(original_unit, variant), else: 0 %>
                                 <option value={variant.id} selected={variant.id == selected_variant_id}>
                                   {variant.variant} ({variant.point_value} PV)<%= if refit_cost > 0 do %> -{refit_cost} SP<% end %>
                                 </option>
