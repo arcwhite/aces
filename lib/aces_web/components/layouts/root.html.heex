@@ -31,35 +31,102 @@
     </script>
   </head>
   <body>
-    <ul class="menu menu-horizontal w-full relative z-10 flex items-center gap-4 px-4 sm:px-6 lg:px-8 justify-end">
-      <%= if @current_scope do %>
-        <li>
-          {@current_scope.user.email}
-        </li>
-        <li>
-          <.link href={~p"/companies"}>My Companies</.link>
-        </li>
-        <li>
-          <.link href={~p"/campaigns"}>My Campaigns</.link>
-        </li>
-        <li>
-          <.link href={~p"/demo"}>Component Demo</.link>
-        </li>
-        <li>
-          <.link href={~p"/users/settings"}>Settings</.link>
-        </li>
-        <li>
-          <.link href={~p"/users/log-out"} method="delete">Log out</.link>
-        </li>
-      <% else %>
-        <li>
-          <.link href={~p"/users/register"}>Register</.link>
-        </li>
-        <li>
-          <.link href={~p"/users/log-in"}>Log in</.link>
-        </li>
-      <% end %>
-    </ul>
-    {@inner_content}
+    <!-- Mobile drawer wrapper -->
+    <div class="drawer">
+      <input id="nav-drawer" type="checkbox" class="drawer-toggle" />
+
+      <div class="drawer-content flex flex-col">
+        <!-- Navbar -->
+        <nav class="navbar bg-base-100 border-b border-base-300 px-4 sm:px-6 lg:px-8 relative z-50">
+          <!-- Hamburger menu button (mobile only) -->
+          <div class="flex-none lg:hidden">
+            <label for="nav-drawer" aria-label="open sidebar" class="btn btn-square btn-ghost">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block h-6 w-6 stroke-current">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+              </svg>
+            </label>
+          </div>
+
+          <!-- Logo/Brand area -->
+          <div class="flex-1">
+            <.link href={~p"/"} class="btn btn-ghost text-xl">Aces</.link>
+          </div>
+
+          <!-- Desktop navigation (hidden on mobile) -->
+          <div class="hidden lg:flex">
+            <ul class="menu menu-horizontal px-1 gap-1">
+              <%= if @current_scope do %>
+                <li>
+                  <.link href={~p"/companies"}>Companies</.link>
+                </li>
+                <li>
+                  <.link href={~p"/campaigns"}>Campaigns</.link>
+                </li>
+                <li>
+                  <details>
+                    <summary>{@current_scope.user.email}</summary>
+                    <ul class="bg-base-100 rounded-box z-50 w-48 p-2 shadow-lg">
+                      <li>
+                        <.link href={~p"/users/settings"}>Settings</.link>
+                      </li>
+                      <li class="px-3 py-2">
+                        <span class="text-xs opacity-70 mb-1 block">Theme</span>
+                        <Layouts.theme_toggle />
+                      </li>
+                      <li>
+                        <.link href={~p"/users/log-out"} method="delete">Log out</.link>
+                      </li>
+                    </ul>
+                  </details>
+                </li>
+              <% else %>
+                <li>
+                  <.link href={~p"/users/register"}>Register</.link>
+                </li>
+                <li>
+                  <.link href={~p"/users/log-in"}>Log in</.link>
+                </li>
+              <% end %>
+            </ul>
+          </div>
+        </nav>
+
+        <!-- Page content -->
+        {@inner_content}
+      </div>
+
+      <!-- Mobile sidebar drawer -->
+      <div class="drawer-side z-50">
+        <label for="nav-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
+        <ul class="menu bg-base-200 min-h-full w-72 p-4">
+          <%= if @current_scope do %>
+            <li>
+              <.link href={~p"/companies"}>Companies</.link>
+            </li>
+            <li>
+              <.link href={~p"/campaigns"}>Campaigns</.link>
+            </li>
+            <li class="menu-title mt-4">{@current_scope.user.email}</li>
+            <li class="ml-4">
+              <.link href={~p"/users/settings"}>Settings</.link>
+            </li>
+            <li class="ml-4 px-3 py-2">
+              <span class="text-xs opacity-70 mb-1 block">Theme</span>
+              <Layouts.theme_toggle />
+            </li>
+            <li class="ml-4">
+              <.link href={~p"/users/log-out"} method="delete">Log out</.link>
+            </li>
+          <% else %>
+            <li>
+              <.link href={~p"/users/register"}>Register</.link>
+            </li>
+            <li>
+              <.link href={~p"/users/log-in"}>Log in</.link>
+            </li>
+          <% end %>
+        </ul>
+      </div>
+    </div>
   </body>
 </html>

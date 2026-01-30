@@ -57,8 +57,6 @@ defmodule AcesWeb.Router do
   scope "/", AcesWeb do
     pipe_through [:browser, :require_authenticated_user]
 
-    live "/demo", DemoLive
-
     # Company routes
     live "/companies", CompanyLive.Index, :index
     live "/companies/new", CompanyLive.New

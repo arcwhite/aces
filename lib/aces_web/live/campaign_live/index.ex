@@ -24,21 +24,14 @@ defmodule AcesWeb.CampaignLive.Index do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="space-y-6">
-      <div class="flex items-center justify-between">
+    <div class="container mx-auto px-4 py-8">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
         <div>
-          <h1 class="text-3xl font-bold">My Campaigns</h1>
+          <h1 class="text-2xl sm:text-4xl font-bold">My Campaigns</h1>
           <p class="text-base-content/70 mt-2">
             Active campaigns across all your companies
           </p>
         </div>
-        
-        <.link
-          patch={~p"/companies"}
-          class="btn btn-ghost"
-        >
-          ← Back to Companies
-        </.link>
       </div>
 
       <%= if @campaigns == [] do %>
