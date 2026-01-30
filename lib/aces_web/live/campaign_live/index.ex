@@ -96,7 +96,7 @@ defmodule AcesWeb.CampaignLive.Index do
                 <div class="card-actions justify-end mt-4">
                   <.link
                     navigate={~p"/companies/#{campaign.company_id}/campaigns/#{campaign.id}"}
-                    class="btn btn-primary btn-sm"
+                    class="btn btn-primary btn-sm md:btn-xs"
                   >
                     View Campaign
                   </.link>

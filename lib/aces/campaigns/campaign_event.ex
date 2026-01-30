@@ -11,7 +11,7 @@ defmodule Aces.Campaigns.CampaignEvent do
     campaign_started campaign_completed campaign_failed
     sortie_started sortie_completed sortie_failed
     pilot_hired pilot_wounded pilot_killed pilot_recovered
-    unit_purchased unit_sold unit_destroyed unit_repaired
+    unit_purchased unit_sold unit_destroyed unit_repaired unit_refitted
     keyword_gained sp_awarded mvp_awarded
   )
 
@@ -154,6 +154,10 @@ defmodule Aces.Campaigns.CampaignEvent do
         unit_name = unit_display_name(event_data["unit_name"], event_data["unit_variant"], event_data["custom_name"])
         cost = event_data["repair_cost"] || 0
         "Repaired #{unit_name} for #{cost} SP"
+
+      "unit_refitted" ->
+        # Description is provided directly in the event, not generated from data
+        event_data["description"] || "Unit refitted"
 
       "keyword_gained" ->
         keyword = event_data["keyword"] || "Unknown"

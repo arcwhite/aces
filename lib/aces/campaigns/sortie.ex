@@ -84,7 +84,10 @@ defmodule Aces.Campaigns.Sortie do
     |> validate_number(:recon_total_cost, greater_than_or_equal_to: 0)
     |> put_change(:status, "setup")
     |> maybe_calculate_recon_total_cost()
-    |> unique_constraint([:campaign_id, :mission_number])
+    |> unique_constraint([:campaign_id, :mission_number],
+      name: :sorties_campaign_mission_active_unique,
+      message: "already exists for an active sortie in this campaign"
+    )
     |> foreign_key_constraint(:campaign_id)
     |> foreign_key_constraint(:force_commander_id)
   end

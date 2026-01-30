@@ -1,7 +1,7 @@
 defmodule AcesWeb.SortieLive.Show do
   use AcesWeb, :live_view
 
-  alias Aces.{Companies, Campaigns}
+  alias Aces.{Companies, Campaigns, Units}
   alias Aces.Companies.{Authorization, Pilots}
   alias Aces.Campaigns.Deployment
   alias AcesWeb.SortieLive.Complete.Helpers, as: CompleteHelpers
@@ -53,6 +53,14 @@ defmodule AcesWeb.SortieLive.Show do
             {[], []}
           end
 
+        # For setup status, load OMNI variants for reconfiguration
+        omni_variants =
+          if sortie.status == "setup" do
+            load_omni_variants(sortie.deployments)
+          else
+            %{}
+          end
+
         {:ok,
          socket
          |> assign(:company, company)
@@ -64,7 +72,9 @@ defmodule AcesWeb.SortieLive.Show do
          |> assign(:can_edit, Authorization.can?(:edit_company, user, company))
          |> assign(:show_fail_modal, false)
          |> assign(:pilot_allocations, pilot_allocations)
-         |> assign(:all_pilots, all_pilots)}
+         |> assign(:all_pilots, all_pilots)
+         |> assign(:omni_variants, omni_variants)
+         |> assign(:pending_variant_changes, %{})}
       end
     end
   end
@@ -109,18 +119,34 @@ defmodule AcesWeb.SortieLive.Show do
          :ok <- require_sortie_status(socket, "setup"),
          {:ok, force_commander_id} <- require_force_commander_selected(socket),
          :ok <- require_force_commander_deployed(socket, force_commander_id),
-         :ok <- require_no_in_progress_sorties(socket) do
-      case Campaigns.start_sortie(socket.assigns.sortie, force_commander_id) do
-        {:ok, updated_sortie} ->
-          {:noreply,
-           socket
-           |> assign(:sortie, updated_sortie)
-           |> put_flash(:info, "Sortie started successfully!")}
+         :ok <- require_no_in_progress_sorties(socket),
+         :ok <- require_sufficient_warchest_for_refits(socket),
+         :ok <- require_pv_within_limit(socket) do
 
-        {:error, %Ecto.Changeset{} = changeset} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, "Cannot start sortie: #{format_changeset_errors(changeset)}")}
+      # First commit all pending variant changes
+      pending_changes = socket.assigns.pending_variant_changes
+      campaign = Campaigns.get_campaign!(socket.assigns.campaign.id)
+
+      case commit_pending_variant_changes(socket, pending_changes, campaign) do
+        {:ok, updated_campaign} ->
+          # Now start the sortie
+          case Campaigns.start_sortie(socket.assigns.sortie, force_commander_id) do
+            {:ok, updated_sortie} ->
+              {:noreply,
+               socket
+               |> assign(:sortie, updated_sortie)
+               |> assign(:campaign, updated_campaign)
+               |> assign(:pending_variant_changes, %{})
+               |> put_flash(:info, "Sortie started successfully!")}
+
+            {:error, %Ecto.Changeset{} = changeset} ->
+              {:noreply,
+               socket
+               |> put_flash(:error, "Cannot start sortie: #{format_changeset_errors(changeset)}")}
+          end
+
+        {:error, message} ->
+          {:noreply, put_flash(socket, :error, message)}
       end
     else
       {:error, message} -> {:noreply, put_flash(socket, :error, message)}
@@ -205,11 +231,132 @@ defmodule AcesWeb.SortieLive.Show do
     end
   end
 
+  @impl true
+  def handle_event("change_variant", params, socket) do
+    deployment_id_str = params["deployment_id"]
+    new_variant_id_str = params["new_variant_id"]
+
+    unless deployment_id_str && new_variant_id_str do
+      {:noreply, put_flash(socket, :error, "Missing parameters for variant change")}
+    else
+      with :ok <- require_can_edit(socket),
+           :ok <- require_sortie_status(socket, "setup") do
+        deployment_id = String.to_integer(deployment_id_str)
+        new_variant_id = String.to_integer(new_variant_id_str)
+
+        deployment = Enum.find(socket.assigns.sortie.deployments, &(&1.id == deployment_id))
+
+        if deployment do
+          current_variant_id = deployment.company_unit.master_unit_id
+
+          # Track pending change in socket assigns (not committed until Start Sortie)
+          # If selecting back to original variant, remove from pending changes
+          pending_changes = socket.assigns.pending_variant_changes
+
+          updated_pending =
+            if new_variant_id == current_variant_id do
+              Map.delete(pending_changes, deployment_id)
+            else
+              Map.put(pending_changes, deployment_id, new_variant_id)
+            end
+
+          {:noreply, assign(socket, :pending_variant_changes, updated_pending)}
+        else
+          {:noreply, put_flash(socket, :error, "Deployment not found")}
+        end
+      else
+        {:error, message} -> {:noreply, put_flash(socket, :error, message)}
+      end
+    end
+  end
+
   defp update_deployment_damage(deployment, damage_status) do
     deployment
     |> Deployment.changeset(%{damage_status: damage_status})
     |> Aces.Repo.update()
   end
+
+  # Load available variants for all OMNI units in the deployment list
+  defp load_omni_variants(deployments) do
+    deployments
+    |> Enum.filter(fn d ->
+      d.company_unit && d.company_unit.master_unit && is_omni?(d.company_unit.master_unit)
+    end)
+    |> Enum.map(fn d ->
+      variants = Units.list_variants_for_chassis(d.company_unit.master_unit)
+      {d.id, variants}
+    end)
+    |> Map.new()
+  end
+
+  defp is_omni?(master_unit) do
+    Units.is_omni?(master_unit)
+  end
+
+  # Calculate total cost of all pending variant changes
+  # Accepts either a socket or assigns map
+  defp calculate_pending_refit_cost(%{assigns: assigns}), do: calculate_pending_refit_cost(assigns)
+
+  defp calculate_pending_refit_cost(assigns) do
+    pending = assigns.pending_variant_changes
+    deployments = assigns.sortie.deployments
+    omni_variants = assigns.omni_variants
+
+    Enum.reduce(pending, 0, fn {deployment_id, new_variant_id}, total ->
+      deployment = Enum.find(deployments, &(&1.id == deployment_id))
+
+      if deployment do
+        variants = Map.get(omni_variants, deployment_id, [])
+        current_unit = deployment.company_unit.master_unit
+        new_unit = Enum.find(variants, &(&1.id == new_variant_id))
+
+        if new_unit do
+          total + Campaigns.calculate_omni_refit_cost(current_unit, new_unit)
+        else
+          total
+        end
+      else
+        total
+      end
+    end)
+  end
+
+  # Get the selected variant ID for a deployment (pending or current)
+  defp get_selected_variant_id(deployment, pending_changes) do
+    Map.get(pending_changes, deployment.id, deployment.company_unit.master_unit_id)
+  end
+
+  # Calculate effective deployed PV considering pending variant changes
+  # Accepts either a socket or assigns map
+  defp calculate_effective_deployed_pv(%{assigns: assigns}), do: calculate_effective_deployed_pv(assigns)
+
+  defp calculate_effective_deployed_pv(assigns) do
+    pending = assigns.pending_variant_changes
+    omni_variants = assigns.omni_variants
+    deployments = assigns.sortie.deployments
+
+    Enum.reduce(deployments, 0, fn deployment, total ->
+      base_pv = deployment.company_unit.master_unit.point_value || 0
+
+      # Check if this deployment has a pending variant change
+      case Map.get(pending, deployment.id) do
+        nil ->
+          total + base_pv
+
+        new_variant_id ->
+          # Find the new variant's PV
+          variants = Map.get(omni_variants, deployment.id, [])
+          new_variant = Enum.find(variants, &(&1.id == new_variant_id))
+
+          if new_variant do
+            total + (new_variant.point_value || 0)
+          else
+            total + base_pv
+          end
+      end
+    end)
+  end
+
 
   defp update_deployment_casualty(deployment, pilot_casualty) do
     deployment
@@ -254,6 +401,46 @@ defmodule AcesWeb.SortieLive.Show do
       {:error, "Only one sortie can be in progress at a time. Complete the current sortie before starting a new one."}
     else
       :ok
+    end
+  end
+
+  defp require_sufficient_warchest_for_refits(socket) do
+    total_cost = calculate_pending_refit_cost(socket)
+    warchest = socket.assigns.campaign.warchest_balance
+
+    if total_cost > warchest do
+      {:error, "Insufficient warchest for OMNI refits. Need #{total_cost} SP, have #{warchest} SP."}
+    else
+      :ok
+    end
+  end
+
+  defp require_pv_within_limit(socket) do
+    effective_pv = calculate_effective_deployed_pv(socket.assigns)
+    pv_limit = socket.assigns.sortie.pv_limit
+
+    if effective_pv > pv_limit do
+      {:error, "Deployed PV (#{effective_pv}) exceeds sortie limit (#{pv_limit}). Adjust OMNI variants to reduce PV."}
+    else
+      :ok
+    end
+  end
+
+  # Commits all pending variant changes to the database
+  # Returns {:ok, updated_campaign} or {:error, message}
+  defp commit_pending_variant_changes(_socket, pending_changes, campaign) when map_size(pending_changes) == 0 do
+    {:ok, campaign}
+  end
+
+  defp commit_pending_variant_changes(socket, pending_changes, campaign) do
+    case Campaigns.commit_omni_refits(
+           socket.assigns.sortie,
+           pending_changes,
+           socket.assigns.omni_variants,
+           campaign
+         ) do
+      {:ok, updated_campaign} -> {:ok, updated_campaign}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -327,43 +514,57 @@ defmodule AcesWeb.SortieLive.Show do
       </div>
 
       <!-- Sortie Details -->
-      <div class="grid gap-6 md:grid-cols-3 mb-8">
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">PV Limit</div>
-          <div class="stat-value text-primary">{@sortie.pv_limit}</div>
-          <div class="stat-desc">Point Value limit</div>
+      <div class="grid grid-cols-2 gap-3 md:gap-6 md:grid-cols-3 mb-8">
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4">
+          <div class="stat-title text-xs md:text-sm">PV Limit</div>
+          <div class="stat-value text-xl md:text-3xl text-primary">{@sortie.pv_limit}</div>
         </div>
 
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Deployed PV</div>
-          <div class="stat-value text-secondary">{Aces.Campaigns.calculate_deployed_pv(@sortie)}</div>
-          <div class="stat-desc">Currently deployed</div>
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4">
+          <div class="stat-title text-xs md:text-sm">Deployed</div>
+          <%= if @sortie.status == "setup" and map_size(@pending_variant_changes) > 0 do %>
+            <% effective_pv = calculate_effective_deployed_pv(assigns) %>
+            <% base_pv = Aces.Campaigns.calculate_deployed_pv(@sortie) %>
+            <% over_limit = effective_pv > @sortie.pv_limit %>
+            <div class={["stat-value text-xl md:text-3xl", over_limit && "text-error" || "text-secondary"]}>
+              {effective_pv}
+              <%= if effective_pv != base_pv do %>
+                <span class={["text-sm", effective_pv > base_pv && "text-warning" || "text-success"]}>
+                  (<%= if effective_pv > base_pv do %>+<% end %>{effective_pv - base_pv})
+                </span>
+              <% end %>
+            </div>
+            <%= if over_limit do %>
+              <div class="text-xs text-error mt-1">Over limit!</div>
+            <% end %>
+          <% else %>
+            <div class="stat-value text-xl md:text-3xl text-secondary">{Aces.Campaigns.calculate_deployed_pv(@sortie)}</div>
+          <% end %>
         </div>
 
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Force Commander</div>
-          <div class="stat-value text-accent">
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4 col-span-2 md:col-span-1">
+          <div class="stat-title text-xs md:text-sm">Force Commander</div>
+          <div class="stat-value text-lg md:text-2xl text-accent truncate">
             <%= if @sortie.force_commander do %>
               {@sortie.force_commander.name}
             <% else %>
               TBD
             <% end %>
           </div>
-          <div class="stat-desc">Mission leader</div>
         </div>
       </div>
 
-      <!-- Deployment Status (hidden for completed sorties - shown in summary instead) -->
-      <%= if @sortie.status != "completed" do %>
+      <!-- Deploying table (for setup status) -->
+      <%= if @sortie.status == "setup" do %>
       <div class="mb-8">
-        <h2 class="text-2xl font-bold mb-4">Deployment Status</h2>
-        
+        <h2 class="text-2xl font-bold mb-4">Deploying</h2>
+
         <%= if length(@sortie.deployments) == 0 do %>
           <div class="alert alert-warning">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.502 0L4.232 15.5c-.77.833.192 2.5 1.732 2.5z"></path>
             </svg>
-            <span>No units deployed yet.</span>
+            <span>No units deployed yet. <.link navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{@sortie.id}/edit"} class="link link-primary">Edit sortie</.link> to add units.</span>
           </div>
         <% else %>
           <div class="overflow-x-auto">
@@ -371,135 +572,307 @@ defmodule AcesWeb.SortieLive.Show do
               <thead>
                 <tr>
                   <th>Unit</th>
-                  <th>Pilot</th>
-                  <th>PV</th>
-                  <th>Unit Stats</th>
-                  <th>Damage Status</th>
-                  <th>Pilot Status</th>
+                  <th class="hidden sm:table-cell">Pilot</th>
+                  <th class="text-center">A/S</th>
+                  <th class="hidden md:table-cell text-center">Dmg</th>
+                  <th class="hidden lg:table-cell">Move</th>
+                  <th class="hidden xl:table-cell">Specials</th>
+                  <%= if @can_edit and map_size(@omni_variants) > 0 do %>
+                    <th>Variant</th>
+                  <% end %>
                 </tr>
               </thead>
               <tbody>
                 <%= for deployment <- @sortie.deployments do %>
+                  <% master_unit = deployment.company_unit.master_unit %>
+                  <% is_omni = Map.has_key?(@omni_variants, deployment.id) %>
                   <tr>
                     <td>
-                      <div class="font-semibold">
-                        {deployment.company_unit.custom_name || deployment.company_unit.master_unit.name}
+                      <div class="font-semibold text-sm">
+                        {deployment.company_unit.custom_name || master_unit.name}
                       </div>
-                      <div class="text-sm opacity-70">
-                        {deployment.company_unit.master_unit.variant}
+                      <div class="text-xs opacity-70">
+                        {master_unit.variant}
+                        <span class="badge badge-accent badge-xs ml-1">{master_unit.point_value} PV</span>
+                      </div>
+                      <!-- Show pilot on mobile only -->
+                      <div class="sm:hidden text-xs mt-1">
+                        <%= if deployment.pilot do %>
+                          <span class="opacity-70">{deployment.pilot.name}</span>
+                        <% else %>
+                          <span class="opacity-50">Crew</span>
+                        <% end %>
+                      </div>
+                      <!-- Show mobile stats -->
+                      <div class="md:hidden text-xs mt-1 opacity-70">
+                        Dmg: {master_unit.bf_damage_short || "0"}/{master_unit.bf_damage_medium || "0"}/{master_unit.bf_damage_long || "0"}
                       </div>
                     </td>
-                    <td>
+                    <td class="hidden sm:table-cell">
                       <%= if deployment.pilot do %>
-                        <div class="font-semibold">{deployment.pilot.name}</div>
-                        <div class="text-sm opacity-70">Skill {deployment.pilot.skill_level}</div>
+                        <div class="font-semibold text-sm">{deployment.pilot.name}</div>
+                        <div class="text-xs opacity-70">Skill {deployment.pilot.skill_level}</div>
                       <% else %>
-                        <div class="text-sm opacity-70">Unnamed crew</div>
+                        <div class="text-sm opacity-70">Crew</div>
                       <% end %>
                     </td>
-                    <td class="font-mono">{deployment.company_unit.master_unit.point_value} PV</td>
-                    <td>
-                      <div class="text-xs space-y-1">
-                        <div class="flex gap-2">
-                          <span class="font-semibold">Move:</span>
-                          <span class="font-mono">{deployment.company_unit.master_unit.bf_move || "—"}</span>
-                        </div>
-                        <div class="flex gap-2">
-                          <span class="font-semibold">Dmg:</span>
-                          <span class="font-mono">
-                            {deployment.company_unit.master_unit.bf_damage_short || "0"}/{deployment.company_unit.master_unit.bf_damage_medium || "0"}/{deployment.company_unit.master_unit.bf_damage_long || "0"}
-                          </span>
-                        </div>
-                        <%= if deployment.company_unit.master_unit.bf_abilities && deployment.company_unit.master_unit.bf_abilities != "" do %>
-                          <div class="flex gap-2">
-                            <span class="font-semibold">Spc:</span>
-                            <span class="opacity-70 max-w-xs truncate" title={deployment.company_unit.master_unit.bf_abilities}>
-                              {deployment.company_unit.master_unit.bf_abilities}
-                            </span>
+                    <td class="text-center font-mono text-sm">
+                      <span class="text-info">{master_unit.bf_armor || 0}</span>/<span class="text-warning">{master_unit.bf_structure || 0}</span>
+                    </td>
+                    <td class="hidden md:table-cell text-center font-mono text-sm">
+                      {master_unit.bf_damage_short || "0"}/{master_unit.bf_damage_medium || "0"}/{master_unit.bf_damage_long || "0"}
+                    </td>
+                    <td class="hidden lg:table-cell font-mono text-sm">
+                      {master_unit.bf_move || "—"}
+                    </td>
+                    <td class="hidden xl:table-cell">
+                      <%= if master_unit.bf_abilities && master_unit.bf_abilities != "" do %>
+                        <span class="text-xs opacity-70 max-w-xs truncate block" title={master_unit.bf_abilities}>
+                          {master_unit.bf_abilities}
+                        </span>
+                      <% else %>
+                        <span class="opacity-50">—</span>
+                      <% end %>
+                    </td>
+                    <%= if @can_edit and map_size(@omni_variants) > 0 do %>
+                      <td>
+                        <%= if is_omni do %>
+                          <% variants = Map.get(@omni_variants, deployment.id, []) %>
+                          <% original_variant_id = master_unit.id %>
+                          <% selected_variant_id = get_selected_variant_id(deployment, @pending_variant_changes) %>
+                          <% has_pending_change = Map.has_key?(@pending_variant_changes, deployment.id) %>
+                          <form phx-change="change_variant" id={"variant-form-#{deployment.id}"}>
+                            <input type="hidden" name="deployment_id" value={deployment.id} />
+                            <select
+                              name="new_variant_id"
+                              class={["select select-xs sm:select-sm w-full max-w-[140px]", has_pending_change && "select-warning"]}
+                            >
+                              <%= for variant <- variants do %>
+                                <% refit_cost = if variant.id != original_variant_id, do: Campaigns.calculate_omni_refit_cost(master_unit, variant), else: 0 %>
+                                <option value={variant.id} selected={variant.id == selected_variant_id}>
+                                  {variant.variant} ({variant.point_value} PV)<%= if refit_cost > 0 do %> -{refit_cost} SP<% end %>
+                                </option>
+                              <% end %>
+                            </select>
+                          </form>
+                          <div class="text-xs opacity-50 mt-1">
+                            OMNI<%= if has_pending_change do %> <span class="text-warning">*</span><% end %>
                           </div>
+                        <% else %>
+                          <span class="opacity-50">—</span>
                         <% end %>
-                      </div>
-                    </td>
-                    <td>
-                      <%= if @sortie.status == "in_progress" and @can_edit do %>
-                        <form phx-change="update_damage_status" id={"damage-form-#{deployment.id}"}>
-                          <select 
-                            class={[
-                              "select select-sm w-full max-w-xs",
-                              damage_status_color(deployment.damage_status)
-                            ]}
-                            name={"damage_status_#{deployment.id}"}
-                          >
-                            <option value="operational" selected={deployment.damage_status == "operational"}>Operational</option>
-                            <option value="armor_damaged" selected={deployment.damage_status == "armor_damaged"}>Armor Damage</option>
-                            <option value="structure_damaged" selected={deployment.damage_status == "structure_damaged"}>Structure Damage</option>
-                            <option value="crippled" selected={deployment.damage_status == "crippled"}>Crippled</option>
-                            <option value="destroyed" selected={deployment.damage_status == "destroyed"}>Destroyed</option>
-                          </select>
-                        </form>
-                      <% else %>
-                        <div class={[
-                          "badge",
-                          damage_status_color(deployment.damage_status)
-                        ]}>
-                          {format_damage_status(deployment.damage_status)}
-                        </div>
-                      <% end %>
-                    </td>
-                    <td>
-                      <%= if @sortie.status == "in_progress" and @can_edit do %>
-                        <form phx-change="update_pilot_casualty" id={"casualty-form-#{deployment.id}"}>
-                          <select 
-                            class={[
-                              "select select-sm w-full max-w-xs",
-                              casualty_status_color(deployment.pilot_casualty)
-                            ]}
-                            name={"pilot_casualty_#{deployment.id}"}
-                          >
-                            <option value="none" selected={deployment.pilot_casualty == "none"}>Unharmed</option>
-                            <option value="wounded" selected={deployment.pilot_casualty == "wounded"}>Wounded</option>
-                            <option value="killed" selected={deployment.pilot_casualty == "killed"}>Killed</option>
-                          </select>
-                        </form>
-                        <%= if is_nil(deployment.pilot) do %>
-                          <div class="text-xs text-gray-500 mt-1">Crew casualty: 100 SP cost</div>
-                        <% end %>
-                      <% else %>
-                        <div class={[
-                          "badge",
-                          casualty_status_color(deployment.pilot_casualty)
-                        ]}>
-                          {format_casualty_status(deployment.pilot_casualty)}
-                        </div>
-                        <%= if is_nil(deployment.pilot) and deployment.pilot_casualty != "none" do %>
-                          <div class="text-xs text-gray-500 mt-1">Crew casualty: 100 SP cost</div>
-                        <% end %>
-                      <% end %>
-                    </td>
+                      </td>
+                    <% end %>
                   </tr>
                 <% end %>
               </tbody>
             </table>
           </div>
+
+          <!-- Warchest info for OMNI refits -->
+          <%= if @can_edit and map_size(@omni_variants) > 0 do %>
+            <% pending_cost = calculate_pending_refit_cost(assigns) %>
+            <div class="mt-4 text-sm">
+              <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <span>
+                  <span class="font-semibold">Warchest:</span>
+                  <span class="opacity-70">{@campaign.warchest_balance} SP</span>
+                </span>
+                <%= if pending_cost > 0 do %>
+                  <span class="text-warning font-semibold">
+                    Pending Refit Cost: -{pending_cost} SP
+                  </span>
+                  <span class="opacity-70">
+                    (After: {@campaign.warchest_balance - pending_cost} SP)
+                  </span>
+                <% end %>
+              </div>
+              <div class="text-xs opacity-50 mt-1">
+                OMNI refit: Size×5 SP if new PV ≤ current, Size×40 SP if new PV > current
+              </div>
+            </div>
+          <% end %>
         <% end %>
+      </div>
+      <% end %>
+
+      <!-- Deployment Status (for in_progress status) -->
+      <%= if @sortie.status == "in_progress" do %>
+      <div class="mb-8">
+        <h2 class="text-2xl font-bold mb-4">Deployment Status</h2>
+
+        <div class="overflow-x-auto">
+          <table class="table table-zebra w-full">
+            <thead>
+              <tr>
+                <th>Unit</th>
+                <th class="hidden sm:table-cell">Pilot</th>
+                <th class="hidden md:table-cell">PV</th>
+                <th class="hidden lg:table-cell">Unit Stats</th>
+                <th>Damage</th>
+                <th>Pilot</th>
+              </tr>
+            </thead>
+            <tbody>
+              <%= for deployment <- @sortie.deployments do %>
+                <tr>
+                  <td>
+                    <div class="font-semibold text-sm">
+                      {deployment.company_unit.custom_name || deployment.company_unit.master_unit.name}
+                    </div>
+                    <div class="text-xs opacity-70">
+                      {deployment.company_unit.master_unit.variant}
+                    </div>
+                    <!-- Show pilot on mobile only -->
+                    <div class="sm:hidden text-xs mt-1">
+                      <%= if deployment.pilot do %>
+                        <span class="opacity-70">{deployment.pilot.name}</span>
+                      <% else %>
+                        <span class="opacity-50">Crew</span>
+                      <% end %>
+                    </div>
+                  </td>
+                  <td class="hidden sm:table-cell">
+                    <%= if deployment.pilot do %>
+                      <div class="font-semibold text-sm">{deployment.pilot.name}</div>
+                      <div class="text-xs opacity-70">Skill {deployment.pilot.skill_level}</div>
+                    <% else %>
+                      <div class="text-sm opacity-70">Unnamed crew</div>
+                    <% end %>
+                  </td>
+                  <td class="hidden md:table-cell font-mono text-sm whitespace-nowrap">{deployment.company_unit.master_unit.point_value} PV</td>
+                  <td class="hidden lg:table-cell">
+                    <div class="text-xs space-y-1">
+                      <div class="flex gap-2">
+                        <span class="font-semibold">Move:</span>
+                        <span class="font-mono">{deployment.company_unit.master_unit.bf_move || "—"}</span>
+                      </div>
+                      <div class="flex gap-2">
+                        <span class="font-semibold">Dmg:</span>
+                        <span class="font-mono">
+                          {deployment.company_unit.master_unit.bf_damage_short || "0"}/{deployment.company_unit.master_unit.bf_damage_medium || "0"}/{deployment.company_unit.master_unit.bf_damage_long || "0"}
+                        </span>
+                      </div>
+                      <%= if deployment.company_unit.master_unit.bf_abilities && deployment.company_unit.master_unit.bf_abilities != "" do %>
+                        <div class="flex gap-2">
+                          <span class="font-semibold">Spc:</span>
+                          <span class="opacity-70 max-w-xs truncate" title={deployment.company_unit.master_unit.bf_abilities}>
+                            {deployment.company_unit.master_unit.bf_abilities}
+                          </span>
+                        </div>
+                      <% end %>
+                    </div>
+                  </td>
+                  <td>
+                    <%= if @can_edit do %>
+                      <form phx-change="update_damage_status" id={"damage-form-#{deployment.id}"}>
+                        <select
+                          class={[
+                            "select select-xs sm:select-sm w-full max-w-xs",
+                            damage_status_color(deployment.damage_status)
+                          ]}
+                          name={"damage_status_#{deployment.id}"}
+                        >
+                          <option value="operational" selected={deployment.damage_status == "operational"}>OK</option>
+                          <option value="armor_damaged" selected={deployment.damage_status == "armor_damaged"}>Armor</option>
+                          <option value="structure_damaged" selected={deployment.damage_status == "structure_damaged"}>Structure</option>
+                          <option value="crippled" selected={deployment.damage_status == "crippled"}>Crippled</option>
+                          <option value="destroyed" selected={deployment.damage_status == "destroyed"}>Destroyed</option>
+                        </select>
+                      </form>
+                    <% else %>
+                      <div class={[
+                        "badge badge-xs md:badge-md whitespace-nowrap",
+                        damage_status_color(deployment.damage_status)
+                      ]}>
+                        {format_damage_status(deployment.damage_status)}
+                      </div>
+                    <% end %>
+                  </td>
+                  <td>
+                    <%= if @can_edit do %>
+                      <form phx-change="update_pilot_casualty" id={"casualty-form-#{deployment.id}"}>
+                        <select
+                          class={[
+                            "select select-xs sm:select-sm w-full max-w-xs",
+                            casualty_status_color(deployment.pilot_casualty)
+                          ]}
+                          name={"pilot_casualty_#{deployment.id}"}
+                        >
+                          <option value="none" selected={deployment.pilot_casualty == "none"}>OK</option>
+                          <option value="wounded" selected={deployment.pilot_casualty == "wounded"}>Wounded</option>
+                          <option value="killed" selected={deployment.pilot_casualty == "killed"}>Killed</option>
+                        </select>
+                      </form>
+                      <%= if is_nil(deployment.pilot) do %>
+                        <div class="text-xs text-gray-500 mt-1 hidden sm:block">Crew: 100 SP</div>
+                      <% end %>
+                    <% else %>
+                      <div class={[
+                        "badge badge-xs md:badge-md whitespace-nowrap",
+                        casualty_status_color(deployment.pilot_casualty)
+                      ]}>
+                        {format_casualty_status(deployment.pilot_casualty)}
+                      </div>
+                      <%= if is_nil(deployment.pilot) and deployment.pilot_casualty != "none" do %>
+                        <div class="text-xs text-gray-500 mt-1 hidden sm:block">Crew: 100 SP</div>
+                      <% end %>
+                    <% end %>
+                  </td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        </div>
       </div>
       <% end %>
 
       <!-- Mission Status -->
       <%= if @sortie.status == "setup" and @can_edit do %>
+        <% pending_refit_cost = calculate_pending_refit_cost(assigns) %>
+        <% insufficient_warchest = pending_refit_cost > @campaign.warchest_balance %>
+        <% effective_pv = calculate_effective_deployed_pv(assigns) %>
+        <% pv_over_limit = effective_pv > @sortie.pv_limit %>
         <div class="card bg-base-100 shadow-xl mb-8">
           <div class="card-body">
             <h3 class="card-title">Start Sortie</h3>
             <p class="text-sm opacity-70 mb-4">
               Before starting the sortie, select a Force Commander and ensure you have deployed units.
             </p>
-            
+
             <%= if length(@deployed_pilots) == 0 do %>
               <div class="alert alert-warning mb-4">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.502 0L4.232 15.5c-.77.833.192 2.5 1.732 2.5z"></path>
                 </svg>
                 <span>No pilots deployed. Deploy at least one unit with a named pilot to start the sortie.</span>
+              </div>
+            <% end %>
+
+            <%= if pv_over_limit do %>
+              <div class="alert alert-error mb-4">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <span>Deployed PV ({effective_pv}) exceeds sortie limit ({@sortie.pv_limit}). Adjust OMNI variants to reduce PV.</span>
+              </div>
+            <% end %>
+
+            <%= if insufficient_warchest do %>
+              <div class="alert alert-error mb-4">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <span>Insufficient SP for OMNI refits. Need {pending_refit_cost} SP, have {@campaign.warchest_balance} SP.</span>
+              </div>
+            <% end %>
+
+            <%= if pending_refit_cost > 0 and not insufficient_warchest and not pv_over_limit do %>
+              <div class="alert alert-info mb-4">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <span>OMNI refit cost: {pending_refit_cost} SP will be deducted from warchest when sortie starts.</span>
               </div>
             <% end %>
 
@@ -530,9 +903,9 @@ defmodule AcesWeb.SortieLive.Show do
               <button
                 class="btn btn-primary"
                 phx-click="start_sortie"
-                disabled={length(@deployed_pilots) == 0 or is_nil(@selected_force_commander_id)}
+                disabled={length(@deployed_pilots) == 0 or is_nil(@selected_force_commander_id) or insufficient_warchest or pv_over_limit}
               >
-                Start Sortie
+                Start Sortie<%= if pending_refit_cost > 0 do %> (-{pending_refit_cost} SP)<% end %>
               </button>
             </div>
           </div>

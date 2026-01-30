@@ -692,4 +692,186 @@ defmodule Aces.Campaigns do
     |> Enum.filter(& &1.pilot)  # Filter out any pilots that might have been deleted
     |> Enum.sort_by(& &1.sp_earned, :desc)
   end
+
+  ## OMNI Variant Reconfiguration
+
+  @doc """
+  Change an OMNI unit's variant during sortie setup.
+
+  This function:
+  1. Validates the new variant is a valid chassis variant
+  2. Calculates the refit cost (size * 5 SP if new PV <= old PV, size * 40 SP if new PV > old PV)
+  3. Checks if campaign has enough warchest balance
+  4. Updates the company_unit to point to the new master_unit
+  5. Records the configuration change and cost on the deployment
+  6. Deducts the cost from the campaign warchest
+
+  Returns {:ok, deployment} or {:error, reason}.
+  """
+  def change_omni_variant(%Deployment{} = deployment, new_master_unit_id, %Campaign{} = campaign) do
+    require Logger
+    Logger.info("change_omni_variant called - deployment: #{deployment.id}, new_master_unit_id: #{new_master_unit_id}, campaign: #{campaign.id}")
+
+    deployment = Repo.preload(deployment, company_unit: :master_unit)
+    current_unit = deployment.company_unit.master_unit
+    new_unit = Repo.get!(MasterUnit, new_master_unit_id)
+
+    Logger.info("Current unit: #{current_unit.name} #{current_unit.variant} (id: #{current_unit.id})")
+    Logger.info("New unit: #{new_unit.name} #{new_unit.variant} (id: #{new_unit.id})")
+
+    # Validate units have same chassis name (both are variants of the same OMNI)
+    unless current_unit.name == new_unit.name do
+      {:error, "New variant must be the same chassis as the current unit"}
+    else
+      # Calculate refit cost
+      unit_size = current_unit.bf_size || 1
+      current_pv = current_unit.point_value || 0
+      new_pv = new_unit.point_value || 0
+
+      refit_cost =
+        if new_pv <= current_pv do
+          unit_size * 5
+        else
+          unit_size * 40
+        end
+
+      # Check warchest balance
+      if campaign.warchest_balance < refit_cost do
+        {:error, "Insufficient warchest balance. Need #{refit_cost} SP, have #{campaign.warchest_balance} SP"}
+      else
+        # Perform the update in a transaction
+        Ecto.Multi.new()
+        |> Ecto.Multi.update(:company_unit, fn _ ->
+          deployment.company_unit
+          |> Ecto.Changeset.change(%{master_unit_id: new_master_unit_id})
+        end)
+        |> Ecto.Multi.update(:deployment, fn _ ->
+          config_note = "Refitted from #{current_unit.variant} to #{new_unit.variant}"
+          new_config_cost = (deployment.configuration_cost_sp || 0) + refit_cost
+
+          deployment
+          |> Deployment.changeset(%{
+            configuration_changes: config_note,
+            configuration_cost_sp: new_config_cost
+          })
+        end)
+        |> Ecto.Multi.update(:campaign, fn _ ->
+          new_balance = campaign.warchest_balance - refit_cost
+
+          campaign
+          |> Campaign.changeset(%{warchest_balance: new_balance})
+        end)
+        |> Ecto.Multi.insert(:event, fn _ ->
+          CampaignEvent.creation_changeset(%CampaignEvent{}, %{
+            campaign_id: campaign.id,
+            event_type: "unit_refitted",
+            description: "#{deployment.company_unit.custom_name || current_unit.name} refitted to #{new_unit.variant} variant (-#{refit_cost} SP)"
+          })
+        end)
+        |> Repo.transaction()
+        |> case do
+          {:ok, %{deployment: updated_deployment}} ->
+            {:ok, Repo.preload(updated_deployment, [company_unit: :master_unit], force: true)}
+
+          {:error, _step, error, _} ->
+            {:error, error}
+        end
+      end
+    end
+  end
+
+  @doc """
+  Calculate the cost of changing to a different OMNI variant.
+
+  Returns the SP cost: size * 5 if new PV <= old PV, size * 40 if new PV > old PV.
+  """
+  def calculate_omni_refit_cost(current_master_unit, new_master_unit) do
+    unit_size = current_master_unit.bf_size || 1
+    current_pv = current_master_unit.point_value || 0
+    new_pv = new_master_unit.point_value || 0
+
+    if new_pv <= current_pv do
+      unit_size * 5
+    else
+      unit_size * 40
+    end
+  end
+
+  @doc """
+  Commits all pending OMNI variant changes when starting a sortie.
+
+  This function:
+  1. Calculates the total refit cost for all pending changes
+  2. Updates each company_unit to point to the new master_unit
+  3. Records configuration changes and costs on each deployment
+  4. Deducts the total cost from the campaign warchest
+  5. Creates campaign events for each refit
+
+  Returns {:ok, updated_campaign} or {:error, reason}.
+  """
+  def commit_omni_refits(sortie, pending_changes, omni_variants, campaign) do
+    # Build list of changes with their costs
+    changes_with_costs =
+      Enum.map(pending_changes, fn {deployment_id, new_variant_id} ->
+        deployment = Enum.find(sortie.deployments, &(&1.id == deployment_id))
+        variants = Map.get(omni_variants, deployment_id, [])
+        current_unit = deployment.company_unit.master_unit
+        new_unit = Enum.find(variants, &(&1.id == new_variant_id))
+
+        cost = calculate_omni_refit_cost(current_unit, new_unit)
+
+        %{
+          deployment: deployment,
+          current_unit: current_unit,
+          new_unit: new_unit,
+          cost: cost
+        }
+      end)
+
+    total_cost = Enum.sum(Enum.map(changes_with_costs, & &1.cost))
+
+    # Build the multi transaction
+    multi =
+      changes_with_costs
+      |> Enum.with_index()
+      |> Enum.reduce(Ecto.Multi.new(), fn {change, idx}, multi ->
+        multi
+        |> Ecto.Multi.update(
+          {:company_unit, idx},
+          Ecto.Changeset.change(change.deployment.company_unit, %{
+            master_unit_id: change.new_unit.id
+          })
+        )
+        |> Ecto.Multi.update(
+          {:deployment, idx},
+          Deployment.changeset(change.deployment, %{
+            configuration_changes: "Refitted from #{change.current_unit.variant} to #{change.new_unit.variant}",
+            configuration_cost_sp: change.cost
+          })
+        )
+        |> Ecto.Multi.insert(
+          {:event, idx},
+          CampaignEvent.creation_changeset(%CampaignEvent{}, %{
+            campaign_id: campaign.id,
+            event_type: "unit_refitted",
+            description: "#{change.deployment.company_unit.custom_name || change.current_unit.name} refitted to #{change.new_unit.variant} variant (-#{change.cost} SP)"
+          })
+        )
+      end)
+
+    # Add the warchest deduction
+    multi =
+      Ecto.Multi.update(multi, :campaign, fn _ ->
+        Campaign.changeset(campaign, %{warchest_balance: campaign.warchest_balance - total_cost})
+      end)
+
+    # Execute transaction
+    case Repo.transaction(multi) do
+      {:ok, %{campaign: updated_campaign}} ->
+        {:ok, get_campaign!(updated_campaign.id)}
+
+      {:error, _step, error, _changes} ->
+        {:error, "Failed to commit variant changes: #{inspect(error)}"}
+    end
+  end
 end

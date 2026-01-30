@@ -62,11 +62,11 @@ defmodule AcesWeb.CompanyLive.Index do
   def render(assigns) do
     ~H"""
     <div class="container mx-auto px-4 py-8">
-      <div class="flex justify-between items-center mb-8">
-        <h1 class="text-4xl font-bold">My Mercenary Companies</h1>
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+        <h1 class="text-2xl sm:text-4xl font-bold">My Mercenary Companies</h1>
         <.link
           navigate={~p"/companies/new"}
-          class="btn btn-primary"
+          class="btn btn-primary btn-sm sm:btn-md"
         >
           Create New Company
         </.link>
@@ -136,7 +136,7 @@ defmodule AcesWeb.CompanyLive.Index do
                     <div class="card-actions justify-end mt-4">
                       <.link
                         navigate={~p"/companies/#{company}/draft"}
-                        class="btn btn-warning btn-sm"
+                        class="btn btn-warning btn-sm md:btn-xs"
                       >
                         Continue Setup
                       </.link>
@@ -146,7 +146,7 @@ defmodule AcesWeb.CompanyLive.Index do
                         phx-click="delete"
                         phx-value-id={company.id}
                         data-confirm="Are you sure you want to delete this draft company? This action cannot be undone."
-                        class="btn btn-ghost btn-sm text-error"
+                        class="btn btn-ghost btn-sm md:btn-xs text-error"
                       >
                         Delete
                       </button>
@@ -201,7 +201,7 @@ defmodule AcesWeb.CompanyLive.Index do
                     <div class="card-actions justify-end mt-4">
                       <.link
                         navigate={~p"/companies/#{company}"}
-                        class="btn btn-primary btn-sm"
+                        class="btn btn-primary btn-sm md:btn-xs"
                       >
                         View Details
                       </.link>
@@ -211,7 +211,7 @@ defmodule AcesWeb.CompanyLive.Index do
                         phx-click="delete"
                         phx-value-id={company.id}
                         data-confirm="Are you sure you want to delete this company? This action cannot be undone."
-                        class="btn btn-ghost btn-sm text-error"
+                        class="btn btn-ghost btn-sm md:btn-xs text-error"
                       >
                         Delete
                       </button>

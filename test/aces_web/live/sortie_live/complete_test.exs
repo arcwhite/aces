@@ -102,9 +102,9 @@ defmodule AcesWeb.SortieLive.CompleteTest do
         live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/#{sortie.id}/complete/damage")
 
       assert html =~ "Confirm Unit Status"
-      assert html =~ "Damage Status"
-      assert html =~ "Casualty Status"
-      assert html =~ "Salvageable"
+      assert html =~ "<th>Damage</th>"
+      assert html =~ "<th>Casualty</th>"
+      assert html =~ "Salvage"
     end
 
     test "damage step allows updating damage status", %{conn: conn, company: company, campaign: campaign, sortie: sortie, deployment: deployment} do
@@ -259,7 +259,7 @@ defmodule AcesWeb.SortieLive.CompleteTest do
         |> render_change(%{"pilot_id" => to_string(pilot.id)})
 
       # Should show MVP bonus indicator for selected pilot
-      assert html =~ "+20 MVP"
+      assert html =~ ">+20</span>"
     end
 
     test "pilots step saves and navigates to spend_sp step", %{conn: conn, company: company, campaign: campaign, sortie: sortie} do

@@ -322,6 +322,38 @@ defmodule Aces.Units do
   defp apply_filters(query, [_ | rest]), do: apply_filters(query, rest)
 
   @doc """
+  Lists all variants of a given chassis (same name, different variants).
+  Used for OMNI mech reconfiguration.
+
+  Returns a list of master units with the same name, ordered by variant.
+  """
+  def list_variants_for_chassis(%MasterUnit{name: name}) do
+    MasterUnit
+    |> where([u], u.name == ^name)
+    |> order_by([u], u.variant)
+    |> Repo.all()
+  end
+
+  def list_variants_for_chassis(name) when is_binary(name) do
+    MasterUnit
+    |> where([u], u.name == ^name)
+    |> order_by([u], u.variant)
+    |> Repo.all()
+  end
+
+  @doc """
+  Check if a master unit has the OMNI special ability.
+  """
+  def is_omni?(%MasterUnit{bf_abilities: nil}), do: false
+  def is_omni?(%MasterUnit{bf_abilities: ""}), do: false
+  def is_omni?(%MasterUnit{bf_abilities: abilities}) do
+    # OMNI appears as "OMNI" in comma-separated abilities (no space after comma)
+    abilities
+    |> String.split(",")
+    |> Enum.any?(fn ability -> String.starts_with?(ability, "OMNI") end)
+  end
+
+  @doc """
   Refresh units that are missing bf_size from the MUL API.
 
   Options:

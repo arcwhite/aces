@@ -239,14 +239,14 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
         </p>
 
         <!-- Progress Steps -->
-        <div class="mt-6">
-          <ul class="steps steps-horizontal w-full">
-            <li class="step step-primary">Victory Details</li>
-            <li class="step step-primary">Unit Status</li>
-            <li class="step step-primary">Costs</li>
-            <li class="step step-primary">Pilot SP</li>
-            <li class="step">Spend SP</li>
-            <li class="step">Summary</li>
+        <div class="mt-6 overflow-x-auto">
+          <ul class="steps steps-horizontal w-full min-w-[500px]">
+            <li class="step step-primary text-xs md:text-sm">Victory</li>
+            <li class="step step-primary text-xs md:text-sm">Damage</li>
+            <li class="step step-primary text-xs md:text-sm">Costs</li>
+            <li class="step step-primary text-xs md:text-sm">Pilot SP</li>
+            <li class="step text-xs md:text-sm">Spend SP</li>
+            <li class="step text-xs md:text-sm">Summary</li>
           </ul>
         </div>
       </div>
@@ -282,9 +282,9 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
               <thead>
                 <tr>
                   <th>Pilot</th>
-                  <th>Participated</th>
+                  <th class="hidden sm:table-cell">Joined</th>
                   <th>Status</th>
-                  <th class="text-right">SP Earned</th>
+                  <th class="text-right">SP</th>
                 </tr>
               </thead>
               <tbody>
@@ -292,37 +292,37 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
                   <% earnings = Map.get(@pilot_earnings, pilot.id) %>
                   <tr class={if(earnings.status == :killed or earnings.status == :deceased, do: "opacity-50", else: "")}>
                     <td>
-                      <div class="font-semibold">{pilot.name}</div>
+                      <div class="font-semibold text-sm">{pilot.name}</div>
                       <%= if pilot.callsign do %>
-                        <div class="text-sm opacity-70">"{pilot.callsign}"</div>
+                        <div class="text-xs opacity-70 hidden sm:block">"{pilot.callsign}"</div>
                       <% end %>
                     </td>
-                    <td>
+                    <td class="hidden sm:table-cell">
                       <%= if earnings.participated do %>
-                        <span class="badge badge-primary">Yes</span>
+                        <span class="badge badge-primary badge-sm">Yes</span>
                       <% else %>
-                        <span class="badge badge-ghost">No</span>
+                        <span class="badge badge-ghost badge-sm">No</span>
                       <% end %>
                     </td>
                     <td>
                       <%= case earnings.status do %>
                         <% :killed -> %>
-                          <span class="badge badge-error">Killed in Action</span>
+                          <span class="badge badge-error badge-xs sm:badge-md whitespace-nowrap">KIA</span>
                         <% :deceased -> %>
-                          <span class="badge badge-error">Deceased</span>
+                          <span class="badge badge-error badge-xs sm:badge-md whitespace-nowrap">Deceased</span>
                         <% :wounded -> %>
-                          <span class="badge badge-warning">Wounded</span>
+                          <span class="badge badge-warning badge-xs sm:badge-md whitespace-nowrap">Wounded</span>
                         <% _ -> %>
-                          <span class="badge badge-success">Active</span>
+                          <span class="badge badge-success badge-xs sm:badge-md whitespace-nowrap">Active</span>
                       <% end %>
                     </td>
-                    <td class="text-right font-mono">
+                    <td class="text-right font-mono whitespace-nowrap">
                       <%= if earnings.status == :killed do %>
                         <span class="opacity-50">—</span>
                       <% else %>
-                        {earnings.sp} SP
+                        {earnings.sp}
                         <%= if pilot.id == @selected_mvp_id do %>
-                          <span class="text-warning ml-1">+20 MVP</span>
+                          <span class="text-warning text-xs ml-1">+20</span>
                         <% end %>
                       <% end %>
                     </td>

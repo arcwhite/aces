@@ -169,14 +169,14 @@ defmodule AcesWeb.SortieLive.Complete.Damage do
         </p>
 
         <!-- Progress Steps -->
-        <div class="mt-6">
-          <ul class="steps steps-horizontal w-full">
-            <li class="step step-primary">Victory Details</li>
-            <li class="step step-primary">Unit Status</li>
-            <li class="step">Costs</li>
-            <li class="step">Pilot SP</li>
-            <li class="step">Spend SP</li>
-            <li class="step">Summary</li>
+        <div class="mt-6 overflow-x-auto">
+          <ul class="steps steps-horizontal w-full min-w-[500px]">
+            <li class="step step-primary text-xs md:text-sm">Victory</li>
+            <li class="step step-primary text-xs md:text-sm">Damage</li>
+            <li class="step text-xs md:text-sm">Costs</li>
+            <li class="step text-xs md:text-sm">Pilot SP</li>
+            <li class="step text-xs md:text-sm">Spend SP</li>
+            <li class="step text-xs md:text-sm">Summary</li>
           </ul>
         </div>
       </div>
@@ -194,10 +194,10 @@ defmodule AcesWeb.SortieLive.Complete.Damage do
               <thead>
                 <tr>
                   <th>Unit</th>
-                  <th>Pilot/Crew</th>
-                  <th>Damage Status</th>
-                  <th>Salvageable?</th>
-                  <th>Casualty Status</th>
+                  <th class="hidden sm:table-cell">Pilot/Crew</th>
+                  <th>Damage</th>
+                  <th class="hidden sm:table-cell">Salvage?</th>
+                  <th>Casualty</th>
                 </tr>
               </thead>
               <tbody>
@@ -205,17 +205,25 @@ defmodule AcesWeb.SortieLive.Complete.Damage do
                   <% status = Map.get(@deployment_statuses, deployment.id) %>
                   <tr>
                     <td>
-                      <div class="font-semibold">
+                      <div class="font-semibold text-sm">
                         {deployment.company_unit.custom_name || deployment.company_unit.master_unit.name}
                       </div>
-                      <div class="text-sm opacity-70">
+                      <div class="text-xs opacity-70">
                         {deployment.company_unit.master_unit.variant}
                       </div>
+                      <!-- Show pilot on mobile -->
+                      <div class="sm:hidden text-xs mt-1">
+                        <%= if deployment.pilot do %>
+                          <span class="opacity-70">{deployment.pilot.name}</span>
+                        <% else %>
+                          <span class="opacity-50">Crew</span>
+                        <% end %>
+                      </div>
                     </td>
-                    <td>
+                    <td class="hidden sm:table-cell">
                       <%= if deployment.pilot do %>
-                        <div class="font-semibold">{deployment.pilot.name}</div>
-                        <div class="text-sm opacity-70">Skill {deployment.pilot.skill_level}</div>
+                        <div class="font-semibold text-sm">{deployment.pilot.name}</div>
+                        <div class="text-xs opacity-70">Skill {deployment.pilot.skill_level}</div>
                       <% else %>
                         <span class="opacity-50">Unnamed crew</span>
                       <% end %>
@@ -223,21 +231,34 @@ defmodule AcesWeb.SortieLive.Complete.Damage do
                     <td>
                       <select
                         class={[
-                          "select select-sm select-bordered",
+                          "select select-xs sm:select-sm select-bordered w-full max-w-[120px]",
                           damage_select_class(status.damage_status)
                         ]}
                         phx-change="update_damage_status"
                         phx-value-deployment_id={deployment.id}
                         name="status"
                       >
-                        <option value="operational" selected={status.damage_status == "operational"}>Operational</option>
-                        <option value="armor_damaged" selected={status.damage_status == "armor_damaged"}>Armor Damaged</option>
-                        <option value="structure_damaged" selected={status.damage_status == "structure_damaged"}>Structure Damaged</option>
+                        <option value="operational" selected={status.damage_status == "operational"}>OK</option>
+                        <option value="armor_damaged" selected={status.damage_status == "armor_damaged"}>Armor</option>
+                        <option value="structure_damaged" selected={status.damage_status == "structure_damaged"}>Structure</option>
                         <option value="crippled" selected={status.damage_status == "crippled"}>Crippled</option>
                         <option value="destroyed" selected={status.damage_status == "destroyed"}>Destroyed</option>
                       </select>
+                      <!-- Show salvage checkbox on mobile under damage select -->
+                      <%= if status.damage_status == "destroyed" do %>
+                        <label class="label cursor-pointer justify-start gap-1 sm:hidden p-0 mt-1">
+                          <input
+                            type="checkbox"
+                            class="checkbox checkbox-success checkbox-xs"
+                            checked={status.is_salvageable}
+                            phx-click="toggle_salvageable"
+                            phx-value-deployment_id={deployment.id}
+                          />
+                          <span class="label-text text-xs">Salvage</span>
+                        </label>
+                      <% end %>
                     </td>
-                    <td>
+                    <td class="hidden sm:table-cell">
                       <%= if status.damage_status == "destroyed" do %>
                         <label class="label cursor-pointer justify-start gap-2">
                           <input
@@ -256,14 +277,14 @@ defmodule AcesWeb.SortieLive.Complete.Damage do
                     <td>
                       <select
                         class={[
-                          "select select-sm select-bordered",
+                          "select select-xs sm:select-sm select-bordered w-full max-w-[100px]",
                           casualty_select_class(status.pilot_casualty)
                         ]}
                         phx-change="update_casualty_status"
                         phx-value-deployment_id={deployment.id}
                         name="status"
                       >
-                        <option value="none" selected={status.pilot_casualty == "none"}>Unharmed</option>
+                        <option value="none" selected={status.pilot_casualty == "none"}>OK</option>
                         <option value="wounded" selected={status.pilot_casualty == "wounded"}>Wounded</option>
                         <option value="killed" selected={status.pilot_casualty == "killed"}>Killed</option>
                       </select>

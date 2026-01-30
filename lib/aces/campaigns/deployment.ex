@@ -7,6 +7,7 @@ defmodule Aces.Campaigns.Deployment do
 
   alias Aces.Companies.{CompanyUnit, Pilot}
   alias Aces.Campaigns.Sortie
+  alias Aces.Units.MasterUnit
 
   @damage_status ~w(operational armor_damaged structure_damaged crippled salvageable destroyed)
   @casualty_status ~w(none wounded killed)
@@ -25,6 +26,8 @@ defmodule Aces.Campaigns.Deployment do
     belongs_to :sortie, Sortie
     belongs_to :company_unit, CompanyUnit
     belongs_to :pilot, Pilot
+    # Track the original variant for OMNI configuration cost calculations
+    belongs_to :original_master_unit, MasterUnit
 
     timestamps(type: :utc_datetime)
   end
@@ -48,7 +51,7 @@ defmodule Aces.Campaigns.Deployment do
 
   def creation_changeset(deployment, attrs) do
     deployment
-    |> cast(attrs, [:sortie_id, :company_unit_id, :pilot_id, :configuration_changes, :configuration_cost_sp])
+    |> cast(attrs, [:sortie_id, :company_unit_id, :pilot_id, :original_master_unit_id, :configuration_changes, :configuration_cost_sp])
     |> validate_required([:sortie_id, :company_unit_id])
     |> validate_number(:configuration_cost_sp, greater_than_or_equal_to: 0)
     |> put_change(:damage_status, "operational")
@@ -57,6 +60,7 @@ defmodule Aces.Campaigns.Deployment do
     |> foreign_key_constraint(:sortie_id)
     |> foreign_key_constraint(:company_unit_id)
     |> foreign_key_constraint(:pilot_id)
+    |> foreign_key_constraint(:original_master_unit_id)
   end
 
   def post_battle_changeset(deployment, attrs) do

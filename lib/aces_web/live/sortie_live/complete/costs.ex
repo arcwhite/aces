@@ -137,14 +137,14 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
         </p>
 
         <!-- Progress Steps -->
-        <div class="mt-6">
-          <ul class="steps steps-horizontal w-full">
-            <li class="step step-primary">Victory Details</li>
-            <li class="step step-primary">Unit Status</li>
-            <li class="step step-primary">Costs</li>
-            <li class="step">Pilot SP</li>
-            <li class="step">Spend SP</li>
-            <li class="step">Summary</li>
+        <div class="mt-6 overflow-x-auto">
+          <ul class="steps steps-horizontal w-full min-w-[500px]">
+            <li class="step step-primary text-xs md:text-sm">Victory</li>
+            <li class="step step-primary text-xs md:text-sm">Damage</li>
+            <li class="step step-primary text-xs md:text-sm">Costs</li>
+            <li class="step text-xs md:text-sm">Pilot SP</li>
+            <li class="step text-xs md:text-sm">Spend SP</li>
+            <li class="step text-xs md:text-sm">Summary</li>
           </ul>
         </div>
       </div>
@@ -158,27 +158,27 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
               <thead>
                 <tr>
                   <th>Unit</th>
-                  <th>Size</th>
-                  <th>Damage Status</th>
-                  <th class="text-right">Repair Cost</th>
+                  <th class="hidden sm:table-cell">Size</th>
+                  <th>Status</th>
+                  <th class="text-right">Cost</th>
                 </tr>
               </thead>
               <tbody>
                 <%= for deployment <- @sortie.deployments do %>
                   <% effective_status = SortieCompletion.effective_damage_status(deployment) %>
                   <tr>
-                    <td>
+                    <td class="text-sm">
                       {deployment.company_unit.custom_name || deployment.company_unit.master_unit.name}
                     </td>
-                    <td class="font-mono">
+                    <td class="font-mono hidden sm:table-cell">
                       {format_unit_size(deployment.company_unit.master_unit)}
                     </td>
                     <td>
-                      <span class={damage_badge_class(effective_status)}>
+                      <span class={[damage_badge_class(effective_status), "badge-xs sm:badge-md whitespace-nowrap"]}>
                         {format_damage_status(effective_status)}
                       </span>
                     </td>
-                    <td class="text-right font-mono">
+                    <td class="text-right font-mono whitespace-nowrap">
                       {Map.get(@costs.repair_costs, deployment.id, 0)} SP
                     </td>
                   </tr>
@@ -186,7 +186,9 @@ defmodule AcesWeb.SortieLive.Complete.Costs do
               </tbody>
               <tfoot>
                 <tr class="font-bold">
-                  <td colspan="3">Total Repair Costs</td>
+                  <td colspan="2" class="hidden sm:table-cell">Total Repair Costs</td>
+                  <td class="sm:hidden">Total</td>
+                  <td class="hidden sm:table-cell"></td>
                   <td class="text-right font-mono">{@costs.total_repair} SP</td>
                 </tr>
               </tfoot>

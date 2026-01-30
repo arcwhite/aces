@@ -130,32 +130,33 @@ defmodule AcesWeb.CampaignLive.Show do
       </div>
 
       <!-- Campaign Stats -->
-      <div class="grid gap-6 md:grid-cols-4 mb-8">
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Difficulty</div>
-          <div class="stat-value text-primary">{String.capitalize(@campaign.difficulty_level)}</div>
-          <div class="stat-desc">
+      <div class="grid grid-cols-2 gap-3 md:gap-6 lg:grid-cols-4 mb-8">
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4">
+          <div class="stat-title text-xs md:text-sm">Difficulty</div>
+          <div class="stat-value text-lg md:text-3xl text-primary">{String.capitalize(@campaign.difficulty_level)}</div>
+          <div class="stat-desc text-xs hidden md:block">
             PV: {Float.round(@campaign.pv_limit_modifier * 100)}% |
             Rewards: {Float.round(@campaign.reward_modifier * 100)}%
           </div>
         </div>
 
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Warchest</div>
-          <div class="stat-value text-secondary">{@campaign.warchest_balance} SP</div>
-          <div class="stat-desc">Support Points available</div>
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4">
+          <div class="stat-title text-xs md:text-sm">Warchest</div>
+          <div class="stat-value text-xl md:text-3xl text-secondary">
+            <span class="whitespace-nowrap">{@campaign.warchest_balance} SP</span>
+          </div>
         </div>
 
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Sorties</div>
-          <div class="stat-value text-info">{length(@campaign.sorties)}</div>
-          <div class="stat-desc">Missions completed</div>
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4">
+          <div class="stat-title text-xs md:text-sm">Sorties</div>
+          <div class="stat-value text-xl md:text-3xl text-info">{length(@campaign.sorties)}</div>
         </div>
 
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Experience Modifier</div>
-          <div class="stat-value text-accent">{Float.round(@campaign.experience_modifier * 100)}%</div>
-          <div class="stat-desc">Based on pilot skill</div>
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4">
+          <div class="stat-title text-xs md:text-sm">XP Modifier</div>
+          <div class="stat-value text-xl md:text-3xl text-accent">
+            <span class="whitespace-nowrap">{Float.round(@campaign.experience_modifier * 100)}%</span>
+          </div>
         </div>
       </div>
 
@@ -197,25 +198,26 @@ defmodule AcesWeb.CampaignLive.Show do
             <table class="table table-zebra w-full">
               <thead>
                 <tr>
-                  <th>Mission #</th>
-                  <th>Name</th>
+                  <th>Mission</th>
                   <th>Status</th>
-                  <th>PV Limit</th>
-                  <th>Income</th>
-                  <th>Expenses</th>
-                  <th>Net</th>
-                  <th>Started</th>
+                  <th class="hidden sm:table-cell">PV</th>
+                  <th class="hidden md:table-cell">Income</th>
+                  <th class="hidden md:table-cell">Expenses</th>
+                  <th class="hidden sm:table-cell">Net</th>
+                  <th class="hidden lg:table-cell">Started</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 <%= for sortie <- @campaign.sorties do %>
                   <tr>
-                    <td class="font-mono">#{sortie.mission_number}</td>
-                    <td class="font-semibold">{sortie.name || "Unnamed Mission"}</td>
+                    <td>
+                      <div class="font-mono text-xs md:text-sm">#{sortie.mission_number}</div>
+                      <div class="font-semibold text-sm">{sortie.name || "Unnamed"}</div>
+                    </td>
                     <td>
                       <div class={[
-                        "badge",
+                        "badge badge-xs md:badge-md whitespace-nowrap",
                         sortie.status == "setup" && "badge-neutral",
                         sortie.status == "in_progress" && "badge-warning",
                         sortie.status == "completed" && "badge-success",
@@ -224,17 +226,17 @@ defmodule AcesWeb.CampaignLive.Show do
                         {String.capitalize(sortie.status)}
                       </div>
                     </td>
-                    <td>{sortie.pv_limit || 0} PV</td>
-                    <td class="text-success">{sortie.total_income || 0} SP</td>
-                    <td class="text-error">{sortie.total_expenses || 0} SP</td>
+                    <td class="hidden sm:table-cell whitespace-nowrap">{sortie.pv_limit || 0} PV</td>
+                    <td class="hidden md:table-cell text-success">{sortie.total_income || 0} SP</td>
+                    <td class="hidden md:table-cell text-error">{sortie.total_expenses || 0} SP</td>
                     <td class={[
-                      "font-semibold",
+                      "hidden sm:table-cell font-semibold whitespace-nowrap",
                       (sortie.net_earnings || 0) >= 0 && "text-success",
                       (sortie.net_earnings || 0) < 0 && "text-error"
                     ]}>
                       {sortie.net_earnings || 0} SP
                     </td>
-                    <td>
+                    <td class="hidden lg:table-cell">
                       <%= if sortie.started_at do %>
                         {Calendar.strftime(sortie.started_at, "%b %d, %Y")}
                       <% else %>
@@ -242,20 +244,22 @@ defmodule AcesWeb.CampaignLive.Show do
                       <% end %>
                     </td>
                     <td>
-                      <.link
-                        navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{sortie.id}"}
-                        class="btn btn-ghost btn-sm"
-                      >
-                        View
-                      </.link>
-                      <%= if sortie.status == "setup" and @can_edit do %>
+                      <div class="flex flex-col sm:flex-row gap-1">
                         <.link
-                          navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{sortie.id}/edit"}
-                          class="btn btn-outline btn-sm"
+                          navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{sortie.id}"}
+                          class="btn btn-ghost btn-sm md:btn-xs"
                         >
-                          Edit
+                          View
                         </.link>
-                      <% end %>
+                        <%= if sortie.status == "setup" and @can_edit do %>
+                          <.link
+                            navigate={~p"/companies/#{@company.id}/campaigns/#{@campaign.id}/sorties/#{sortie.id}/edit"}
+                            class="btn btn-outline btn-sm md:btn-xs"
+                          >
+                            Edit
+                          </.link>
+                        <% end %>
+                      </div>
                     </td>
                   </tr>
                 <% end %>
@@ -311,8 +315,8 @@ defmodule AcesWeb.CampaignLive.Show do
                 <tr>
                   <th>Pilot</th>
                   <th class="text-right">SP Earned</th>
-                  <th class="text-center">Sorties</th>
-                  <th class="text-center">MVP Awards</th>
+                  <th class="text-center hidden sm:table-cell">Sorties</th>
+                  <th class="text-center">MVP</th>
                 </tr>
               </thead>
               <tbody>
@@ -321,14 +325,14 @@ defmodule AcesWeb.CampaignLive.Show do
                     <td>
                       <div class="font-semibold">{stats.pilot.name}</div>
                       <%= if stats.pilot.callsign do %>
-                        <div class="text-sm opacity-70">"{stats.pilot.callsign}"</div>
+                        <div class="text-sm opacity-70 hidden sm:block">"{stats.pilot.callsign}"</div>
                       <% end %>
                     </td>
-                    <td class="text-right font-mono">{stats.sp_earned} SP</td>
-                    <td class="text-center">{stats.sorties_participated}</td>
+                    <td class="text-right font-mono whitespace-nowrap">{stats.sp_earned} SP</td>
+                    <td class="text-center hidden sm:table-cell">{stats.sorties_participated}</td>
                     <td class="text-center">
                       <%= if stats.mvp_awards > 0 do %>
-                        <span class="badge badge-warning">{stats.mvp_awards}</span>
+                        <span class="badge badge-warning badge-sm md:badge-md">{stats.mvp_awards}</span>
                       <% else %>
                         <span class="opacity-50">0</span>
                       <% end %>

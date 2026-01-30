@@ -324,39 +324,35 @@ defmodule AcesWeb.CompanyLive.Show do
         <% end %>
       </div>
 
-      <div class="grid gap-6 md:grid-cols-5 mb-8">
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Total Units</div>
-          <div class="stat-value text-primary">{@company.stats.unit_count}</div>
-          <div class="stat-desc">In roster</div>
+      <div class="grid grid-cols-2 gap-3 md:gap-6 lg:grid-cols-5 mb-8">
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4">
+          <div class="stat-title text-xs md:text-sm">Units</div>
+          <div class="stat-value text-xl md:text-3xl text-primary">{@company.stats.unit_count}</div>
         </div>
 
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Pilots</div>
-          <div class="stat-value text-info">{@company.stats.pilot_count}</div>
-          <div class="stat-desc">Recruited</div>
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4">
+          <div class="stat-title text-xs md:text-sm">Pilots</div>
+          <div class="stat-value text-xl md:text-3xl text-info">{@company.stats.pilot_count}</div>
         </div>
 
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">PV Budget</div>
-          <div class="stat-value text-accent">
-            {@company.stats.pv_remaining}/{@company.stats.pv_budget}
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4">
+          <div class="stat-title text-xs md:text-sm">PV Budget</div>
+          <div class="stat-value text-xl md:text-3xl text-accent">
+            <span class="whitespace-nowrap">{@company.stats.pv_remaining}/{@company.stats.pv_budget}</span>
           </div>
-          <div class="stat-desc">{@company.stats.pv_used} PV used</div>
         </div>
 
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Warchest</div>
-          <div class="stat-value text-secondary">{@company.stats.warchest_balance}</div>
-          <div class="stat-desc">Support Points available</div>
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4">
+          <div class="stat-title text-xs md:text-sm">Warchest</div>
+          <div class="stat-value text-xl md:text-3xl text-secondary">{@company.stats.warchest_balance}</div>
+          <div class="stat-desc text-xs hidden md:block">SP available</div>
         </div>
 
-        <div class="stat bg-base-200 rounded-lg shadow">
-          <div class="stat-title">Last Updated</div>
-          <div class="stat-value text-sm">
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4 col-span-2 lg:col-span-1">
+          <div class="stat-title text-xs md:text-sm">Last Updated</div>
+          <div class="stat-value text-sm md:text-lg">
             {Calendar.strftime(@company.stats.last_modified, "%b %d, %Y")}
           </div>
-          <div class="stat-desc">{Calendar.strftime(@company.stats.last_modified, "%I:%M %p")}</div>
         </div>
       </div>
 
@@ -445,7 +441,7 @@ defmodule AcesWeb.CompanyLive.Show do
                   </div>
                   
                   <div class="card-actions justify-end">
-                    <button class="btn btn-ghost btn-xs">Edit</button>
+                    <button class="btn btn-ghost btn-sm md:btn-xs">Edit</button>
                   </div>
                 </div>
               </div>
@@ -580,12 +576,11 @@ defmodule AcesWeb.CompanyLive.Show do
             <table class="table table-zebra w-full">
               <thead>
                 <tr>
-                  <th>Unit Details</th>
-                  <th>Custom Name</th>
+                  <th>Unit</th>
+                  <th class="hidden md:table-cell">Custom Name</th>
                   <th>Status</th>
-                  <th>Pilot</th>
-                  <th>Skill</th>
-                  <th>Cost (SP)</th>
+                  <th class="hidden sm:table-cell">Pilot</th>
+                  <th class="hidden md:table-cell">Skill</th>
                   <th class="hidden lg:table-cell">Armor/Structure</th>
                   <th class="hidden lg:table-cell">Damage (S/M/L)</th>
                   <th>Actions</th>
@@ -596,26 +591,34 @@ defmodule AcesWeb.CompanyLive.Show do
                   <tr>
                     <td>
                       <%= if unit.master_unit do %>
-                        <div class="font-semibold">{Aces.Units.MasterUnit.display_name(unit.master_unit)}</div>
-                        <div class="flex gap-1 mt-1">
-                          <div class="badge badge-outline badge-sm">
+                        <!-- Mobile: show custom name if set, otherwise unit name -->
+                        <div class="font-semibold">
+                          <span class="md:hidden">
+                            {unit.custom_name || Aces.Units.MasterUnit.display_name(unit.master_unit)}
+                          </span>
+                          <span class="hidden md:inline">
+                            {Aces.Units.MasterUnit.display_name(unit.master_unit)}
+                          </span>
+                        </div>
+                        <div class="flex flex-wrap gap-1 mt-1">
+                          <div class="badge badge-outline badge-xs md:badge-sm">
                             {String.replace(unit.master_unit.unit_type, "_", " ") |> String.capitalize()}
                           </div>
                           <%= if unit.master_unit.tonnage do %>
-                            <div class="badge badge-neutral badge-sm">{unit.master_unit.tonnage}t</div>
+                            <div class="badge badge-neutral badge-xs md:badge-sm">{unit.master_unit.tonnage}t</div>
                           <% end %>
                           <%= if unit.master_unit.point_value do %>
-                            <div class="badge badge-accent badge-sm">{unit.master_unit.point_value} PV</div>
+                            <div class="badge badge-accent badge-xs md:badge-sm whitespace-nowrap">{unit.master_unit.point_value} PV</div>
                           <% end %>
                         </div>
                       <% else %>
                         <div class="font-semibold text-gray-500">Unknown Unit</div>
                       <% end %>
                     </td>
-                    <td>{unit.custom_name || "-"}</td>
+                    <td class="hidden md:table-cell">{unit.custom_name || "-"}</td>
                     <td>
                       <div class={[
-                        "badge",
+                        "badge badge-xs md:badge-md",
                         unit.status == "operational" && "badge-success",
                         unit.status == "damaged" && "badge-warning",
                         unit.status == "destroyed" && "badge-error"
@@ -623,19 +626,18 @@ defmodule AcesWeb.CompanyLive.Show do
                         {unit.status}
                       </div>
                     </td>
-                    <td>
+                    <td class="hidden sm:table-cell">
                       <%= if unit.pilot do %>
                         <span class="text-sm">{unit.pilot.name}</span>
                       <% else %>
                         <span class="text-gray-500 text-sm">Unassigned</span>
                       <% end %>
                     </td>
-                    <td>
+                    <td class="hidden md:table-cell">
                       <div class="badge badge-outline">
                         Skill {Aces.Companies.CompanyUnit.effective_skill_level(unit)}
                       </div>
                     </td>
-                    <td>{unit.purchase_cost_sp} SP</td>
                     <td class="hidden lg:table-cell">
                       <%= if unit.master_unit && unit.master_unit.bf_armor && unit.master_unit.bf_structure do %>
                         <span class="text-sm">{unit.master_unit.bf_armor}/{unit.master_unit.bf_structure}</span>
@@ -651,8 +653,8 @@ defmodule AcesWeb.CompanyLive.Show do
                       <% end %>
                     </td>
                     <td>
-                      <button 
-                        class="btn btn-ghost btn-xs"
+                      <button
+                        class="btn btn-ghost btn-sm md:btn-xs"
                         phx-click="edit_unit"
                         phx-value-unit_id={unit.id}
                       >

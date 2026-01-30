@@ -48,6 +48,7 @@ defmodule AcesWeb.SortieLive.Edit do
            |> assign(:available_units, available_units)
            |> assign(:available_pilots, available_pilots)
            |> assign(:selected_deployments, selected_deployments)
+           |> assign(:pv_limit, sortie.pv_limit)
            |> assign(:page_title, "Edit Sortie")
            |> assign_form(Sortie.creation_changeset(sortie, %{}))}
         end
@@ -65,7 +66,13 @@ defmodule AcesWeb.SortieLive.Edit do
       |> Sortie.creation_changeset(params_with_campaign)
       |> Map.put(:action, :validate)
 
-    {:noreply, assign_form(socket, changeset)}
+    # Track the current PV limit for deployment validation
+    pv_limit = parse_pv_limit(sortie_params["pv_limit"])
+
+    {:noreply,
+     socket
+     |> assign(:pv_limit, pv_limit)
+     |> assign_form(changeset)}
   end
 
   def handle_event("save", %{"sortie" => sortie_params}, socket) do
@@ -105,28 +112,42 @@ defmodule AcesWeb.SortieLive.Edit do
   def handle_event("toggle_unit_deployment", %{"unit_id" => unit_id}, socket) do
     unit_id = String.to_integer(unit_id)
     selected_deployments = socket.assigns.selected_deployments
+    pv_limit = socket.assigns.pv_limit
+    available_units = socket.assigns.available_units
 
-    updated_deployments =
-      if Enum.any?(selected_deployments, &(&1.company_unit_id == unit_id)) do
-        # Remove deployment
-        Enum.reject(selected_deployments, &(&1.company_unit_id == unit_id))
-      else
-        # Add deployment
-        unit = Enum.find(socket.assigns.available_units, &(&1.id == unit_id))
-        if unit do
+    is_currently_deployed = Enum.any?(selected_deployments, &(&1.company_unit_id == unit_id))
+
+    if is_currently_deployed do
+      # Remove deployment - always allowed
+      updated_deployments = Enum.reject(selected_deployments, &(&1.company_unit_id == unit_id))
+      {:noreply, assign(socket, :selected_deployments, updated_deployments)}
+    else
+      # Add deployment - check PV limit first
+      unit = Enum.find(available_units, &(&1.id == unit_id))
+
+      if unit do
+        unit_pv = unit.master_unit.point_value || 0
+        current_total_pv = calculate_total_pv(selected_deployments, available_units)
+        new_total_pv = current_total_pv + unit_pv
+
+        if pv_limit && new_total_pv > pv_limit do
+          # Would exceed PV limit - show error
+          {:noreply,
+           socket
+           |> put_flash(:error, "Cannot add #{unit.custom_name || unit.master_unit.name} (#{unit_pv} PV) - would exceed PV limit of #{pv_limit}. Current: #{current_total_pv} PV.")}
+        else
           new_deployment = %{
             company_unit_id: unit_id,
             pilot_id: nil,
             unit: unit,
             existing_deployment_id: nil
           }
-          [new_deployment | selected_deployments]
-        else
-          selected_deployments
+          {:noreply, assign(socket, :selected_deployments, [new_deployment | selected_deployments])}
         end
+      else
+        {:noreply, socket}
       end
-
-    {:noreply, assign(socket, :selected_deployments, updated_deployments)}
+    end
   end
 
   def handle_event("assign_pilot", %{"unit_id" => unit_id_str, "value" => pilot_value}, socket) do
@@ -268,6 +289,21 @@ defmodule AcesWeb.SortieLive.Edit do
       end
     end)
     |> Enum.sum()
+  end
+
+  defp parse_pv_limit(nil), do: nil
+  defp parse_pv_limit(""), do: nil
+  defp parse_pv_limit(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, _} when int > 0 -> int
+      _ -> nil
+    end
+  end
+  defp parse_pv_limit(value) when is_integer(value) and value > 0, do: value
+  defp parse_pv_limit(_), do: nil
+
+  defp pv_over_limit?(deployments, available_units, pv_limit) do
+    pv_limit != nil and calculate_total_pv(deployments, available_units) > pv_limit
   end
 
   @impl true
@@ -463,7 +499,7 @@ defmodule AcesWeb.SortieLive.Edit do
               <button
                 type="submit"
                 class="btn btn-primary"
-                disabled={@selected_deployments == [] || !@form.source.valid?}
+                disabled={@selected_deployments == [] || !@form.source.valid? || pv_over_limit?(@selected_deployments, @available_units, @pv_limit)}
               >
                 Save Changes
               </button>
@@ -490,7 +526,14 @@ defmodule AcesWeb.SortieLive.Edit do
 
                 <div class="stat">
                   <div class="stat-title">Total PV</div>
-                  <div class="stat-value text-info">{calculate_total_pv(@selected_deployments, @available_units)}</div>
+                  <% total_pv = calculate_total_pv(@selected_deployments, @available_units) %>
+                  <% over_limit = pv_over_limit?(@selected_deployments, @available_units, @pv_limit) %>
+                  <div class={["stat-value", if(over_limit, do: "text-error", else: "text-info")]}>
+                    {total_pv}<%= if @pv_limit do %>/{@pv_limit}<% end %>
+                  </div>
+                  <%= if over_limit do %>
+                    <div class="stat-desc text-error">Exceeds PV limit!</div>
+                  <% end %>
                 </div>
 
                 <div class="stat">

@@ -190,14 +190,14 @@ defmodule AcesWeb.SortieLive.Complete.Outcome do
         </p>
 
         <!-- Progress Steps -->
-        <div class="mt-6">
-          <ul class="steps steps-horizontal w-full">
-            <li class="step step-primary">Victory Details</li>
-            <li class="step">Unit Status</li>
-            <li class="step">Costs</li>
-            <li class="step">Pilot SP</li>
-            <li class="step">Spend SP</li>
-            <li class="step">Summary</li>
+        <div class="mt-6 overflow-x-auto">
+          <ul class="steps steps-horizontal w-full min-w-[500px]">
+            <li class="step step-primary text-xs md:text-sm">Victory</li>
+            <li class="step text-xs md:text-sm">Damage</li>
+            <li class="step text-xs md:text-sm">Costs</li>
+            <li class="step text-xs md:text-sm">Pilot SP</li>
+            <li class="step text-xs md:text-sm">Spend SP</li>
+            <li class="step text-xs md:text-sm">Summary</li>
           </ul>
         </div>
       </div>

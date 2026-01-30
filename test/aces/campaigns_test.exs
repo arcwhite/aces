@@ -94,7 +94,7 @@ defmodule Aces.CampaignsTest do
       }
     end
 
-    test "ensures unique mission number per campaign", %{campaign: campaign} do
+    test "ensures unique mission number per campaign for active sorties", %{campaign: campaign} do
       sortie_attrs = %{
         "mission_number" => "1",
         "name" => "First Mission",
@@ -112,7 +112,36 @@ defmodule Aces.CampaignsTest do
       }
 
       assert {:error, %Ecto.Changeset{} = changeset} = Campaigns.create_sortie(campaign, duplicate_attrs)
-      assert %{campaign_id: ["has already been taken"]} = errors_on(changeset)
+      assert %{campaign_id: ["already exists for an active sortie in this campaign"]} = errors_on(changeset)
+    end
+
+    test "allows retrying a failed sortie with the same mission number", %{campaign: campaign} do
+      sortie_attrs = %{
+        "mission_number" => "1",
+        "name" => "First Attempt",
+        "pv_limit" => 200
+      }
+
+      # Create first sortie
+      assert {:ok, sortie} = Campaigns.create_sortie(campaign, sortie_attrs)
+
+      # Directly mark the sortie as failed (simulating the workflow where a sortie
+      # was started and then failed)
+      {:ok, _} =
+        sortie
+        |> Ecto.Changeset.change(%{status: "failed"})
+        |> Aces.Repo.update()
+
+      # Now we should be able to create a new sortie with the same mission number
+      retry_attrs = %{
+        "mission_number" => "1",
+        "name" => "Second Attempt",
+        "pv_limit" => 200
+      }
+
+      assert {:ok, retry_sortie} = Campaigns.create_sortie(campaign, retry_attrs)
+      assert retry_sortie.mission_number == "1"
+      assert retry_sortie.name == "Second Attempt"
     end
 
     test "allows same mission number in different campaigns", %{campaign: campaign1, company: company} do
