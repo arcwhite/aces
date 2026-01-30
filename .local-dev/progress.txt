@@ -11,7 +11,19 @@
 - For complex migrations (like JSON to table), write a detailed spec first (see specs/PILOT_ALLOCATIONS.md). This captures context and decisions for future implementation.
 
 # High-priority items
-- [ ] Add more events and UI to show timelines of events on a Campaign, including Sortie outcomes, unit purchases, new pilots hired, units sold, etc.
+
+The following are from @.local-dev/refactor.txt, please examine that file for more information
+
+[ ] 1. sortie_live/show.ex - OMNI refits extraction
+[ ] 2. sortie_live/complete/pilots.ex - SP distribution extraction
+[ ] 3. company_live/show.ex - Unit search extraction
+[ ] 4. build_saved_map_from_allocations/2 refactor
+[ ] 5. update_deployment_results/2 error handling
+[ ] 6. enrich_allocations/1 N+N fix
+[ ] 7. Duplicate pilot ID extraction
+[ ] 8. units.ex filter organization
+[ ] 9. Parameter extraction deduplication
+[ ] 10. Add documentation
 
 # Medium-priority items
 - [ ] Figure out how to compute code coverage
@@ -20,6 +32,7 @@
 # Low-priority items
 - [ ] Add PubSub support so multiple users can see changes to their Company, Campaign, and Sorties in real-time. Especially useful for the "live" Sortie show view, where users are tracking things happening as the game is happening.
 - [ ] Add functionality to let users upload images to their Sorties, for posterity.
+- [ ] Add more events and UI to show timelines of events on a Campaign, including Sortie outcomes, unit purchases, new pilots hired, units sold, etc.
 
 # Completed Items
 - [x] Refactor 1.1 from .local-dev/refactor.txt - Business logic separated into Aces.Campaigns.SortieCompletion module (calculate_all_costs, calculate_pilot_earnings, reverse_pilot_allocations, distribute_sp_to_pilots, etc.)
