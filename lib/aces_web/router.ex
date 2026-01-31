@@ -84,6 +84,16 @@ defmodule AcesWeb.Router do
     get "/users/settings", UserSettingsController, :edit
     put "/users/settings", UserSettingsController, :update
     get "/users/settings/confirm-email/:token", UserSettingsController, :confirm_email
+
+    # Invitations (for logged-in users)
+    live "/invitations", InvitationLive.Index, :index
+  end
+
+  scope "/", AcesWeb do
+    pipe_through [:browser]
+
+    # Accept invitation (works for both logged-in and anonymous users)
+    live "/invitations/:token", InvitationLive.Accept, :accept
   end
 
   scope "/", AcesWeb do

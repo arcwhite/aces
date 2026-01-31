@@ -77,4 +77,39 @@ defmodule Aces.Accounts.UserNotifier do
     ==============================
     """)
   end
+
+  @doc """
+  Deliver a company invitation email.
+
+  `invitation` should have `:company` and `:invited_by` preloaded.
+  """
+  def deliver_company_invitation(invited_email, invitation, url) do
+    inviter_email = if invitation.invited_by, do: invitation.invited_by.email, else: "a user"
+    company_name = invitation.company.name
+    role = invitation.role
+
+    deliver(invited_email, "You've been invited to join #{company_name}", """
+
+    ==============================
+
+    Hi there,
+
+    #{inviter_email} has invited you to join the mercenary company "#{company_name}" as #{article_for_role(role)} #{role}.
+
+    You can accept this invitation by visiting the URL below:
+
+    #{url}
+
+    This invitation will expire in #{Aces.Companies.CompanyInvitation.validity_in_days()} days.
+
+    If you weren't expecting this invitation, you can safely ignore this email.
+
+    ==============================
+    """)
+  end
+
+  defp article_for_role("owner"), do: "an"
+  defp article_for_role("editor"), do: "an"
+  defp article_for_role("viewer"), do: "a"
+  defp article_for_role(_), do: "a"
 end

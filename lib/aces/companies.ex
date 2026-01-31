@@ -13,7 +13,7 @@ defmodule Aces.Companies do
   alias Aces.Repo
 
   alias Aces.Accounts.User
-  alias Aces.Companies.{Company, CompanyMembership}
+  alias Aces.Companies.{Company, CompanyInvitation, CompanyMembership}
   alias Aces.Units.MasterUnit
 
   ## Company CRUD
@@ -291,5 +291,132 @@ defmodule Aces.Companies do
       end)
 
     %{company | company_units: sorted_units}
+  end
+
+  ## Company Invitations
+
+  @doc """
+  Creates an invitation to join a company.
+
+  Returns `{:ok, {encoded_token, invitation}}` on success, where the
+  `encoded_token` should be sent to the invitee via email.
+
+  Returns `{:error, changeset}` if the invitation is invalid (e.g., duplicate
+  pending invitation).
+  """
+  def create_invitation(%Company{} = company, %User{} = invited_by, invited_email, role \\ "viewer") do
+    # Check if user is already a member
+    existing_user = Aces.Accounts.get_user_by_email(invited_email)
+
+    if existing_user && get_membership(company, existing_user) do
+      {:error, :already_member}
+    else
+      {encoded_token, invitation} =
+        CompanyInvitation.build_invitation(company, invited_by, invited_email, role)
+
+      # Use changeset for proper constraint handling
+      changeset = CompanyInvitation.insert_changeset(invitation)
+
+      case Repo.insert(changeset) do
+        {:ok, saved_invitation} ->
+          {:ok, {encoded_token, saved_invitation}}
+
+        {:error, changeset} ->
+          {:error, changeset}
+      end
+    end
+  end
+
+  @doc """
+  Gets a valid invitation by its token.
+
+  Returns `{:ok, invitation}` if the token is valid and the invitation is
+  pending and not expired. Returns `{:error, :invalid_token}` otherwise.
+  """
+  def get_invitation_by_token(token) do
+    case CompanyInvitation.verify_invitation_token_query(token) do
+      {:ok, query} ->
+        case Repo.one(query) do
+          nil -> {:error, :invalid_token}
+          invitation -> {:ok, invitation}
+        end
+
+      :error ->
+        {:error, :invalid_token}
+    end
+  end
+
+  @doc """
+  Accepts an invitation and adds the user to the company.
+
+  The user accepting must have an email matching the invitation's invited_email.
+  Returns `{:ok, membership}` on success.
+  """
+  def accept_invitation(%CompanyInvitation{} = invitation, %User{} = user) do
+    # Verify email matches (case-insensitive)
+    if String.downcase(user.email) != String.downcase(invitation.invited_email) do
+      {:error, :email_mismatch}
+    else
+      Ecto.Multi.new()
+      |> Ecto.Multi.update(:invitation, CompanyInvitation.accept_changeset(invitation))
+      |> Ecto.Multi.insert(:membership, fn _changes ->
+        CompanyMembership.changeset(%CompanyMembership{}, %{
+          user_id: user.id,
+          company_id: invitation.company_id,
+          role: invitation.role
+        })
+      end)
+      |> Repo.transaction()
+      |> case do
+        {:ok, %{membership: membership}} ->
+          {:ok, membership}
+
+        {:error, :invitation, changeset, _} ->
+          {:error, changeset}
+
+        {:error, :membership, changeset, _} ->
+          {:error, changeset}
+      end
+    end
+  end
+
+  @doc """
+  Cancels a pending invitation.
+  """
+  def cancel_invitation(%CompanyInvitation{} = invitation) do
+    if invitation.status != "pending" do
+      {:error, :not_pending}
+    else
+      invitation
+      |> CompanyInvitation.cancel_changeset()
+      |> Repo.update()
+    end
+  end
+
+  @doc """
+  Lists all pending invitations for a company.
+  """
+  def list_pending_invitations(%Company{} = company) do
+    company.id
+    |> CompanyInvitation.pending_for_company_query()
+    |> Repo.all()
+  end
+
+  @doc """
+  Lists all pending invitations for a user's email.
+  """
+  def list_user_pending_invitations(%User{} = user) do
+    user.email
+    |> CompanyInvitation.pending_for_email_query()
+    |> Repo.all()
+  end
+
+  @doc """
+  Gets an invitation by ID, preloading company and invited_by.
+  """
+  def get_invitation!(id) do
+    CompanyInvitation
+    |> preload([:company, :invited_by])
+    |> Repo.get!(id)
   end
 end

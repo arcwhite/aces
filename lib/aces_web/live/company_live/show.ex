@@ -25,6 +25,7 @@ defmodule AcesWeb.CompanyLive.Show do
          |> redirect(to: ~p"/companies/#{company}/draft")}
       else
         active_campaign = Campaigns.get_active_campaign(company)
+        pending_invitations = load_pending_invitations(company, user)
 
         {:ok,
          socket
@@ -34,8 +35,19 @@ defmodule AcesWeb.CompanyLive.Show do
          |> assign(:show_unit_search, false)
          |> assign(:show_pilot_form, false)
          |> assign(:show_unit_edit, false)
+         |> assign(:show_invite_modal, false)
+         |> assign(:pending_invitations, pending_invitations)
+         |> assign(:can_manage_members, Authorization.can?(:manage_members, user, company))
          |> assign(:editing_unit, nil)}
       end
+    end
+  end
+
+  defp load_pending_invitations(company, user) do
+    if Authorization.can?(:manage_members, user, company) do
+      Companies.list_pending_invitations(company)
+    else
+      []
     end
   end
 
@@ -88,6 +100,29 @@ defmodule AcesWeb.CompanyLive.Show do
      |> assign(:editing_unit, nil)}
   end
 
+  def handle_event("invite_member", _params, socket) do
+    {:noreply, assign(socket, :show_invite_modal, true)}
+  end
+
+  def handle_event("cancel_invitation", %{"id" => id}, socket) do
+    invitation = Companies.get_invitation!(id)
+
+    case Companies.cancel_invitation(invitation) do
+      {:ok, _} ->
+        company = socket.assigns.company
+        user = socket.assigns.current_scope.user
+        pending_invitations = load_pending_invitations(company, user)
+
+        {:noreply,
+         socket
+         |> put_flash(:info, "Invitation cancelled.")
+         |> assign(:pending_invitations, pending_invitations)}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to cancel invitation.")}
+    end
+  end
+
   @impl true
   def handle_event("delete_company", %{"id" => id}, socket) do
     company = Companies.get_company!(id)
@@ -134,6 +169,22 @@ defmodule AcesWeb.CompanyLive.Show do
 
   def handle_info({AcesWeb.Components.UnitSearchModal, :close_modal}, socket) do
     {:noreply, assign(socket, :show_unit_search, false)}
+  end
+
+  def handle_info({AcesWeb.CompanyLive.InviteModal, :close_modal}, socket) do
+    {:noreply, assign(socket, :show_invite_modal, false)}
+  end
+
+  def handle_info({AcesWeb.CompanyLive.InviteModal, {:invitation_sent, email}}, socket) do
+    company = socket.assigns.company
+    user = socket.assigns.current_scope.user
+    pending_invitations = load_pending_invitations(company, user)
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Invitation sent to #{email}!")
+     |> assign(:show_invite_modal, false)
+     |> assign(:pending_invitations, pending_invitations)}
   end
 
   def handle_info({AcesWeb.Components.UnitSearchModal, {:unit_selected, mul_id}}, socket) do
@@ -532,6 +583,67 @@ defmodule AcesWeb.CompanyLive.Show do
       <div class="mb-8">
         <h2 class="text-2xl font-bold mb-4">Company Settings</h2>
 
+        <!-- Member Management (Owners only) -->
+        <%= if @can_manage_members do %>
+          <div class="card bg-base-200 shadow-xl mb-4">
+            <div class="card-body">
+              <div class="flex justify-between items-center">
+                <h3 class="card-title">Team Members</h3>
+                <button type="button" phx-click="invite_member" class="btn btn-primary btn-sm">
+                  Invite Member
+                </button>
+              </div>
+
+              <p class="text-sm opacity-70 mb-4">
+                Invite others to help manage your company. They'll receive an email with an invitation link.
+              </p>
+
+              <!-- Pending Invitations -->
+              <%= if @pending_invitations != [] do %>
+                <div class="mt-4">
+                  <h4 class="font-semibold mb-2">Pending Invitations</h4>
+                  <div class="overflow-x-auto">
+                    <table class="table table-zebra w-full">
+                      <thead>
+                        <tr>
+                          <th>Email</th>
+                          <th>Role</th>
+                          <th>Sent</th>
+                          <th>Expires</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <%= for invitation <- @pending_invitations do %>
+                          <tr>
+                            <td>{invitation.invited_email}</td>
+                            <td>
+                              <div class="badge badge-outline">{String.capitalize(invitation.role)}</div>
+                            </td>
+                            <td class="text-sm">{Calendar.strftime(invitation.inserted_at, "%b %d")}</td>
+                            <td class="text-sm">{Calendar.strftime(invitation.expires_at, "%b %d")}</td>
+                            <td>
+                              <button
+                                type="button"
+                                phx-click="cancel_invitation"
+                                phx-value-id={invitation.id}
+                                data-confirm="Cancel this invitation?"
+                                class="btn btn-ghost btn-xs"
+                              >
+                                Cancel
+                              </button>
+                            </td>
+                          </tr>
+                        <% end %>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
+
         <div class="card bg-base-200 shadow-xl">
           <div class="card-body">
             <h3 class="card-title">Danger Zone</h3>
@@ -614,6 +726,16 @@ defmodule AcesWeb.CompanyLive.Show do
             />
           </div>
         </div>
+      <% end %>
+
+      <!-- Invite Member Modal -->
+      <%= if @show_invite_modal do %>
+        <.live_component
+          module={AcesWeb.CompanyLive.InviteModal}
+          id="invite-modal"
+          company={@company}
+          current_user={@current_scope.user}
+        />
       <% end %>
     </div>
     """

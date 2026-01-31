@@ -621,4 +621,166 @@ defmodule Aces.CompaniesTest do
       assert "Cannot add more than 2 identical units of the same type" in errors_on(changeset).master_unit_id
     end
   end
+
+  describe "company invitations" do
+    test "create_invitation/4 creates a valid invitation" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+
+      assert {:ok, {token, invitation}} =
+               Companies.create_invitation(company, owner, "invitee@example.com", "editor")
+
+      assert invitation.invited_email == "invitee@example.com"
+      assert invitation.role == "editor"
+      assert invitation.status == "pending"
+      assert invitation.company_id == company.id
+      assert invitation.invited_by_id == owner.id
+      assert is_binary(token)
+      assert DateTime.diff(invitation.expires_at, DateTime.utc_now(), :day) >= 6
+    end
+
+    test "create_invitation/4 defaults to viewer role" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+
+      assert {:ok, {_token, invitation}} =
+               Companies.create_invitation(company, owner, "invitee@example.com")
+
+      assert invitation.role == "viewer"
+    end
+
+    test "create_invitation/4 returns error for already member" do
+      %{company: company, owner: owner, editor: editor} = company_with_members_fixture()
+
+      assert {:error, :already_member} =
+               Companies.create_invitation(company, owner, editor.email, "viewer")
+    end
+
+    test "create_invitation/4 prevents duplicate pending invitations" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+
+      assert {:ok, _} = Companies.create_invitation(company, owner, "invitee@example.com")
+      assert {:error, changeset} = Companies.create_invitation(company, owner, "invitee@example.com")
+
+      assert "already has a pending invitation" in errors_on(changeset).invited_email
+    end
+
+    test "get_invitation_by_token/1 returns invitation for valid token" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+      {:ok, {token, _}} = Companies.create_invitation(company, owner, "invitee@example.com")
+
+      assert {:ok, invitation} = Companies.get_invitation_by_token(token)
+      assert invitation.invited_email == "invitee@example.com"
+      assert invitation.company.id == company.id
+    end
+
+    test "get_invitation_by_token/1 returns error for invalid token" do
+      assert {:error, :invalid_token} = Companies.get_invitation_by_token("invalid-token")
+    end
+
+    test "get_invitation_by_token/1 returns error for expired invitation" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+      {:ok, {token, invitation}} = Companies.create_invitation(company, owner, "invitee@example.com")
+
+      # Manually expire the invitation
+      expired_at = DateTime.utc_now() |> DateTime.add(-1, :day) |> DateTime.truncate(:second)
+
+      invitation
+      |> Ecto.Changeset.change(%{expires_at: expired_at})
+      |> Aces.Repo.update!()
+
+      assert {:error, :invalid_token} = Companies.get_invitation_by_token(token)
+    end
+
+    test "accept_invitation/2 creates membership and marks invitation accepted" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+      invitee = user_fixture(email: "invitee@example.com")
+
+      {:ok, {_token, invitation}} =
+        Companies.create_invitation(company, owner, "invitee@example.com", "editor")
+
+      invitation = Companies.get_invitation!(invitation.id)
+      assert {:ok, membership} = Companies.accept_invitation(invitation, invitee)
+
+      assert membership.user_id == invitee.id
+      assert membership.company_id == company.id
+      assert membership.role == "editor"
+
+      # Verify invitation is marked as accepted
+      updated_invitation = Companies.get_invitation!(invitation.id)
+      assert updated_invitation.status == "accepted"
+      assert updated_invitation.accepted_at != nil
+    end
+
+    test "accept_invitation/2 returns error for email mismatch" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+      wrong_user = user_fixture(email: "wrong@example.com")
+
+      {:ok, {_token, invitation}} =
+        Companies.create_invitation(company, owner, "invitee@example.com", "editor")
+
+      invitation = Companies.get_invitation!(invitation.id)
+      assert {:error, :email_mismatch} = Companies.accept_invitation(invitation, wrong_user)
+    end
+
+    test "cancel_invitation/1 cancels a pending invitation" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+
+      {:ok, {_token, invitation}} = Companies.create_invitation(company, owner, "invitee@example.com")
+      invitation = Companies.get_invitation!(invitation.id)
+
+      assert {:ok, cancelled} = Companies.cancel_invitation(invitation)
+      assert cancelled.status == "cancelled"
+    end
+
+    test "cancel_invitation/1 returns error for non-pending invitation" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+      invitee = user_fixture(email: "invitee@example.com")
+
+      {:ok, {_token, invitation}} = Companies.create_invitation(company, owner, "invitee@example.com")
+      invitation = Companies.get_invitation!(invitation.id)
+
+      # Accept the invitation first
+      {:ok, _} = Companies.accept_invitation(invitation, invitee)
+
+      # Try to cancel - should fail
+      accepted_invitation = Companies.get_invitation!(invitation.id)
+      assert {:error, :not_pending} = Companies.cancel_invitation(accepted_invitation)
+    end
+
+    test "list_pending_invitations/1 returns pending invitations for company" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+
+      {:ok, _} = Companies.create_invitation(company, owner, "user1@example.com")
+      {:ok, _} = Companies.create_invitation(company, owner, "user2@example.com")
+
+      # Cancel one invitation
+      {:ok, {_, inv3}} = Companies.create_invitation(company, owner, "user3@example.com")
+      inv3 = Companies.get_invitation!(inv3.id)
+      {:ok, _} = Companies.cancel_invitation(inv3)
+
+      invitations = Companies.list_pending_invitations(company)
+      emails = Enum.map(invitations, & &1.invited_email)
+
+      assert length(invitations) == 2
+      assert "user1@example.com" in emails
+      assert "user2@example.com" in emails
+      refute "user3@example.com" in emails
+    end
+
+    test "list_user_pending_invitations/1 returns pending invitations for user email" do
+      %{company: company1, owner: owner1} = company_with_members_fixture()
+      %{company: company2, owner: owner2} = company_with_members_fixture()
+
+      invitee = user_fixture(email: "invitee@example.com")
+
+      {:ok, _} = Companies.create_invitation(company1, owner1, invitee.email)
+      {:ok, _} = Companies.create_invitation(company2, owner2, invitee.email)
+
+      invitations = Companies.list_user_pending_invitations(invitee)
+      company_ids = Enum.map(invitations, & &1.company_id)
+
+      assert length(invitations) == 2
+      assert company1.id in company_ids
+      assert company2.id in company_ids
+    end
+  end
 end
