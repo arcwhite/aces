@@ -1,6 +1,7 @@
 defmodule AcesWeb.CampaignLive.Index do
   @moduledoc """
-  LiveView for displaying all active campaigns for the current user
+  LiveView for displaying campaigns for the current user.
+  Shows both active and past (completed/failed) campaigns in separate tabs.
   """
   use AcesWeb, :live_view
 
@@ -11,32 +12,82 @@ defmodule AcesWeb.CampaignLive.Index do
   @impl true
   def mount(_params, _session, socket) do
     user = socket.assigns.current_scope.user
-    
+
     # Get all campaigns for the user's companies
-    campaigns = get_user_campaigns(user)
-    
+    all_campaigns = get_all_user_campaigns(user)
+
+    # Separate into active and past campaigns
+    {active_campaigns, past_campaigns} = Enum.split_with(all_campaigns, &(&1.status == "active"))
+
     {:ok,
      socket
-     |> assign(:campaigns, campaigns)
+     |> assign(:active_campaigns, active_campaigns)
+     |> assign(:past_campaigns, past_campaigns)
+     |> assign(:selected_tab, :active)
      |> assign(:page_title, "My Campaigns")}
+  end
+
+  @impl true
+  def handle_event("select_tab", %{"tab" => tab}, socket) do
+    tab_atom = String.to_existing_atom(tab)
+    {:noreply, assign(socket, :selected_tab, tab_atom)}
   end
 
   @impl true
   def render(assigns) do
     ~H"""
     <div class="container mx-auto px-4 py-8">
-      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <div>
           <h1 class="text-2xl sm:text-4xl font-bold">My Campaigns</h1>
           <p class="text-base-content/70 mt-2">
-            Active campaigns across all your companies
+            Campaigns across all your companies
           </p>
         </div>
       </div>
 
-      <%= if @campaigns == [] do %>
-        <div class="card bg-base-100 shadow-xl">
-          <div class="card-body text-center py-12">
+      <div role="tablist" class="tabs tabs-bordered mb-6">
+        <button
+          role="tab"
+          class={"tab " <> if(@selected_tab == :active, do: "tab-active", else: "")}
+          phx-click="select_tab"
+          phx-value-tab="active"
+        >
+          Active
+          <%= if @active_campaigns != [] do %>
+            <span class="badge badge-sm badge-primary ml-2">{length(@active_campaigns)}</span>
+          <% end %>
+        </button>
+        <button
+          role="tab"
+          class={"tab " <> if(@selected_tab == :past, do: "tab-active", else: "")}
+          phx-click="select_tab"
+          phx-value-tab="past"
+        >
+          Past
+          <%= if @past_campaigns != [] do %>
+            <span class="badge badge-sm badge-ghost ml-2">{length(@past_campaigns)}</span>
+          <% end %>
+        </button>
+      </div>
+
+      <%= if @selected_tab == :active do %>
+        {render_campaigns_grid(assigns, @active_campaigns, :active)}
+      <% else %>
+        {render_campaigns_grid(assigns, @past_campaigns, :past)}
+      <% end %>
+    </div>
+    """
+  end
+
+  defp render_campaigns_grid(assigns, campaigns, tab_type) do
+    assigns = assign(assigns, campaigns: campaigns, tab_type: tab_type)
+
+    ~H"""
+    <%= if @campaigns == [] do %>
+      <div class="card bg-base-100 shadow-xl">
+        <div class="card-body text-center py-12">
+          <%= if @tab_type == :active do %>
             <h2 class="card-title justify-center text-xl">No Active Campaigns</h2>
             <p class="text-base-content/70 mb-6">
               You don't have any active campaigns yet. Create a company and start your first campaign!
@@ -44,75 +95,90 @@ defmodule AcesWeb.CampaignLive.Index do
             <.link href={~p"/companies"} class="btn btn-primary">
               Go to Companies
             </.link>
-          </div>
-        </div>
-      <% else %>
-        <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          <%= for campaign <- @campaigns do %>
-            <div class="card bg-base-100 shadow-xl">
-              <div class="card-body">
-                <h2 class="card-title">
-                  {campaign.name}
-                  <div class={"badge badge-sm " <> difficulty_badge_class(campaign.difficulty_level)}>
-                    {String.capitalize(campaign.difficulty_level)}
-                  </div>
-                </h2>
-                
-                <p class="text-sm text-base-content/70 mb-4">
-                  {campaign.description || "No description"}
-                </p>
-                
-                <div class="space-y-2 text-sm">
-                  <div class="flex justify-between">
-                    <span class="opacity-70">Company:</span>
-                    <span class="font-medium">{campaign.company.name}</span>
-                  </div>
-                  
-                  <div class="flex justify-between">
-                    <span class="opacity-70">Status:</span>
-                    <div class={"badge badge-sm " <> status_badge_class(campaign.status)}>
-                      {String.capitalize(campaign.status)}
-                    </div>
-                  </div>
-                  
-                  <div class="flex justify-between">
-                    <span class="opacity-70">Warchest:</span>
-                    <span class="font-medium">{campaign.warchest_balance} SP</span>
-                  </div>
-                  
-                  <div class="flex justify-between">
-                    <span class="opacity-70">Sorties:</span>
-                    <span class="font-medium">{length(campaign.sorties || [])}</span>
-                  </div>
-                </div>
-                
-                <div class="card-actions justify-end mt-4">
-                  <.link
-                    navigate={~p"/companies/#{campaign.company_id}/campaigns/#{campaign.id}"}
-                    class="btn btn-primary btn-sm md:btn-xs"
-                  >
-                    View Campaign
-                  </.link>
-                </div>
-              </div>
-            </div>
+          <% else %>
+            <h2 class="card-title justify-center text-xl">No Past Campaigns</h2>
+            <p class="text-base-content/70">
+              Completed and failed campaigns will appear here.
+            </p>
           <% end %>
         </div>
-      <% end %>
-    </div>
+      </div>
+    <% else %>
+      <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <%= for campaign <- @campaigns do %>
+          <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+              <h2 class="card-title">
+                {campaign.name}
+                <div class={"badge badge-sm " <> difficulty_badge_class(campaign.difficulty_level)}>
+                  {String.capitalize(campaign.difficulty_level)}
+                </div>
+              </h2>
+
+              <p class="text-sm text-base-content/70 mb-4">
+                {campaign.description || "No description"}
+              </p>
+
+              <div class="space-y-2 text-sm">
+                <div class="flex justify-between">
+                  <span class="opacity-70">Company:</span>
+                  <span class="font-medium">{campaign.company.name}</span>
+                </div>
+
+                <div class="flex justify-between">
+                  <span class="opacity-70">Status:</span>
+                  <div class={"badge badge-sm " <> status_badge_class(campaign.status)}>
+                    {String.capitalize(campaign.status)}
+                  </div>
+                </div>
+
+                <div class="flex justify-between">
+                  <span class="opacity-70">Warchest:</span>
+                  <span class="font-medium">{campaign.warchest_balance} SP</span>
+                </div>
+
+                <div class="flex justify-between">
+                  <span class="opacity-70">Sorties:</span>
+                  <span class="font-medium">{length(campaign.sorties || [])}</span>
+                </div>
+
+                <%= if @tab_type == :past && campaign.completed_at do %>
+                  <div class="flex justify-between">
+                    <span class="opacity-70">Completed:</span>
+                    <span class="font-medium">{format_date(campaign.completed_at)}</span>
+                  </div>
+                <% end %>
+              </div>
+
+              <div class="card-actions justify-end mt-4">
+                <.link
+                  navigate={~p"/companies/#{campaign.company_id}/campaigns/#{campaign.id}"}
+                  class="btn btn-primary btn-sm md:btn-xs"
+                >
+                  View Campaign
+                </.link>
+              </div>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    <% end %>
     """
   end
 
-  defp get_user_campaigns(user) do
+  defp get_all_user_campaigns(user) do
     # Get all companies for the user
     user_companies = Companies.list_user_companies(user)
-    
-    # Get all active campaigns for those companies
+
+    # Get all campaigns for those companies (active and past)
     company_ids = Enum.map(user_companies, & &1.id)
-    
+
     Campaigns.list_campaigns_by_company_ids(company_ids)
-    |> Enum.filter(&(&1.status == "active"))
     |> Enum.sort_by(& &1.updated_at, {:desc, DateTime})
+  end
+
+  defp format_date(datetime) do
+    Calendar.strftime(datetime, "%b %d, %Y")
   end
 
   defp difficulty_badge_class("recruit"), do: "badge-success"
