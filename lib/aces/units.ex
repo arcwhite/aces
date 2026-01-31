@@ -322,6 +322,79 @@ defmodule Aces.Units do
   defp apply_filters(query, [_ | rest]), do: apply_filters(query, rest)
 
   @doc """
+  Search for units with user-friendly filter format.
+
+  This function is designed for use in LiveViews and contexts that need
+  simple, user-facing filter options with comprehensive error handling.
+
+  ## Parameters
+
+    * `search_term` - The text to search for (minimum 2 characters)
+    * `filters` - Map with user-friendly keys:
+      * `:eras` - List of era strings (e.g., ["ilclan", "dark_age"])
+      * `:faction` - Faction string (e.g., "mercenary", "clan_wolf")
+      * `:type` - Unit type string (e.g., "battlemech", "combat_vehicle")
+
+  ## Returns
+
+    * `{:ok, units}` - List of matching units
+    * `{:error, :term_too_short}` - When search term is less than 2 characters
+    * `{:error, reason}` - When search fails for other reasons
+
+  ## Examples
+
+      iex> search_units_for_company("Atlas", %{eras: ["ilclan"], faction: "mercenary"})
+      {:ok, [%MasterUnit{name: "Atlas", ...}, ...]}
+
+      iex> search_units_for_company("A", %{})
+      {:error, :term_too_short}
+  """
+  def search_units_for_company(search_term, filters \\ %{}) when is_binary(search_term) do
+    search_term = String.trim(search_term)
+
+    cond do
+      String.length(search_term) < 2 ->
+        {:error, :term_too_short}
+
+      true ->
+        try do
+          # Build search options from user-friendly filters
+          opts = build_search_opts_from_filters(filters)
+          results = search_units(search_term, opts)
+          {:ok, results}
+        rescue
+          error ->
+            Logger.error("Unit search failed for '#{search_term}': #{inspect(error)}")
+            {:error, :search_failed}
+        end
+    end
+  end
+
+  # Convert user-friendly filter format to internal opts format
+  defp build_search_opts_from_filters(filters) when is_map(filters) do
+    opts = []
+
+    # Add unit type filter if set
+    opts =
+      case Map.get(filters, :type) do
+        nil -> opts
+        type -> [{:unit_type, type} | opts]
+      end
+
+    # Add era + faction filter if both are set
+    opts =
+      case {Map.get(filters, :eras), Map.get(filters, :faction)} do
+        {eras, faction} when is_list(eras) and length(eras) > 0 and is_binary(faction) ->
+          [{:era_faction, {eras, faction}} | opts]
+
+        _ ->
+          opts
+      end
+
+    opts
+  end
+
+  @doc """
   Lists all variants of a given chassis (same name, different variants).
   Used for OMNI mech reconfiguration.
 

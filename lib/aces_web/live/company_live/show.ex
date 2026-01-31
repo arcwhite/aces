@@ -240,70 +240,42 @@ defmodule AcesWeb.CompanyLive.Show do
   def handle_info({:perform_search, search_term}, socket) do
     # Only perform search if the search term hasn't changed
     if socket.assigns.unit_search_term == search_term do
-      try do
-        # Build search options from filters
-        opts = build_search_opts(socket.assigns)
-        search_results = Units.search_units(search_term, opts)
-
-        {:noreply,
-         socket
-         |> assign(:search_results, search_results)
-         |> assign(:search_loading, false)}
-      rescue
-        _error ->
-          {:noreply,
-           socket
-           |> assign(:search_results, [])
-           |> assign(:search_loading, false)
-           |> put_flash(:error, "Search failed. Please try again.")}
-      end
+      socket = perform_unit_search(socket, search_term)
+      {:noreply, socket}
     else
       {:noreply, socket}
     end
   end
 
-  defp build_search_opts(assigns) do
-    opts = []
-
-    # Add unit type filter if set
-    opts =
-      if assigns.search_filter_type do
-        [{:unit_type, assigns.search_filter_type} | opts]
-      else
-        opts
-      end
-
-    # Add era + faction filter if both are set
-    opts =
-      if length(assigns.search_filter_eras) > 0 and assigns.search_filter_faction do
-        [{:era_faction, {assigns.search_filter_eras, assigns.search_filter_faction}} | opts]
-      else
-        opts
-      end
-
-    opts
-  end
-
   # Helper to run search immediately when filters change
   defp maybe_run_search(socket) do
-    search_term = socket.assigns.unit_search_term
+    perform_unit_search(socket, socket.assigns.unit_search_term)
+  end
 
-    if String.length(search_term) >= 2 do
-      try do
-        opts = build_search_opts(socket.assigns)
-        search_results = Units.search_units(search_term, opts)
+  # Centralized search logic using the Units context
+  defp perform_unit_search(socket, search_term) do
+    filters = %{
+      eras: socket.assigns.search_filter_eras,
+      faction: socket.assigns.search_filter_faction,
+      type: socket.assigns.search_filter_type
+    }
 
+    case Units.search_units_for_company(search_term, filters) do
+      {:ok, results} ->
         socket
-        |> assign(:search_results, search_results)
+        |> assign(:search_results, results)
         |> assign(:search_loading, false)
-      rescue
-        _error ->
-          socket
-          |> assign(:search_results, [])
-          |> assign(:search_loading, false)
-      end
-    else
-      socket
+
+      {:error, :term_too_short} ->
+        socket
+        |> assign(:search_results, [])
+        |> assign(:search_loading, false)
+
+      {:error, _reason} ->
+        socket
+        |> assign(:search_results, [])
+        |> assign(:search_loading, false)
+        |> put_flash(:error, "Search failed. Please try again.")
     end
   end
 
