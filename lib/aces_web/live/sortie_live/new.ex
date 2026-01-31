@@ -78,7 +78,7 @@ defmodule AcesWeb.SortieLive.New do
             {:noreply,
              socket
              |> put_flash(:info, "Sortie '#{sortie.name}' created successfully!")
-             |> redirect(to: ~p"/companies/#{campaign.company_id}/campaigns/#{campaign.id}/sorties/#{sortie.id}/edit")}
+             |> redirect(to: ~p"/companies/#{campaign.company_id}/campaigns/#{campaign.id}/sorties/#{sortie.id}")}
 
           {:error, reason} ->
             {:noreply,

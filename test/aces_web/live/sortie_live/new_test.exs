@@ -131,14 +131,14 @@ defmodule AcesWeb.SortieLive.NewTest do
         |> form("#sortie-form", form_data)
         |> render_submit()
 
-      # Should redirect to sortie edit page
+      # Should redirect to sortie show page (setup view)
       assert {:error, {:redirect, %{to: path}}} = result
 
       # Verify the sortie was created
       campaign = Aces.Campaigns.get_campaign!(campaign.id)
       assert length(campaign.sorties) == 1
       sortie = List.first(campaign.sorties)
-      assert path == ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/#{sortie.id}/edit"
+      assert path == ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/#{sortie.id}"
 
       assert sortie.mission_number == "1"
       assert sortie.name == "Test Mission"
