@@ -37,6 +37,8 @@ defmodule AcesWeb.CampaignLive.Show do
          |> assign(:can_edit, Authorization.can?(:edit_company, user, company))
          |> assign(:can_purchase_units, Campaigns.can_purchase_units?(campaign))
          |> assign(:show_unit_search, false)
+         |> assign(:show_sell_modal, false)
+         |> assign(:selling_unit, nil)
          |> assign(:unit_add_error, nil)}
       end
     end
@@ -79,6 +81,88 @@ defmodule AcesWeb.CampaignLive.Show do
      socket
      |> assign(:show_unit_search, true)
      |> assign(:unit_add_error, nil)}
+  end
+
+  # Unit selling handlers
+  def handle_event("sell_unit", %{"unit_id" => unit_id_str}, socket) do
+    unit_id = String.to_integer(unit_id_str)
+    company = socket.assigns.company
+    campaign = socket.assigns.campaign
+
+    # Only allow selling on active campaigns
+    if campaign.status != "active" do
+      {:noreply, put_flash(socket, :error, "Cannot sell units: campaign is not active")}
+    else
+      case Enum.find(company.company_units, &(&1.id == unit_id)) do
+        nil ->
+          {:noreply, put_flash(socket, :error, "Unit not found")}
+
+        unit ->
+          if Campaigns.can_sell_unit?(unit) do
+            {:noreply,
+             socket
+             |> assign(:show_sell_modal, true)
+             |> assign(:selling_unit, unit)}
+          else
+            case Campaigns.get_unit_active_sortie(unit) do
+              %{name: name, mission_number: number} ->
+                {:noreply, put_flash(socket, :error, "Cannot sell: unit is deployed in Sortie #{number} (#{name})")}
+
+              nil ->
+                {:noreply, put_flash(socket, :error, "Cannot sell: unit is deployed in an active sortie")}
+            end
+          end
+      end
+    end
+  end
+
+  def handle_event("close_sell_modal", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_sell_modal, false)
+     |> assign(:selling_unit, nil)}
+  end
+
+  def handle_event("confirm_sell_unit", _params, socket) do
+    selling_unit = socket.assigns.selling_unit
+    campaign = socket.assigns.campaign
+    user = socket.assigns.current_scope.user
+    company = socket.assigns.company
+
+    if Authorization.can?(:edit_company, user, company) do
+      case Campaigns.sell_unit(selling_unit, campaign) do
+        {:ok, sell_price} ->
+          updated_campaign = Campaigns.get_campaign!(campaign.id)
+          updated_company = Companies.get_company!(company.id)
+          unit_name = selling_unit.custom_name ||
+            Aces.Units.MasterUnit.display_name(selling_unit.master_unit)
+
+          {:noreply,
+           socket
+           |> assign(:company, updated_company)
+           |> assign(:campaign, updated_campaign)
+           |> assign(:can_purchase_units, Campaigns.can_purchase_units?(updated_campaign))
+           |> assign(:show_sell_modal, false)
+           |> assign(:selling_unit, nil)
+           |> put_flash(:info, "Sold #{unit_name} for #{sell_price} SP")}
+
+        {:error, message} when is_binary(message) ->
+          {:noreply,
+           socket
+           |> assign(:show_sell_modal, false)
+           |> assign(:selling_unit, nil)
+           |> put_flash(:error, message)}
+
+        {:error, error} ->
+          {:noreply,
+           socket
+           |> assign(:show_sell_modal, false)
+           |> assign(:selling_unit, nil)
+           |> put_flash(:error, "Failed to sell unit: #{inspect(error)}")}
+      end
+    else
+      {:noreply, put_flash(socket, :error, "You don't have permission to sell units")}
+    end
   end
 
   @impl true
@@ -268,6 +352,9 @@ defmodule AcesWeb.CampaignLive.Show do
                   <th class="hidden sm:table-cell">Pilot</th>
                   <th class="hidden md:table-cell">PV</th>
                   <th class="hidden lg:table-cell">SP Cost</th>
+                  <%= if @campaign.status == "active" && @can_edit do %>
+                    <th>Actions</th>
+                  <% end %>
                 </tr>
               </thead>
               <tbody>
@@ -326,6 +413,19 @@ defmodule AcesWeb.CampaignLive.Show do
                         <span class="text-gray-500 text-sm">-</span>
                       <% end %>
                     </td>
+                    <%= if @campaign.status == "active" && @can_edit do %>
+                      <td>
+                        <button
+                          class="btn btn-ghost btn-sm md:btn-xs text-error"
+                          phx-click="sell_unit"
+                          phx-value-unit_id={unit.id}
+                          disabled={not @can_purchase_units}
+                          title={if @can_purchase_units, do: "Sell for #{Aces.Units.MasterUnit.sell_price(unit.master_unit)} SP", else: "Cannot sell while sortie is in progress"}
+                        >
+                          Sell
+                        </button>
+                      </td>
+                    <% end %>
                   </tr>
                 <% end %>
               </tbody>
@@ -530,6 +630,74 @@ defmodule AcesWeb.CampaignLive.Show do
         budget={@campaign.warchest_balance}
         error={@unit_add_error}
       />
+
+      <!-- Sell Unit Confirmation Modal -->
+      <%= if @show_sell_modal && @selling_unit do %>
+        <div class="modal modal-open">
+          <div class="modal-box">
+            <h3 class="font-bold text-lg">Sell Unit</h3>
+
+            <div class="py-4">
+              <p class="mb-4">
+                Are you sure you want to sell this unit?
+              </p>
+
+              <div class="card bg-base-200 p-4 mb-4">
+                <div class="font-semibold text-lg">
+                  {Aces.Units.MasterUnit.display_name(@selling_unit.master_unit)}
+                </div>
+                <%= if @selling_unit.custom_name do %>
+                  <div class="text-sm opacity-70">{@selling_unit.custom_name}</div>
+                <% end %>
+                <div class="flex gap-2 mt-2">
+                  <div class="badge badge-outline">
+                    {String.replace(@selling_unit.master_unit.unit_type, "_", " ") |> String.capitalize()}
+                  </div>
+                  <%= if @selling_unit.master_unit.tonnage do %>
+                    <div class="badge badge-neutral">{@selling_unit.master_unit.tonnage}t</div>
+                  <% end %>
+                  <div class="badge badge-accent">{@selling_unit.master_unit.point_value} PV</div>
+                </div>
+              </div>
+
+              <div class="alert alert-warning">
+                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span>
+                  This action cannot be undone. The unit will be permanently removed from your roster.
+                </span>
+              </div>
+
+              <div class="stat bg-success/20 rounded-lg mt-4">
+                <div class="stat-title">You will receive</div>
+                <div class="stat-value text-success">
+                  +{Aces.Units.MasterUnit.sell_price(@selling_unit.master_unit)} SP
+                </div>
+                <div class="stat-desc">Added to campaign warchest</div>
+              </div>
+            </div>
+
+            <div class="modal-action">
+              <button
+                type="button"
+                phx-click="close_sell_modal"
+                class="btn"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                phx-click="confirm_sell_unit"
+                class="btn btn-error"
+              >
+                Sell Unit
+              </button>
+            </div>
+          </div>
+          <div class="modal-backdrop" phx-click="close_sell_modal"></div>
+        </div>
+      <% end %>
     </div>
     """
   end
