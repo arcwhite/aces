@@ -2,8 +2,10 @@ defmodule AcesWeb.InvitationLive.Index do
   @moduledoc """
   LiveView for displaying and managing company invitations for the current user.
 
-  Shows both pending invitations (with accept/decline actions) and
-  invitation history (accepted, declined, expired).
+  Shows:
+  - Pending invitations received (with accept/decline actions)
+  - Invitation history received (accepted, declined, expired)
+  - Invitations sent to others (with status)
   """
   use AcesWeb, :live_view
 
@@ -14,15 +16,22 @@ defmodule AcesWeb.InvitationLive.Index do
   @impl true
   def mount(_params, _session, socket) do
     user = socket.assigns.current_scope.user
-    all_invitations = Companies.list_user_all_invitations(user)
-
-    {pending, history} = split_invitations(all_invitations)
 
     {:ok,
      socket
      |> assign(:page_title, "My Invitations")
-     |> assign(:pending_invitations, pending)
-     |> assign(:invitation_history, history)}
+     |> load_invitations(user)}
+  end
+
+  defp load_invitations(socket, user) do
+    all_received = Companies.list_user_all_invitations(user)
+    {pending, history} = split_invitations(all_received)
+    sent = Companies.list_user_sent_invitations(user)
+
+    socket
+    |> assign(:pending_invitations, pending)
+    |> assign(:invitation_history, history)
+    |> assign(:sent_invitations, sent)
   end
 
   defp split_invitations(invitations) do
@@ -40,14 +49,10 @@ defmodule AcesWeb.InvitationLive.Index do
 
     case Companies.accept_invitation(invitation, user) do
       {:ok, _membership} ->
-        all_invitations = Companies.list_user_all_invitations(user)
-        {pending, history} = split_invitations(all_invitations)
-
         {:noreply,
          socket
          |> put_flash(:info, "You have joined #{invitation.company.name}!")
-         |> assign(:pending_invitations, pending)
-         |> assign(:invitation_history, history)}
+         |> load_invitations(user)}
 
       {:error, :email_mismatch} ->
         {:noreply, put_flash(socket, :error, "This invitation is for a different email address.")}
@@ -58,22 +63,37 @@ defmodule AcesWeb.InvitationLive.Index do
   end
 
   def handle_event("decline", %{"id" => id}, socket) do
+    user = socket.assigns.current_scope.user
     invitation = Companies.get_invitation!(id)
 
     case Companies.cancel_invitation(invitation) do
       {:ok, _} ->
-        user = socket.assigns.current_scope.user
-        all_invitations = Companies.list_user_all_invitations(user)
-        {pending, history} = split_invitations(all_invitations)
-
         {:noreply,
          socket
          |> put_flash(:info, "Invitation declined.")
-         |> assign(:pending_invitations, pending)
-         |> assign(:invitation_history, history)}
+         |> load_invitations(user)}
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Failed to decline invitation.")}
+    end
+  end
+
+  def handle_event("cancel_sent", %{"id" => id}, socket) do
+    user = socket.assigns.current_scope.user
+    invitation = Companies.get_invitation!(id)
+
+    case Companies.cancel_invitation(invitation) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Invitation cancelled.")
+         |> load_invitations(user)}
+
+      {:error, :not_pending} ->
+        {:noreply, put_flash(socket, :error, "Can only cancel pending invitations.")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to cancel invitation.")}
     end
   end
 
@@ -82,13 +102,13 @@ defmodule AcesWeb.InvitationLive.Index do
     ~H"""
     <div class="container mx-auto px-4 py-8">
       <div class="mb-8">
-        <h1 class="text-4xl font-bold mb-2">Company Invitations</h1>
+        <h1 class="text-4xl font-bold mb-2">Invitations</h1>
         <p class="text-lg opacity-70">
-          Review invitations to join mercenary companies.
+          Manage invitations to join mercenary companies.
         </p>
       </div>
 
-      <!-- Pending Invitations Section -->
+      <!-- Pending Invitations Received Section -->
       <div class="mb-8">
         <h2 class="text-2xl font-bold mb-4">Pending Invitations</h2>
 
@@ -159,12 +179,68 @@ defmodule AcesWeb.InvitationLive.Index do
         <% end %>
       </div>
 
-      <!-- Invitation History Section -->
+      <!-- Invitations Sent Section -->
+      <div class="divider"></div>
+
+      <div class="mb-8">
+        <h2 class="text-2xl font-bold mb-4">Invitations Sent</h2>
+
+        <%= if @sent_invitations == [] do %>
+          <div class="text-sm opacity-70">
+            You haven't sent any invitations yet.
+          </div>
+        <% else %>
+          <div class="overflow-x-auto">
+            <table class="table table-zebra w-full">
+              <thead>
+                <tr>
+                  <th>Invited Email</th>
+                  <th>Company</th>
+                  <th>Role</th>
+                  <th>Sent</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <%= for invitation <- @sent_invitations do %>
+                  <tr>
+                    <td class="font-semibold">{invitation.invited_email}</td>
+                    <td>{invitation.company.name}</td>
+                    <td>{String.capitalize(invitation.role)}</td>
+                    <td class="text-sm">
+                      {Calendar.strftime(invitation.inserted_at, "%b %d, %Y")}
+                    </td>
+                    <td>
+                      <.status_badge invitation={invitation} />
+                    </td>
+                    <td>
+                      <%= if invitation.status == "pending" && DateTime.compare(invitation.expires_at, DateTime.utc_now()) == :gt do %>
+                        <button
+                          type="button"
+                          phx-click="cancel_sent"
+                          phx-value-id={invitation.id}
+                          data-confirm="Cancel this invitation?"
+                          class="btn btn-ghost btn-xs"
+                        >
+                          Cancel
+                        </button>
+                      <% end %>
+                    </td>
+                  </tr>
+                <% end %>
+              </tbody>
+            </table>
+          </div>
+        <% end %>
+      </div>
+
+      <!-- Invitation History Received Section -->
       <%= if @invitation_history != [] do %>
         <div class="divider"></div>
 
         <div class="mb-8">
-          <h2 class="text-2xl font-bold mb-4">Invitation History</h2>
+          <h2 class="text-2xl font-bold mb-4">Received History</h2>
 
           <div class="overflow-x-auto">
             <table class="table table-zebra w-full">
@@ -229,6 +305,9 @@ defmodule AcesWeb.InvitationLive.Index do
         assigns.invitation.status == "pending" &&
             DateTime.compare(assigns.invitation.expires_at, now) != :gt ->
           {"Expired", "badge-error"}
+
+        assigns.invitation.status == "pending" ->
+          {"Pending", "badge-info"}
 
         true ->
           {String.capitalize(assigns.invitation.status), "badge-ghost"}

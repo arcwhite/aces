@@ -182,6 +182,17 @@ defmodule Aces.Companies.CompanyInvitation do
   end
 
   @doc """
+  Returns a query for all invitations sent by a user.
+  Useful for showing sent invitation history.
+  """
+  def sent_by_user_query(user_id) do
+    from i in __MODULE__,
+      where: i.invited_by_id == ^user_id,
+      order_by: [desc: i.inserted_at],
+      preload: [:company]
+  end
+
+  @doc """
   Returns the invitation validity period in days.
   """
   def validity_in_days, do: @invitation_validity_in_days

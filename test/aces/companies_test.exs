@@ -815,5 +815,33 @@ defmodule Aces.CompaniesTest do
       assert length(pending) == 1
       assert hd(pending).status == "pending"
     end
+
+    test "list_user_sent_invitations/1 returns invitations sent by user" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+
+      invitee1 = user_fixture(email: "invitee1@example.com")
+      invitee2 = user_fixture(email: "invitee2@example.com")
+
+      # Owner sends two invitations
+      {:ok, _} = Companies.create_invitation(company, owner, invitee1.email, "editor")
+      {:ok, {_, inv2}} = Companies.create_invitation(company, owner, invitee2.email, "viewer")
+
+      # invitee2 accepts their invitation
+      inv2 = Companies.get_invitation!(inv2.id)
+      {:ok, _} = Companies.accept_invitation(inv2, invitee2)
+
+      # Owner should see both sent invitations
+      sent = Companies.list_user_sent_invitations(owner)
+      assert length(sent) == 2
+
+      emails = Enum.map(sent, & &1.invited_email) |> Enum.sort()
+      assert emails == ["invitee1@example.com", "invitee2@example.com"]
+
+      statuses = Enum.map(sent, & &1.status) |> Enum.sort()
+      assert statuses == ["accepted", "pending"]
+
+      # invitee1 should see no sent invitations
+      assert Companies.list_user_sent_invitations(invitee1) == []
+    end
   end
 end
