@@ -234,6 +234,23 @@ defmodule Aces.Companies do
   end
 
   @doc """
+  Lists all members of a company with their user info.
+  Returns memberships ordered by role (owners first) then by join date.
+  """
+  def list_company_members(%Company{} = company) do
+    from(m in CompanyMembership,
+      where: m.company_id == ^company.id,
+      join: u in assoc(m, :user),
+      preload: [user: u],
+      order_by: [
+        fragment("CASE WHEN ? = 'owner' THEN 0 WHEN ? = 'editor' THEN 1 ELSE 2 END", m.role, m.role),
+        asc: m.inserted_at
+      ]
+    )
+    |> Repo.all()
+  end
+
+  @doc """
   Gets a user's role for a company.
   """
   def get_user_role(%Company{} = company, %User{} = user) do

@@ -25,7 +25,9 @@ defmodule AcesWeb.CompanyLive.Show do
          |> redirect(to: ~p"/companies/#{company}/draft")}
       else
         active_campaign = Campaigns.get_active_campaign(company)
-        pending_invitations = load_pending_invitations(company, user)
+        can_manage = Authorization.can?(:manage_members, user, company)
+        pending_invitations = if can_manage, do: Companies.list_pending_invitations(company), else: []
+        members = Companies.list_company_members(company)
 
         {:ok,
          socket
@@ -37,18 +39,18 @@ defmodule AcesWeb.CompanyLive.Show do
          |> assign(:show_unit_edit, false)
          |> assign(:show_invite_modal, false)
          |> assign(:pending_invitations, pending_invitations)
-         |> assign(:can_manage_members, Authorization.can?(:manage_members, user, company))
+         |> assign(:members, members)
+         |> assign(:current_user_id, user.id)
+         |> assign(:can_manage_members, can_manage)
          |> assign(:editing_unit, nil)}
       end
     end
   end
 
-  defp load_pending_invitations(company, user) do
-    if Authorization.can?(:manage_members, user, company) do
-      Companies.list_pending_invitations(company)
-    else
-      []
-    end
+  defp reload_members(socket) do
+    company = socket.assigns.company
+    members = Companies.list_company_members(company)
+    assign(socket, :members, members)
   end
 
   @impl true
@@ -110,8 +112,7 @@ defmodule AcesWeb.CompanyLive.Show do
     case Companies.cancel_invitation(invitation) do
       {:ok, _} ->
         company = socket.assigns.company
-        user = socket.assigns.current_scope.user
-        pending_invitations = load_pending_invitations(company, user)
+        pending_invitations = Companies.list_pending_invitations(company)
 
         {:noreply,
          socket
@@ -120,6 +121,55 @@ defmodule AcesWeb.CompanyLive.Show do
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Failed to cancel invitation.")}
+    end
+  end
+
+  def handle_event("change_member_role", %{"membership_id" => id, "role" => role}, socket) do
+    user = socket.assigns.current_scope.user
+    company = socket.assigns.company
+
+    if Authorization.can?(:manage_members, user, company) do
+      membership = Aces.Repo.get!(Aces.Companies.CompanyMembership, id)
+
+      case Companies.update_member_role(membership, role) do
+        {:ok, _} ->
+          {:noreply,
+           socket
+           |> put_flash(:info, "Role updated successfully.")
+           |> reload_members()}
+
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, "Failed to update role.")}
+      end
+    else
+      {:noreply, put_flash(socket, :error, "You don't have permission to manage members.")}
+    end
+  end
+
+  def handle_event("remove_member", %{"membership_id" => id}, socket) do
+    user = socket.assigns.current_scope.user
+    company = socket.assigns.company
+
+    if Authorization.can?(:manage_members, user, company) do
+      membership = Aces.Repo.preload(Aces.Repo.get!(Aces.Companies.CompanyMembership, id), :user)
+
+      # Owners cannot remove other owners
+      if membership.role == "owner" do
+        {:noreply, put_flash(socket, :error, "Cannot remove an owner from the company.")}
+      else
+        case Companies.remove_member(membership) do
+          {:ok, _} ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "#{membership.user.email} has been removed from the company.")
+             |> reload_members()}
+
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, "Failed to remove member.")}
+        end
+      end
+    else
+      {:noreply, put_flash(socket, :error, "You don't have permission to manage members.")}
     end
   end
 
@@ -177,8 +227,7 @@ defmodule AcesWeb.CompanyLive.Show do
 
   def handle_info({AcesWeb.CompanyLive.InviteModal, {:invitation_sent, email}}, socket) do
     company = socket.assigns.company
-    user = socket.assigns.current_scope.user
-    pending_invitations = load_pending_invitations(company, user)
+    pending_invitations = Companies.list_pending_invitations(company)
 
     {:noreply,
      socket
@@ -583,66 +632,134 @@ defmodule AcesWeb.CompanyLive.Show do
       <div class="mb-8">
         <h2 class="text-2xl font-bold mb-4">Company Settings</h2>
 
-        <!-- Member Management (Owners only) -->
-        <%= if @can_manage_members do %>
-          <div class="card bg-base-200 shadow-xl mb-4">
-            <div class="card-body">
-              <div class="flex justify-between items-center">
-                <h3 class="card-title">Team Members</h3>
+        <!-- Team Members Section -->
+        <div class="card bg-base-200 shadow-xl mb-4">
+          <div class="card-body">
+            <div class="flex justify-between items-center">
+              <h3 class="card-title">Team Members</h3>
+              <%= if @can_manage_members do %>
                 <button type="button" phx-click="invite_member" class="btn btn-primary btn-sm">
                   Invite Member
                 </button>
-              </div>
-
-              <p class="text-sm opacity-70 mb-4">
-                Invite others to help manage your company. They'll receive an email with an invitation link.
-              </p>
-
-              <!-- Pending Invitations -->
-              <%= if @pending_invitations != [] do %>
-                <div class="mt-4">
-                  <h4 class="font-semibold mb-2">Pending Invitations</h4>
-                  <div class="overflow-x-auto">
-                    <table class="table table-zebra w-full">
-                      <thead>
-                        <tr>
-                          <th>Email</th>
-                          <th>Role</th>
-                          <th>Sent</th>
-                          <th>Expires</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <%= for invitation <- @pending_invitations do %>
-                          <tr>
-                            <td>{invitation.invited_email}</td>
-                            <td>
-                              <div class="badge badge-outline">{String.capitalize(invitation.role)}</div>
-                            </td>
-                            <td class="text-sm">{Calendar.strftime(invitation.inserted_at, "%b %d")}</td>
-                            <td class="text-sm">{Calendar.strftime(invitation.expires_at, "%b %d")}</td>
-                            <td>
-                              <button
-                                type="button"
-                                phx-click="cancel_invitation"
-                                phx-value-id={invitation.id}
-                                data-confirm="Cancel this invitation?"
-                                class="btn btn-ghost btn-xs"
-                              >
-                                Cancel
-                              </button>
-                            </td>
-                          </tr>
-                        <% end %>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
               <% end %>
             </div>
+
+            <!-- Current Members List -->
+            <div class="overflow-x-auto mt-4">
+              <table class="table w-full">
+                <thead>
+                  <tr>
+                    <th>Member</th>
+                    <th>Role</th>
+                    <th>Joined</th>
+                    <%= if @can_manage_members do %>
+                      <th>Actions</th>
+                    <% end %>
+                  </tr>
+                </thead>
+                <tbody>
+                  <%= for membership <- @members do %>
+                    <tr class={if membership.user_id == @current_user_id, do: "bg-base-300"}>
+                      <td>
+                        <div class="flex items-center gap-2">
+                          <span class="font-semibold">{membership.user.email}</span>
+                          <%= if membership.user_id == @current_user_id do %>
+                            <span class="badge badge-sm badge-ghost">You</span>
+                          <% end %>
+                        </div>
+                      </td>
+                      <td>
+                        <%= if @can_manage_members && membership.user_id != @current_user_id do %>
+                          <select
+                            class="select select-bordered select-sm w-full max-w-xs"
+                            phx-change="change_member_role"
+                            phx-value-membership_id={membership.id}
+                            name="role"
+                          >
+                            <option value="viewer" selected={membership.role == "viewer"}>Viewer</option>
+                            <option value="editor" selected={membership.role == "editor"}>Editor</option>
+                            <option value="owner" selected={membership.role == "owner"}>Owner</option>
+                          </select>
+                        <% else %>
+                          <div class={[
+                            "badge",
+                            membership.role == "owner" && "badge-primary",
+                            membership.role == "editor" && "badge-secondary",
+                            membership.role == "viewer" && "badge-ghost"
+                          ]}>
+                            {String.capitalize(membership.role)}
+                          </div>
+                        <% end %>
+                      </td>
+                      <td class="text-sm opacity-70">
+                        {Calendar.strftime(membership.inserted_at, "%b %d, %Y")}
+                      </td>
+                      <%= if @can_manage_members do %>
+                        <td>
+                          <%= if membership.user_id != @current_user_id && membership.role != "owner" do %>
+                            <button
+                              type="button"
+                              phx-click="remove_member"
+                              phx-value-membership_id={membership.id}
+                              data-confirm={"Remove #{membership.user.email} from this company?"}
+                              class="btn btn-ghost btn-xs text-error"
+                            >
+                              Remove
+                            </button>
+                          <% end %>
+                        </td>
+                      <% end %>
+                    </tr>
+                  <% end %>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Pending Invitations (Owners only) -->
+            <%= if @can_manage_members && @pending_invitations != [] do %>
+              <div class="divider"></div>
+              <div>
+                <h4 class="font-semibold mb-2">Pending Invitations</h4>
+                <div class="overflow-x-auto">
+                  <table class="table table-zebra w-full">
+                    <thead>
+                      <tr>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Sent</th>
+                        <th>Expires</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <%= for invitation <- @pending_invitations do %>
+                        <tr>
+                          <td>{invitation.invited_email}</td>
+                          <td>
+                            <div class="badge badge-outline">{String.capitalize(invitation.role)}</div>
+                          </td>
+                          <td class="text-sm">{Calendar.strftime(invitation.inserted_at, "%b %d")}</td>
+                          <td class="text-sm">{Calendar.strftime(invitation.expires_at, "%b %d")}</td>
+                          <td>
+                            <button
+                              type="button"
+                              phx-click="cancel_invitation"
+                              phx-value-id={invitation.id}
+                              data-confirm="Cancel this invitation?"
+                              class="btn btn-ghost btn-xs"
+                            >
+                              Cancel
+                            </button>
+                          </td>
+                        </tr>
+                      <% end %>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            <% end %>
           </div>
-        <% end %>
+        </div>
 
         <div class="card bg-base-200 shadow-xl">
           <div class="card-body">

@@ -262,6 +262,36 @@ defmodule Aces.CompaniesTest do
     end
   end
 
+  describe "list_company_members/1" do
+    test "returns all members with users preloaded, ordered by role" do
+      %{company: company, owner: owner, editor: editor, viewer: viewer} =
+        company_with_members_fixture()
+
+      members = Companies.list_company_members(company)
+
+      assert length(members) == 3
+
+      # Owners should be first, then editors, then viewers
+      [first, second, third] = members
+      assert first.role == "owner"
+      assert first.user.id == owner.id
+      assert second.role == "editor"
+      assert second.user.id == editor.id
+      assert third.role == "viewer"
+      assert third.user.id == viewer.id
+    end
+
+    test "returns empty list for company with no members" do
+      # Create company directly without membership
+      {:ok, company} =
+        %Aces.Companies.Company{}
+        |> Aces.Companies.Company.changeset(%{name: "Orphan Company"})
+        |> Aces.Repo.insert()
+
+      assert Companies.list_company_members(company) == []
+    end
+  end
+
   describe "add_unit_to_company/3" do
     test "adds a unit to company roster" do
       company = company_fixture()
