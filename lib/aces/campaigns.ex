@@ -398,6 +398,15 @@ defmodule Aces.Campaigns do
     Ecto.Multi.update(multi, :award_mvp, mvp_changeset)
   end
 
+  # Extracts unique pilot IDs from a sortie's deployments.
+  # Only includes deployments that have a pilot assigned (excludes unnamed crew).
+  defp get_participating_pilot_ids(%Sortie{deployments: deployments}) do
+    deployments
+    |> Enum.filter(& &1.pilot_id)
+    |> Enum.map(& &1.pilot_id)
+    |> Enum.uniq()
+  end
+
   defp get_participating_pilots(%Sortie{deployments: deployments}) do
     deployments
     |> Enum.filter(& &1.pilot_id)
@@ -406,12 +415,8 @@ defmodule Aces.Campaigns do
   end
 
   defp get_non_participating_pilots(%Sortie{campaign: %{company: company}} = sortie) do
-    participating_pilot_ids = 
-      sortie.deployments
-      |> Enum.filter(& &1.pilot_id)
-      |> Enum.map(& &1.pilot_id)
-      |> Enum.uniq()
-    
+    participating_pilot_ids = get_participating_pilot_ids(sortie)
+
     company.pilots
     |> Enum.reject(&(&1.id in participating_pilot_ids))
   end
@@ -1182,10 +1187,7 @@ defmodule Aces.Campaigns do
   end
 
   defp validate_force_commander_deployed(%Sortie{} = sortie, force_commander_id) do
-    deployed_pilot_ids =
-      sortie.deployments
-      |> Enum.filter(& &1.pilot_id)
-      |> Enum.map(& &1.pilot_id)
+    deployed_pilot_ids = get_participating_pilot_ids(sortie)
 
     if force_commander_id in deployed_pilot_ids do
       :ok
