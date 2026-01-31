@@ -419,6 +419,92 @@ defmodule AcesWeb.CoreComponents do
     """
   end
 
+  @doc """
+  Renders a modal dialog.
+
+  On mobile devices, the modal takes up the full screen for better usability.
+  On larger screens, it displays as a centered dialog with configurable max-width.
+
+  ## Examples
+
+      <.modal show={@show_modal} on_close="close_modal">
+        <:title>My Modal</:title>
+        <p>Modal content here</p>
+      </.modal>
+
+      <.modal show={@show} on_close="close" max_width="lg" phx-target={@myself}>
+        <:title>Smaller Modal</:title>
+        <p>Content</p>
+        <:actions>
+          <button class="btn">Action</button>
+        </:actions>
+      </.modal>
+  """
+  attr :show, :boolean, required: true, doc: "whether to show the modal"
+  attr :on_close, :string, required: true, doc: "the event to send when the modal is closed"
+  attr :max_width, :string, default: "4xl", values: ~w(sm md lg xl 2xl 3xl 4xl 5xl), doc: "max width on larger screens"
+  attr :rest, :global, doc: "additional attributes like phx-target"
+
+  slot :title, doc: "the modal title"
+  slot :inner_block, required: true, doc: "the modal content"
+  slot :actions, doc: "optional action buttons for the modal footer"
+
+  def modal(%{show: false} = assigns), do: ~H""
+
+  def modal(assigns) do
+    max_width_class = case assigns.max_width do
+      "sm" -> "sm:max-w-sm"
+      "md" -> "sm:max-w-md"
+      "lg" -> "sm:max-w-lg"
+      "xl" -> "sm:max-w-xl"
+      "2xl" -> "sm:max-w-2xl"
+      "3xl" -> "sm:max-w-3xl"
+      "4xl" -> "sm:max-w-4xl"
+      "5xl" -> "sm:max-w-5xl"
+    end
+
+    assigns = assign(assigns, :max_width_class, max_width_class)
+
+    ~H"""
+    <div class="modal modal-open">
+      <div class={[
+        "modal-box",
+        "w-full h-full max-h-full rounded-none",
+        "sm:w-11/12 sm:h-auto sm:max-h-[90vh] sm:rounded-box",
+        @max_width_class
+      ]}>
+        <%!-- Header with title and close button --%>
+        <div class="flex justify-between items-center mb-4 sticky top-0 bg-base-100 pb-2 -mt-2 pt-2 z-10">
+          <h3 :if={@title != []} class="font-bold text-lg">
+            {render_slot(@title)}
+          </h3>
+          <div :if={@title == []}></div>
+          <button
+            type="button"
+            phx-click={@on_close}
+            class="btn btn-circle btn-ghost sm:btn-sm"
+            aria-label="Close modal"
+            {@rest}
+          >
+            <.icon name="hero-x-mark" class="size-6 sm:size-5" />
+          </button>
+        </div>
+
+        <%!-- Content --%>
+        <div class="overflow-y-auto">
+          {render_slot(@inner_block)}
+        </div>
+
+        <%!-- Optional footer actions --%>
+        <div :if={@actions != []} class="modal-action sticky bottom-0 bg-base-100 pt-2 -mb-2 pb-2">
+          {render_slot(@actions)}
+        </div>
+      </div>
+      <div class="modal-backdrop hidden sm:block" phx-click={@on_close} {@rest}></div>
+    </div>
+    """
+  end
+
   ## JS Commands
 
   def show(js \\ %JS{}, selector) do

@@ -705,31 +705,19 @@ defmodule AcesWeb.CompanyLive.Show do
       />
 
       <!-- Unit Edit Modal -->
-      <%= if @show_unit_edit && @editing_unit do %>
-        <div class="modal modal-open">
-          <div class="modal-box w-11/12 max-w-2xl">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="font-bold text-lg">Edit Unit</h3>
-              <button
-                type="button"
-                phx-click="close_unit_edit"
-                class="btn btn-sm btn-circle btn-ghost"
-              >
-                ✕
-              </button>
-            </div>
-
-            <.live_component
-              module={AcesWeb.CompanyLive.UnitEditComponent}
-              id={:edit_unit}
-              action={:edit_unit}
-              unit={@editing_unit}
-              company={@company}
-              patch={~p"/companies/#{@company}"}
-            />
-          </div>
-        </div>
-      <% end %>
+      <.modal show={@show_unit_edit && @editing_unit != nil} on_close="close_unit_edit" max_width="2xl">
+        <:title>Edit Unit</:title>
+        <%= if @editing_unit do %>
+          <.live_component
+            module={AcesWeb.CompanyLive.UnitEditComponent}
+            id={:edit_unit}
+            action={:edit_unit}
+            unit={@editing_unit}
+            company={@company}
+            patch={~p"/companies/#{@company}"}
+          />
+        <% end %>
+      </.modal>
 
       <!-- Invite Member Modal -->
       <%= if @show_invite_modal do %>

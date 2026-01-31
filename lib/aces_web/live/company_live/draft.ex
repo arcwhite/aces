@@ -688,21 +688,10 @@ defmodule AcesWeb.CompanyLive.Draft do
       </div>
 
       <!-- Unit Search Modal -->
-      <%= if @show_unit_search do %>
-        <div class="modal modal-open">
-          <div class="modal-box w-11/12 max-w-4xl">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="font-bold text-lg">Add Unit to Roster</h3>
-              <button
-                type="button"
-                phx-click="close_unit_search"
-                class="btn btn-sm btn-circle btn-ghost"
-              >
-                ✕
-              </button>
-            </div>
+      <.modal show={@show_unit_search} on_close="close_unit_search" max_width="4xl">
+        <:title>Add Unit to Roster</:title>
 
-            <div class="mb-4">
+        <div class="mb-4">
               <input
                 type="text"
                 name="search"
@@ -928,64 +917,36 @@ defmodule AcesWeb.CompanyLive.Draft do
                 <% end %>
               <% end %>
             </div>
-          </div>
-        </div>
-      <% end %>
+      </.modal>
 
       <!-- Pilot Form Modal -->
-      <%= if @show_pilot_form do %>
-        <div class="modal modal-open">
-          <div class="modal-box w-11/12 max-w-2xl">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="font-bold text-lg">Add Pilot to Company</h3>
-              <button
-                type="button"
-                phx-click="close_pilot_form"
-                class="btn btn-sm btn-circle btn-ghost"
-              >
-                ✕
-              </button>
-            </div>
-
-            <.live_component
-              module={AcesWeb.CompanyLive.PilotFormComponent}
-              id={:new_pilot}
-              title="Add New Pilot"
-              action={@pilot_form_action}
-              pilot={%Aces.Companies.Pilot{}}
-              company={@company}
-              patch={~p"/companies/#{@company}/draft"}
-            />
-          </div>
-        </div>
-      <% end %>
+      <.modal show={@show_pilot_form} on_close="close_pilot_form" max_width="2xl">
+        <:title>Add Pilot to Company</:title>
+        <.live_component
+          module={AcesWeb.CompanyLive.PilotFormComponent}
+          id={:new_pilot}
+          title="Add New Pilot"
+          action={@pilot_form_action}
+          pilot={%Aces.Companies.Pilot{}}
+          company={@company}
+          patch={~p"/companies/#{@company}/draft"}
+        />
+      </.modal>
 
       <!-- Unit Edit Modal -->
-      <%= if @show_unit_edit && @editing_unit do %>
-        <div class="modal modal-open">
-          <div class="modal-box w-11/12 max-w-2xl">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="font-bold text-lg">Edit Unit</h3>
-              <button
-                type="button"
-                phx-click="close_unit_edit"
-                class="btn btn-sm btn-circle btn-ghost"
-              >
-                ✕
-              </button>
-            </div>
-
-            <.live_component
-              module={AcesWeb.CompanyLive.UnitEditComponent}
-              id={:edit_unit}
-              action={:edit_unit}
-              unit={@editing_unit}
-              company={@company}
-              patch={~p"/companies/#{@company}/draft"}
-            />
-          </div>
-        </div>
-      <% end %>
+      <.modal show={@show_unit_edit && @editing_unit != nil} on_close="close_unit_edit" max_width="2xl">
+        <:title>Edit Unit</:title>
+        <%= if @editing_unit do %>
+          <.live_component
+            module={AcesWeb.CompanyLive.UnitEditComponent}
+            id={:edit_unit}
+            action={:edit_unit}
+            unit={@editing_unit}
+            company={@company}
+            patch={~p"/companies/#{@company}/draft"}
+          />
+        <% end %>
+      </.modal>
     </div>
     """
   end

@@ -632,24 +632,19 @@ defmodule AcesWeb.DemoLive do
       </div>
       
     <!-- Modal -->
-      <dialog :if={@show_modal} class="modal modal-open">
-        <div class="modal-box">
-          <h3 class="font-bold text-lg">Modal Demo</h3>
-          <p class="py-4">
-            This is a daisyUI modal! All interactions on this page are synced across connected users via Phoenix PubSub.
-          </p>
-          <p class="text-sm text-base-content/70">
-            Total interactions so far: <span class="badge badge-primary">{@interaction_count}</span>
-          </p>
-          <div class="modal-action">
-            <button class="btn" phx-click="close_modal">Close</button>
-            <button class="btn btn-primary" phx-click="close_modal">Got it!</button>
-          </div>
-        </div>
-        <form method="dialog" class="modal-backdrop" phx-click="close_modal">
-          <button>close</button>
-        </form>
-      </dialog>
+      <.modal show={@show_modal} on_close="close_modal" max_width="lg">
+        <:title>Modal Demo</:title>
+        <p class="py-4">
+          This is a daisyUI modal! All interactions on this page are synced across connected users via Phoenix PubSub.
+        </p>
+        <p class="text-sm text-base-content/70">
+          Total interactions so far: <span class="badge badge-primary">{@interaction_count}</span>
+        </p>
+        <:actions>
+          <button class="btn" phx-click="close_modal">Close</button>
+          <button class="btn btn-primary" phx-click="close_modal">Got it!</button>
+        </:actions>
+      </.modal>
       
     <!-- Bottom Navigation (Mobile) -->
       <div class="btm-nav md:hidden">

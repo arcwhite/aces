@@ -938,40 +938,36 @@ defmodule AcesWeb.SortieLive.Show do
       <% end %>
 
       <!-- Sortie Failed Modal -->
-      <%= if @show_fail_modal do %>
-        <div class="modal modal-open">
-          <div class="modal-box">
-            <h3 class="font-bold text-lg">Confirm Sortie Failure</h3>
-            <p class="py-4">
-              Are you sure the sortie failed? All damage and casualties tracked during play will be kept for reference,
-              but no outcomes will be applied to your company.
-            </p>
-            <p class="text-sm opacity-70 mb-4">
-              You can retry this mission by creating a new sortie.
-            </p>
+      <.modal show={@show_fail_modal} on_close="hide_fail_modal" max_width="lg">
+        <:title>Confirm Sortie Failure</:title>
 
-            <form phx-submit="confirm_sortie_failed">
-              <div class="form-control mb-4">
-                <label class="label">
-                  <span class="label-text">Notes (optional)</span>
-                </label>
-                <textarea
-                  name="notes"
-                  class="textarea textarea-bordered"
-                  placeholder="What went wrong?"
-                  rows="3"
-                ></textarea>
-              </div>
+        <p class="py-4">
+          Are you sure the sortie failed? All damage and casualties tracked during play will be kept for reference,
+          but no outcomes will be applied to your company.
+        </p>
+        <p class="text-sm opacity-70 mb-4">
+          You can retry this mission by creating a new sortie.
+        </p>
 
-              <div class="modal-action">
-                <button type="button" class="btn" phx-click="hide_fail_modal">Cancel</button>
-                <button type="submit" class="btn btn-error">Confirm Failure</button>
-              </div>
-            </form>
+        <form phx-submit="confirm_sortie_failed">
+          <div class="form-control mb-4">
+            <label class="label">
+              <span class="label-text">Notes (optional)</span>
+            </label>
+            <textarea
+              name="notes"
+              class="textarea textarea-bordered"
+              placeholder="What went wrong?"
+              rows="3"
+            ></textarea>
           </div>
-          <div class="modal-backdrop" phx-click="hide_fail_modal"></div>
-        </div>
-      <% end %>
+
+          <div class="flex justify-end gap-2 pt-4">
+            <button type="button" class="btn" phx-click="hide_fail_modal">Cancel</button>
+            <button type="submit" class="btn btn-error">Confirm Failure</button>
+          </div>
+        </form>
+      </.modal>
 
       <!-- Reconnaissance Options (if configured) -->
       <%= if @sortie.recon_options && length(@sortie.recon_options) > 0 do %>

@@ -215,22 +215,10 @@ defmodule AcesWeb.Components.UnitSearchModal do
   def render(assigns) do
     ~H"""
     <div>
-      <%= if @show do %>
-        <div class="modal modal-open">
-          <div class="modal-box w-11/12 max-w-4xl">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="font-bold text-lg">{modal_title(@mode)}</h3>
-              <button
-                type="button"
-                phx-click="close"
-                phx-target={@myself}
-                class="btn btn-sm btn-circle btn-ghost"
-              >
-                ✕
-              </button>
-            </div>
+      <.modal show={@show} on_close="close" max_width="4xl" phx-target={@myself}>
+        <:title>{modal_title(@mode)}</:title>
 
-            <div class="mb-4">
+        <div class="mb-4">
               <!-- Budget/Warchest info for SP purchase mode -->
               <%= if @mode == :sp_purchase do %>
                 <div class="alert alert-info mb-4">
@@ -500,9 +488,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
                 <% end %>
               <% end %>
             </div>
-          </div>
-        </div>
-      <% end %>
+      </.modal>
     </div>
     """
   end
@@ -511,30 +497,27 @@ defmodule AcesWeb.Components.UnitSearchModal do
     ~H"""
     <div class="card bg-base-100 shadow compact">
       <div class="card-body">
-        <div class="flex justify-between items-start">
-          <div>
+        <div class="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
+          <div class="flex-1 min-w-0">
             <h4 class="card-title text-base">
               {Aces.Units.MasterUnit.display_name(@unit)}
             </h4>
-            <div class="flex gap-2 mt-2">
-              <div class="badge badge-outline">
+            <div class="flex flex-wrap gap-1.5 mt-2">
+              <div class="badge badge-outline badge-sm">
                 {String.replace(@unit.unit_type, "_", " ") |> String.capitalize()}
               </div>
               <%= if @unit.tonnage do %>
-                <div class="badge badge-neutral">{@unit.tonnage} tons</div>
+                <div class="badge badge-neutral badge-sm">{@unit.tonnage}t</div>
               <% end %>
               <%= if @unit.point_value do %>
-                <div class="badge badge-accent">{@unit.point_value} PV</div>
-              <% end %>
-              <%= if @mode == :sp_purchase do %>
-                <div class="badge badge-secondary font-semibold">{unit_sp_cost(@unit)} SP</div>
+                <div class="badge badge-accent badge-sm">{@unit.point_value} PV</div>
               <% end %>
             </div>
             <%= if @unit.role do %>
               <p class="text-sm text-gray-600 mt-1">Role: {@unit.role}</p>
             <% end %>
             <!-- Alpha Strike Stats -->
-            <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-gray-600">
+            <div class="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-xs text-gray-600">
               <%= if @unit.bf_move do %>
                 <span title="Movement"><span class="font-semibold">MV:</span> {@unit.bf_move}</span>
               <% end %>
@@ -560,7 +543,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
               </p>
             <% end %>
             <%= if @unit.factions && map_size(@unit.factions) > 0 do %>
-              <div class="flex gap-1 mt-2">
+              <div class="flex flex-wrap gap-1 mt-2">
                 <%= for faction <- Enum.take(Map.keys(@unit.factions), 3) do %>
                   <div class="badge badge-ghost badge-xs">{String.capitalize(faction)}</div>
                 <% end %>
@@ -570,7 +553,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
               </div>
             <% end %>
           </div>
-          <div class="flex flex-col gap-2">
+          <div class="flex sm:flex-col items-center sm:items-end gap-2 sm:shrink-0">
             <%= if @can_afford do %>
               <button
                 type="button"

@@ -166,22 +166,27 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
 
   def handle_event("save", %{"pilot" => pilot_params}, socket) do
     # Check for validation errors before saving
-    if socket.assigns.sp_allocation_error do
-      {:noreply, put_flash(socket, :error, "Cannot save: Please fix SP allocation errors first")}
-    else
-      # Merge form params with current pilot state to include edge abilities
-      current_pilot = socket.assigns.pilot
-      merged_params = Map.merge(pilot_params, %{
-        "edge_abilities" => current_pilot.edge_abilities || [],
-        "sp_allocated_to_skill" => current_pilot.sp_allocated_to_skill,
-        "sp_allocated_to_edge_tokens" => current_pilot.sp_allocated_to_edge_tokens,
-        "sp_allocated_to_edge_abilities" => current_pilot.sp_allocated_to_edge_abilities,
-        "sp_available" => current_pilot.sp_available,
-        "skill_level" => current_pilot.skill_level,
-        "edge_tokens" => current_pilot.edge_tokens
-      })
+    cond do
+      socket.assigns.sp_allocation_error ->
+        {:noreply, put_flash(socket, :error, "Cannot save: Please fix SP allocation errors first")}
 
-      save_pilot(socket, socket.assigns.action, merged_params)
+      socket.assigns.pilot.sp_available > 0 ->
+        {:noreply, put_flash(socket, :error, "Cannot save: You must allocate all SP before saving. You have #{socket.assigns.pilot.sp_available} SP remaining.")}
+
+      true ->
+        # Merge form params with current pilot state to include edge abilities
+        current_pilot = socket.assigns.pilot
+        merged_params = Map.merge(pilot_params, %{
+          "edge_abilities" => current_pilot.edge_abilities || [],
+          "sp_allocated_to_skill" => current_pilot.sp_allocated_to_skill,
+          "sp_allocated_to_edge_tokens" => current_pilot.sp_allocated_to_edge_tokens,
+          "sp_allocated_to_edge_abilities" => current_pilot.sp_allocated_to_edge_abilities,
+          "sp_available" => current_pilot.sp_available,
+          "skill_level" => current_pilot.skill_level,
+          "edge_tokens" => current_pilot.edge_tokens
+        })
+
+        save_pilot(socket, socket.assigns.action, merged_params)
     end
   end
 
@@ -525,6 +530,12 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
           </div>
         <% end %>
 
+        <%= if @pilot.sp_available > 0 and not @sp_allocation_error do %>
+          <div class="alert alert-warning">
+            <span>You must allocate all <%= 150 + (@pilot.sp_earned || 0) %> SP before saving. You have <%= @pilot.sp_available %> SP remaining.</span>
+          </div>
+        <% end %>
+
         <!-- Hidden fields for derived values and edge abilities -->
         <input type="hidden" name="pilot[sp_available]" value={@pilot.sp_available} />
         <input type="hidden" name="pilot[skill_level]" value={@pilot.skill_level} />
@@ -536,7 +547,7 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
             type="submit"
             class="btn btn-primary"
             phx-disable-with={if @action == :hire, do: "Hiring...", else: "Saving..."}
-            disabled={@sp_allocation_error or length(@pilot.edge_abilities || []) > @max_allowed_abilities}
+            disabled={@sp_allocation_error or @pilot.sp_available > 0 or length(@pilot.edge_abilities || []) > @max_allowed_abilities}
           >
             <%= if @action == :hire do %>
               Hire Pilot for 150 SP

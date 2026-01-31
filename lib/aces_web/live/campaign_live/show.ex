@@ -385,33 +385,19 @@ defmodule AcesWeb.CampaignLive.Show do
       />
 
       <!-- Pilot Hire Modal -->
-      <%= if @show_pilot_form do %>
-        <div class="modal modal-open">
-          <div class="modal-box max-w-4xl">
-            <div class="flex justify-between items-center mb-4">
-              <button
-                type="button"
-                phx-click="close_pilot_form"
-                class="btn btn-sm btn-circle btn-ghost absolute right-4 top-4"
-              >
-                ✕
-              </button>
-            </div>
-
-            <.live_component
-              module={AcesWeb.CompanyLive.PilotFormComponent}
-              id={:hire_pilot}
-              pilot={%Aces.Companies.Pilot{}}
-              company={@company}
-              campaign={@campaign}
-              action={:hire}
-              title="Hire New Pilot"
-              patch={~p"/companies/#{@company}/campaigns/#{@campaign}"}
-            />
-          </div>
-          <div class="modal-backdrop" phx-click="close_pilot_form"></div>
-        </div>
-      <% end %>
+      <.modal show={@show_pilot_form} on_close="close_pilot_form" max_width="4xl">
+        <:title>Hire New Pilot</:title>
+        <.live_component
+          module={AcesWeb.CompanyLive.PilotFormComponent}
+          id={:hire_pilot}
+          pilot={%Aces.Companies.Pilot{}}
+          company={@company}
+          campaign={@campaign}
+          action={:hire}
+          title="Hire New Pilot"
+          patch={~p"/companies/#{@company}/campaigns/#{@campaign}"}
+        />
+      </.modal>
     </div>
     """
   end
@@ -940,70 +926,67 @@ defmodule AcesWeb.CampaignLive.Show do
   defp sell_modal(%{selling_unit: nil} = assigns), do: ~H""
   defp sell_modal(assigns) do
     ~H"""
-    <div class="modal modal-open">
-      <div class="modal-box">
-        <h3 class="font-bold text-lg">Sell Unit</h3>
+    <.modal show={true} on_close="close_sell_modal" max_width="lg">
+      <:title>Sell Unit</:title>
 
-        <div class="py-4">
-          <p class="mb-4">
-            Are you sure you want to sell this unit?
-          </p>
+      <div class="py-4">
+        <p class="mb-4">
+          Are you sure you want to sell this unit?
+        </p>
 
-          <div class="card bg-base-200 p-4 mb-4">
-            <div class="font-semibold text-lg">
-              {Aces.Units.MasterUnit.display_name(@selling_unit.master_unit)}
+        <div class="card bg-base-200 p-4 mb-4">
+          <div class="font-semibold text-lg">
+            {Aces.Units.MasterUnit.display_name(@selling_unit.master_unit)}
+          </div>
+          <%= if @selling_unit.custom_name do %>
+            <div class="text-sm opacity-70">{@selling_unit.custom_name}</div>
+          <% end %>
+          <div class="flex gap-2 mt-2">
+            <div class="badge badge-outline">
+              {String.replace(@selling_unit.master_unit.unit_type, "_", " ") |> String.capitalize()}
             </div>
-            <%= if @selling_unit.custom_name do %>
-              <div class="text-sm opacity-70">{@selling_unit.custom_name}</div>
+            <%= if @selling_unit.master_unit.tonnage do %>
+              <div class="badge badge-neutral">{@selling_unit.master_unit.tonnage}t</div>
             <% end %>
-            <div class="flex gap-2 mt-2">
-              <div class="badge badge-outline">
-                {String.replace(@selling_unit.master_unit.unit_type, "_", " ") |> String.capitalize()}
-              </div>
-              <%= if @selling_unit.master_unit.tonnage do %>
-                <div class="badge badge-neutral">{@selling_unit.master_unit.tonnage}t</div>
-              <% end %>
-              <div class="badge badge-accent">{@selling_unit.master_unit.point_value} PV</div>
-            </div>
-          </div>
-
-          <div class="alert alert-warning">
-            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <span>
-              This action cannot be undone. The unit will be permanently removed from your roster.
-            </span>
-          </div>
-
-          <div class="stat bg-success/20 rounded-lg mt-4">
-            <div class="stat-title">You will receive</div>
-            <div class="stat-value text-success">
-              +{Aces.Units.MasterUnit.sell_price(@selling_unit.master_unit)} SP
-            </div>
-            <div class="stat-desc">Added to campaign warchest</div>
+            <div class="badge badge-accent">{@selling_unit.master_unit.point_value} PV</div>
           </div>
         </div>
 
-        <div class="modal-action">
-          <button
-            type="button"
-            phx-click="close_sell_modal"
-            class="btn"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            phx-click="confirm_sell_unit"
-            class="btn btn-error"
-          >
-            Sell Unit
-          </button>
+        <div class="alert alert-warning">
+          <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span>
+            This action cannot be undone. The unit will be permanently removed from your roster.
+          </span>
+        </div>
+
+        <div class="stat bg-success/20 rounded-lg mt-4">
+          <div class="stat-title">You will receive</div>
+          <div class="stat-value text-success">
+            +{Aces.Units.MasterUnit.sell_price(@selling_unit.master_unit)} SP
+          </div>
+          <div class="stat-desc">Added to campaign warchest</div>
         </div>
       </div>
-      <div class="modal-backdrop" phx-click="close_sell_modal"></div>
-    </div>
+
+      <:actions>
+        <button
+          type="button"
+          phx-click="close_sell_modal"
+          class="btn"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          phx-click="confirm_sell_unit"
+          class="btn btn-error"
+        >
+          Sell Unit
+        </button>
+      </:actions>
+    </.modal>
     """
   end
 end
