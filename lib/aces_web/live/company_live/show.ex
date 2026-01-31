@@ -351,60 +351,7 @@ defmodule AcesWeb.CompanyLive.Show do
             <span>No pilots in your company yet. <%= if @company.status == "active", do: "Hire pilots to operate your units!", else: "Pilots are added during company creation." %></span>
           </div>
         <% else %>
-          <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <%= for pilot <- @company.pilots do %>
-              <div class="card bg-base-100 shadow-xl">
-                <div class="card-body">
-                  <h3 class="card-title">
-                    <%= if pilot.callsign && String.trim(pilot.callsign) != "" do %>
-                      "<%= pilot.callsign %>" <%= pilot.name %>
-                    <% else %>
-                      <%= pilot.name %>
-                    <% end %>
-                  </h3>
-                  
-                  <%= if pilot.description && String.trim(pilot.description) != "" do %>
-                    <p class="text-sm opacity-70"><%= pilot.description %></p>
-                  <% end %>
-                  
-                  <div class="flex flex-wrap gap-2 mt-2">
-                    <div class="badge badge-primary">Skill {pilot.skill_level}</div>
-                    <div class="badge badge-secondary">Edge {pilot.edge_tokens}</div>
-                    <div class={[
-                      "badge",
-                      pilot.status == "active" && "badge-success",
-                      pilot.status == "wounded" && "badge-warning",
-                      pilot.status == "deceased" && "badge-error"
-                    ]}>
-                      {String.capitalize(pilot.status)}
-                    </div>
-                  </div>
-
-                  <div class="mt-2 text-sm opacity-70">
-                    <div>SP Earned: {pilot.sp_earned}</div>
-                    <div>Sorties: {pilot.sorties_participated}</div>
-                    <%= if pilot.assigned_unit do %>
-                      <div class="text-info">
-                        Assigned: {Aces.Units.MasterUnit.display_name(pilot.assigned_unit.master_unit)}
-                      </div>
-                    <% else %>
-                      <div class="text-gray-500">Unassigned</div>
-                    <% end %>
-                    <%= if pilot.mvp_awards > 0 do %>
-                      <div>MVP Awards: {pilot.mvp_awards}</div>
-                    <% end %>
-                    <%= if pilot.wounds > 0 do %>
-                      <div class="text-warning">Wounds: {pilot.wounds}</div>
-                    <% end %>
-                  </div>
-                  
-                  <div class="card-actions justify-end">
-                    <button class="btn btn-ghost btn-sm md:btn-xs">Edit</button>
-                  </div>
-                </div>
-              </div>
-            <% end %>
-          </div>
+          <.pilot_cards pilots={@company.pilots} show_actions={true} />
         <% end %>
       </div>
 

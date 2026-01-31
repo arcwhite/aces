@@ -88,6 +88,8 @@ defmodule AcesWeb do
       import AcesWeb.CoreComponents
       # Sortie summary component
       import AcesWeb.Components.SortieSummary
+      # Pilot card component
+      import AcesWeb.Components.PilotCard
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS

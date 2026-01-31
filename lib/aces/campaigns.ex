@@ -884,6 +884,49 @@ defmodule Aces.Campaigns do
   end
 
   @doc """
+  Calculate overview statistics for a campaign.
+
+  Returns a map with:
+  - :has_active_sortie - boolean indicating if there's a sortie in progress
+  - :active_sortie - the active sortie struct (or nil)
+  - :total_income - sum of income from all completed sorties
+  - :total_expenses - sum of expenses from all completed sorties
+  - :net_profit - net earnings from all completed sorties
+  - :units_lost - count of units destroyed during the campaign
+  - :pilots_killed - count of pilots killed during the campaign
+  - :pilots_wounded - count of pilots wounded during the campaign
+  """
+  def calculate_campaign_overview(%Campaign{} = campaign) do
+    completed = Enum.filter(campaign.sorties, &(&1.status == "completed"))
+    active = Enum.find(campaign.sorties, &(&1.status in ["setup", "in_progress", "finalizing"]))
+
+    # Count losses from campaign events
+    {units_lost, pilots_killed, pilots_wounded} = count_campaign_losses(campaign.campaign_events)
+
+    %{
+      has_active_sortie: active != nil,
+      active_sortie: active,
+      total_income: Enum.sum(Enum.map(completed, & &1.total_income || 0)),
+      total_expenses: Enum.sum(Enum.map(completed, & &1.total_expenses || 0)),
+      net_profit: Enum.sum(Enum.map(completed, & &1.net_earnings || 0)),
+      units_lost: units_lost,
+      pilots_killed: pilots_killed,
+      pilots_wounded: pilots_wounded
+    }
+  end
+
+  defp count_campaign_losses(events) do
+    Enum.reduce(events, {0, 0, 0}, fn event, {units, killed, wounded} ->
+      case event.event_type do
+        "unit_destroyed" -> {units + 1, killed, wounded}
+        "pilot_killed" -> {units, killed + 1, wounded}
+        "pilot_wounded" -> {units, killed, wounded + 1}
+        _ -> {units, killed, wounded}
+      end
+    end)
+  end
+
+  @doc """
   Calculate pilot performance stats for a campaign from actual sortie data.
 
   Returns a list of maps with pilot info and computed stats:
