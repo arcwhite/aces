@@ -10,6 +10,7 @@ defmodule Aces.Units do
 
   import Ecto.Query
   alias Aces.Repo
+  alias Aces.Units.Filters
   alias Aces.Units.MasterUnit
   alias Aces.MUL.Client
 
@@ -75,7 +76,7 @@ defmodule Aces.Units do
   """
   def list_cached_master_units(opts \\ []) do
     MasterUnit
-    |> apply_filters(opts)
+    |> Filters.filter(opts)
     |> order_by([u], u.name)
     |> Repo.all()
   end
@@ -134,7 +135,7 @@ defmodule Aces.Units do
     |> where([u], ilike(u.name, ^ilike_term) or
                    ilike(u.variant, ^ilike_term) or
                    ilike(u.full_name, ^ilike_term))
-    |> apply_filters(opts)
+    |> Filters.filter(opts)
     |> order_by([u], u.name)
     |> limit(50)
     |> Repo.all()
@@ -205,121 +206,6 @@ defmodule Aces.Units do
         {:ok, unit}
     end
   end
-
-  defp apply_filters(query, []), do: query
-
-  defp apply_filters(query, [{:unit_type, type} | rest]) do
-    query
-    |> where([u], u.unit_type == ^type)
-    |> apply_filters(rest)
-  end
-
-  defp apply_filters(query, [{:min_pv, min} | rest]) do
-    query
-    |> where([u], u.point_value >= ^min)
-    |> apply_filters(rest)
-  end
-
-  defp apply_filters(query, [{:max_pv, max} | rest]) do
-    query
-    |> where([u], u.point_value <= ^max)
-    |> apply_filters(rest)
-  end
-
-  defp apply_filters(query, [{:tonnage_range, {min, max}} | rest]) do
-    query
-    |> where([u], u.tonnage >= ^min and u.tonnage <= ^max)
-    |> apply_filters(rest)
-  end
-
-  # Era ID mapping for filtering by unit introduction era
-  # Note: This filters by when the unit was INTRODUCED, not faction availability
-  @era_ids %{
-    "ilclan" => 257,
-    "dark_age" => 16,
-    "late_republic" => 254,
-    "republic" => 254,
-    "early_republic" => 15,
-    "jihad" => 14,
-    "civil_war" => 247,
-    "clan_invasion" => 13,
-    "late_succession_war" => 256,
-    "early_succession_war" => 11,
-    "star_league" => 10
-  }
-
-  defp apply_filters(query, [{:era, era} | rest]) when is_binary(era) do
-    case Map.get(@era_ids, era) do
-      nil ->
-        apply_filters(query, rest)
-
-      era_id ->
-        query
-        |> where([u], u.era_id == ^era_id)
-        |> apply_filters(rest)
-    end
-  end
-
-  defp apply_filters(query, [{:faction, faction} | rest]) when is_binary(faction) do
-    # Legacy filter - check if faction exists as a top-level key (old format)
-    # or in any era's faction list (new format)
-    lowercase_faction = String.downcase(faction)
-
-    query
-    |> where(
-      [u],
-      fragment(
-        """
-        (? \\? ?) OR
-        EXISTS (
-          SELECT 1 FROM jsonb_each(?) AS era_data
-          WHERE era_data.value @> to_jsonb(?::text)
-        )
-        """,
-        u.factions,
-        ^lowercase_faction,
-        u.factions,
-        ^lowercase_faction
-      )
-    )
-    |> apply_filters(rest)
-  end
-
-  defp apply_filters(query, [{:factions, factions} | rest]) when is_list(factions) do
-    # Check if unit is available to any of the specified factions (legacy)
-    lowercase_factions = Enum.map(factions, &String.downcase/1)
-
-    query
-    |> where([u], fragment("? \\?| ?", u.factions, ^lowercase_factions))
-    |> apply_filters(rest)
-  end
-
-  defp apply_filters(query, [{:era_faction, {eras, faction}} | rest])
-       when is_list(eras) and is_binary(faction) do
-    # Era-aware faction filter: check if faction is available in ANY of the specified eras
-    # New factions format: %{"ilclan" => ["mercenary", "capellan"], "dark_age" => ["mercenary"]}
-    lowercase_faction = String.downcase(faction)
-
-    query
-    |> where(
-      [u],
-      fragment(
-        """
-        EXISTS (
-          SELECT 1 FROM jsonb_each(?) AS era_data
-          WHERE era_data.key = ANY(?)
-          AND era_data.value @> to_jsonb(?::text)
-        )
-        """,
-        u.factions,
-        ^eras,
-        ^lowercase_faction
-      )
-    )
-    |> apply_filters(rest)
-  end
-
-  defp apply_filters(query, [_ | rest]), do: apply_filters(query, rest)
 
   @doc """
   Search for units with user-friendly filter format.
