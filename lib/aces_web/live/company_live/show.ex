@@ -35,7 +35,6 @@ defmodule AcesWeb.CompanyLive.Show do
          |> assign(:active_campaign, active_campaign)
          |> assign(:page_title, company.name)
          |> assign(:show_unit_search, false)
-         |> assign(:show_pilot_form, false)
          |> assign(:show_unit_edit, false)
          |> assign(:show_invite_modal, false)
          |> assign(:pending_invitations, pending_invitations)
@@ -69,14 +68,6 @@ defmodule AcesWeb.CompanyLive.Show do
     else
       {:noreply, assign(socket, :show_unit_search, true)}
     end
-  end
-
-  def handle_event("hire_pilot", _params, socket) do
-    {:noreply, assign(socket, :show_pilot_form, true)}
-  end
-
-  def handle_event("close_pilot_form", _params, socket) do
-    {:noreply, assign(socket, :show_pilot_form, false)}
   end
 
   def handle_event("edit_unit", %{"unit_id" => unit_id_str}, socket) do
@@ -191,22 +182,6 @@ defmodule AcesWeb.CompanyLive.Show do
   end
 
   @impl true
-  def handle_info({AcesWeb.CompanyLive.PilotFormComponent, {:saved, _pilot}}, socket) do
-    updated_company = Companies.get_company_with_stats!(socket.assigns.company.id)
-    
-    {:noreply,
-     socket
-     |> assign(:company, updated_company)
-     |> assign(:show_pilot_form, false)}
-  end
-
-  def handle_info({AcesWeb.CompanyLive.PilotHireComponent, {:saved, _pilot, updated_company}}, socket) do
-    {:noreply,
-     socket
-     |> assign(:company, Companies.get_company_with_stats!(updated_company.id))
-     |> assign(:show_pilot_form, false)}
-  end
-
   def handle_info({AcesWeb.CompanyLive.UnitEditComponent, {:saved, _unit}}, socket) do
     updated_company = Companies.get_company_with_stats!(socket.assigns.company.id)
 
@@ -319,17 +294,6 @@ defmodule AcesWeb.CompanyLive.Show do
       <div class="mb-8">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold">Pilot Roster</h2>
-          <%= if @company.status == "active" do %>
-            <button
-              type="button"
-              phx-click="hire_pilot"
-              class="btn btn-primary"
-              disabled={@company.warchest_balance < 150}
-              title="Hire pilot for 150 SP"
-            >
-              Hire Pilot (150 SP)
-            </button>
-          <% end %>
         </div>
 
         <%= if @company.pilots == [] do %>
@@ -348,7 +312,7 @@ defmodule AcesWeb.CompanyLive.Show do
               >
               </path>
             </svg>
-            <span>No pilots in your company yet. <%= if @company.status == "active", do: "Hire pilots to operate your units!", else: "Pilots are added during company creation." %></span>
+            <span>No pilots in your company yet. <%= if @company.status == "active", do: "Hire pilots during campaigns.", else: "Pilots are added during company creation." %></span>
           </div>
         <% else %>
           <.pilot_cards pilots={@company.pilots} show_actions={true} />
@@ -739,31 +703,6 @@ defmodule AcesWeb.CompanyLive.Show do
         budget={@company.stats.pv_remaining}
         error={nil}
       />
-
-      <!-- Pilot Hiring Modal -->
-      <%= if @show_pilot_form do %>
-        <div class="modal modal-open">
-          <div class="modal-box w-11/12 max-w-2xl">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="font-bold text-lg">Hire New Pilot</h3>
-              <button
-                type="button"
-                phx-click="close_pilot_form"
-                class="btn btn-sm btn-circle btn-ghost"
-              >
-                ✕
-              </button>
-            </div>
-
-            <.live_component
-              module={AcesWeb.CompanyLive.PilotHireComponent}
-              id={:hire_pilot}
-              company={@company}
-              patch={~p"/companies/#{@company}"}
-            />
-          </div>
-        </div>
-      <% end %>
 
       <!-- Unit Edit Modal -->
       <%= if @show_unit_edit && @editing_unit do %>
