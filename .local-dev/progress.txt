@@ -15,7 +15,7 @@
 The following are from @.local-dev/refactor.txt, please examine that file for more information
 
 [x] 1. Unit search modal duplication - DONE
-[ ] 2. Medium-priority, Smaller DRY improvements
+[x] 2. Medium-priority, Smaller DRY improvements - DONE
 [ ] 3. Parameter extraction deduplication
 [ ] 4. Add a mechanism to "invite" users to co-manage a Company, using our role system. The invitation system should send the user in question a notification by email, if they exist in the DB, and let them "accept" that role. If they don't exist in the system yet, it should send them an invitation to join the platform and, upon joining the platform, they should have the option (somewhere) to view & accept the invitation to co-manage the Company (and its Campaigns, etc.)
 
@@ -47,3 +47,4 @@ The following are from @.local-dev/refactor.txt, please examine that file for mo
 - [x] Refactor 7 from .local-dev/refactor.txt - Extracted duplicate pilot ID extraction logic to get_participating_pilot_ids/1 helper in campaigns.ex. The pattern `deployments |> filter |> map(& &1.pilot_id)` was duplicated in get_non_participating_pilots/1 and validate_force_commander_deployed/2. New helper centralizes logic with added Enum.uniq() for correctness.
 - [x] Refactor 8 from .local-dev/refactor.txt - Extracted unit query filters to dedicated Aces.Units.Filters module. The 10+ apply_filters/2 function heads in units.ex are now organized in a dedicated module with comprehensive @moduledoc documenting all supported filters (unit_type, min/max_pv, tonnage_range, era, faction, factions, era_faction). Added 12 tests for filter functionality.
 - [x] Refactor: Unit search modal duplication - Extracted unit search modal from company_live/show.ex and campaign_live/show.ex (~300 lines each) to shared AcesWeb.Components.UnitSearchModal LiveComponent. Supports two modes: :pv_budget for draft company setup and :sp_purchase for campaign purchases. Net reduction of ~750 lines of duplicated code.
+- [x] Medium-priority DRY improvements from .local-dev/refactor.txt - Created Aces.ChangesetHelpers module with format_errors/1 (replaced 6 duplicate functions across campaigns.ex, LiveViews, and mix task). Added MasterUnit.sp_cost/1, pv_to_sp/1, and sp_per_pv/0 for centralized SP cost calculations (used in company_unit.ex and companies.ex). Added comprehensive tests for all new functions.
