@@ -256,8 +256,8 @@ defmodule AcesWeb.CampaignLive.Show do
     <div class="container mx-auto px-4 py-8">
       <div class="mb-8">
         <div class="flex items-center gap-4 mb-4">
-          <.link navigate={~p"/companies/#{@company.id}"} class="btn btn-ghost btn-sm">
-            ← Back to {@company.name}
+          <.link navigate={~p"/campaigns"} class="btn btn-ghost btn-sm">
+            ← Back to Campaigns
           </.link>
         </div>
 
