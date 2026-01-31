@@ -153,6 +153,7 @@ defmodule Aces.Campaigns.Sortie do
 
   def finalize_changeset(sortie) do
     sortie
+    |> change()
     |> put_change(:status, "completed")
     |> validate_inclusion(:status, @sortie_status)
   end

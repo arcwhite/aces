@@ -310,18 +310,34 @@ defmodule Aces.Campaigns do
   end
 
   defp update_deployment_results(_sortie, []), do: {:ok, []}
+
   defp update_deployment_results(_sortie, deployment_results) do
-    updated_deployments = 
-      Enum.map(deployment_results, fn {deployment_id, result_attrs} ->
-        deployment = Repo.get!(Deployment, deployment_id)
-        {:ok, updated} = 
-          deployment
-          |> Deployment.post_battle_changeset(result_attrs)
-          |> Repo.update()
-        updated
+    # Build an Ecto.Multi with all deployment updates for transaction safety
+    # Preload company_unit with master_unit as required by post_battle_changeset
+    multi =
+      Enum.reduce(deployment_results, Ecto.Multi.new(), fn {deployment_id, result_attrs}, multi ->
+        deployment =
+          Deployment
+          |> preload(company_unit: :master_unit)
+          |> Repo.get!(deployment_id)
+
+        changeset = Deployment.post_battle_changeset(deployment, result_attrs)
+        Ecto.Multi.update(multi, {:deployment, deployment_id}, changeset)
       end)
-    
-    {:ok, updated_deployments}
+
+    case Repo.transaction(multi) do
+      {:ok, results} ->
+        # Extract the updated deployments from the results map
+        updated_deployments =
+          results
+          |> Enum.filter(fn {{:deployment, _id}, _} -> true; _ -> false end)
+          |> Enum.map(fn {_, deployment} -> deployment end)
+
+        {:ok, updated_deployments}
+
+      {:error, {:deployment, deployment_id}, changeset, _changes} ->
+        {:error, {:deployment_update_failed, deployment_id, changeset}}
+    end
   end
 
   defp calculate_and_update_sortie_expenses(sortie, deployments) do

@@ -886,4 +886,173 @@ defmodule Aces.CampaignsTest do
       assert message =~ "exceeds sortie limit"
     end
   end
+
+  describe "complete_sortie/3 with deployment results" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company, %{"warchest_balance" => 5000})
+      pilot = pilot_fixture(company: company)
+
+      master_unit = units_master_unit_fixture(%{bf_size: 2})
+      company_unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      {:ok, sortie} =
+        Campaigns.create_sortie(campaign, %{
+          "mission_number" => "1",
+          "name" => "Complete Test",
+          "pv_limit" => 200
+        })
+
+      {:ok, _deployment} =
+        Campaigns.create_deployment(sortie, %{
+          company_unit_id: company_unit.id,
+          pilot_id: pilot.id
+        })
+
+      sortie = Campaigns.get_sortie!(sortie.id)
+      {:ok, started_sortie} = Campaigns.start_sortie(sortie, pilot.id)
+
+      # Reload sortie with all required associations for complete_sortie
+      # complete_sortie needs campaign.company.pilots for pilot awards
+      started_sortie =
+        Aces.Campaigns.Sortie
+        |> Aces.Repo.get!(started_sortie.id)
+        |> Aces.Repo.preload([
+          :force_commander,
+          :mvp_pilot,
+          campaign: [company: :pilots],
+          deployments: [company_unit: :master_unit, pilot: []]
+        ])
+
+      deployment = hd(started_sortie.deployments)
+
+      %{
+        sortie: started_sortie,
+        deployment: deployment,
+        campaign: campaign,
+        company: company,
+        pilot: pilot,
+        company_unit: company_unit
+      }
+    end
+
+    test "updates deployment results successfully", %{sortie: sortie, deployment: deployment} do
+      completion_attrs = %{
+        was_successful: true,
+        sp_per_participating_pilot: 100,
+        primary_objective_income: 500
+      }
+
+      deployment_results = [
+        {deployment.id, %{damage_status: "structure_damaged", pilot_casualty: "none"}}
+      ]
+
+      assert {:ok, completed_sortie} = Campaigns.complete_sortie(sortie, completion_attrs, deployment_results)
+
+      # Verify the deployment was updated
+      updated_deployment = Enum.find(completed_sortie.deployments, &(&1.id == deployment.id))
+      assert updated_deployment.damage_status == "structure_damaged"
+      assert updated_deployment.pilot_casualty == "none"
+      # Repair cost should be size * 40 for structure damage
+      # Size 2 * 40 = 80
+      assert updated_deployment.repair_cost_sp == 80
+    end
+
+    test "calculates repair costs correctly for different damage levels", %{
+      sortie: sortie,
+      deployment: deployment
+    } do
+      completion_attrs = %{
+        was_successful: true,
+        sp_per_participating_pilot: 100,
+        primary_objective_income: 500
+      }
+
+      # Test with crippled damage
+      deployment_results = [
+        {deployment.id, %{damage_status: "crippled", pilot_casualty: "none"}}
+      ]
+
+      assert {:ok, completed_sortie} = Campaigns.complete_sortie(sortie, completion_attrs, deployment_results)
+
+      updated_deployment = Enum.find(completed_sortie.deployments, &(&1.id == deployment.id))
+      # Crippled = size * 60 = 2 * 60 = 120
+      assert updated_deployment.repair_cost_sp == 120
+    end
+
+    test "handles multiple deployment updates atomically", %{
+      sortie: sortie,
+      company: company
+    } do
+      # Create second pilot and unit for multi-update test
+      pilot2 = pilot_fixture(company: company, name: "Pilot 2")
+      master_unit2 = units_master_unit_fixture(%{name: "Unit 2", bf_size: 3})
+      company_unit2 = company_unit_fixture(company: company, master_unit: master_unit2)
+
+      {:ok, _deployment2} =
+        Campaigns.create_deployment(sortie, %{
+          company_unit_id: company_unit2.id,
+          pilot_id: pilot2.id
+        })
+
+      # Reload sortie with all required associations for complete_sortie
+      sortie =
+        Aces.Campaigns.Sortie
+        |> Aces.Repo.get!(sortie.id)
+        |> Aces.Repo.preload([
+          :force_commander,
+          :mvp_pilot,
+          campaign: [company: :pilots],
+          deployments: [company_unit: :master_unit, pilot: []]
+        ])
+
+      [dep1, dep2] = sortie.deployments
+
+      completion_attrs = %{
+        was_successful: true,
+        sp_per_participating_pilot: 100,
+        primary_objective_income: 500
+      }
+
+      deployment_results = [
+        {dep1.id, %{damage_status: "armor_damaged", pilot_casualty: "none"}},
+        {dep2.id, %{damage_status: "destroyed", pilot_casualty: "wounded"}}
+      ]
+
+      assert {:ok, completed_sortie} = Campaigns.complete_sortie(sortie, completion_attrs, deployment_results)
+
+      updated_dep1 = Enum.find(completed_sortie.deployments, &(&1.id == dep1.id))
+      updated_dep2 = Enum.find(completed_sortie.deployments, &(&1.id == dep2.id))
+
+      assert updated_dep1.damage_status == "armor_damaged"
+      assert updated_dep2.damage_status == "destroyed"
+      assert updated_dep2.pilot_casualty == "wounded"
+    end
+
+    test "rolls back all changes when deployment update fails with invalid data", %{
+      sortie: sortie,
+      deployment: deployment
+    } do
+      completion_attrs = %{
+        was_successful: true,
+        sp_per_participating_pilot: 100,
+        primary_objective_income: 500
+      }
+
+      # Invalid damage_status should cause validation error
+      deployment_results = [
+        {deployment.id, %{damage_status: "invalid_status", pilot_casualty: "none"}}
+      ]
+
+      assert {:error, error} = Campaigns.complete_sortie(sortie, completion_attrs, deployment_results)
+
+      # Error should indicate the deployment update failed
+      assert match?({:deployment_update_failed, _, %Ecto.Changeset{}}, error)
+
+      # Sortie should remain unchanged
+      unchanged_sortie = Campaigns.get_sortie!(sortie.id)
+      assert unchanged_sortie.status == "in_progress"
+    end
+  end
 end
