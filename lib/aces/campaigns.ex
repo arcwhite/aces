@@ -1104,6 +1104,121 @@ defmodule Aces.Campaigns do
     campaign.status == "active" && !has_in_progress_sortie?(campaign)
   end
 
+  @doc """
+  Check if pilots can be hired for a campaign.
+
+  Returns true if:
+  - Campaign status is "active"
+  - No sortie is currently "in_progress"
+  - Campaign has sufficient funds (>= 150 SP)
+  """
+  def can_hire_pilots?(%Campaign{} = campaign) do
+    campaign.status == "active" &&
+      !has_in_progress_sortie?(campaign) &&
+      campaign.warchest_balance >= 150
+  end
+
+  @hiring_cost 150
+
+  @doc """
+  Hire a pilot for a campaign using SP from the warchest.
+
+  Cost is 150 SP.
+
+  Uses Ecto.Multi for transaction:
+  1. Insert Pilot with default stats (skill 4, 1 edge token, active status)
+  2. Insert initial PilotAllocation record
+  3. Update Campaign warchest_balance (deduct 150 SP)
+  4. Insert CampaignEvent for hire
+
+  Returns {:ok, pilot, updated_campaign} or {:error, reason}.
+  """
+  def hire_pilot_for_campaign(%Campaign{} = campaign, attrs \\ %{}) do
+    with :ok <- validate_campaign_active(campaign),
+         :ok <- validate_no_in_progress_sorties_for_purchase(campaign),
+         :ok <- validate_sufficient_funds_for_hiring(campaign) do
+
+      # Stringify keys and add company_id
+      pilot_attrs =
+        attrs
+        |> stringify_keys()
+        |> Map.put("company_id", campaign.company_id)
+
+      pilot_changeset = Pilot.changeset(%Pilot{}, pilot_attrs)
+
+      Ecto.Multi.new()
+      |> Ecto.Multi.insert(:pilot, pilot_changeset)
+      |> Ecto.Multi.insert(:initial_allocation, fn %{pilot: pilot} ->
+        build_initial_pilot_allocation_changeset(pilot)
+      end)
+      |> Ecto.Multi.update(:campaign, fn %{pilot: _pilot} ->
+        new_balance = campaign.warchest_balance - @hiring_cost
+        Campaign.changeset(campaign, %{warchest_balance: new_balance})
+      end)
+      |> Ecto.Multi.insert(:event, fn %{pilot: pilot} ->
+        CampaignEvent.creation_changeset(%CampaignEvent{}, %{
+          campaign_id: campaign.id,
+          event_type: "pilot_hired",
+          event_data: %{
+            pilot_id: pilot.id,
+            pilot_name: pilot.name,
+            pilot_callsign: pilot.callsign,
+            cost_sp: @hiring_cost
+          },
+          description: "Hired pilot #{pilot.name}#{if pilot.callsign, do: " \"#{pilot.callsign}\"", else: ""} for #{@hiring_cost} SP"
+        })
+      end)
+      |> Repo.transaction()
+      |> case do
+        {:ok, %{pilot: pilot, campaign: updated_campaign}} ->
+          {:ok, pilot, updated_campaign}
+
+        {:error, :pilot, %Ecto.Changeset{} = changeset, _} ->
+          {:error, changeset}
+
+        {:error, :initial_allocation, %Ecto.Changeset{} = changeset, _} ->
+          {:error, changeset}
+
+        {:error, _step, error, _} ->
+          {:error, error}
+      end
+    end
+  end
+
+  defp validate_sufficient_funds_for_hiring(%Campaign{warchest_balance: balance}) do
+    if balance >= @hiring_cost do
+      :ok
+    else
+      {:error, "Insufficient SP to hire pilot (need #{@hiring_cost} SP, have #{balance} SP)"}
+    end
+  end
+
+  # Builds an initial PilotAllocation changeset for a newly hired pilot
+  # New pilots have 150 SP available but haven't allocated any yet
+  defp build_initial_pilot_allocation_changeset(%Pilot{} = pilot) do
+    sp_to_skill = pilot.sp_allocated_to_skill || 0
+    sp_to_tokens = pilot.sp_allocated_to_edge_tokens || 0
+    sp_to_abilities = pilot.sp_allocated_to_edge_abilities || 0
+    total_sp = sp_to_skill + sp_to_tokens + sp_to_abilities
+
+    PilotAllocation.initial_changeset(%PilotAllocation{}, %{
+      pilot_id: pilot.id,
+      sp_to_skill: sp_to_skill,
+      sp_to_tokens: sp_to_tokens,
+      sp_to_abilities: sp_to_abilities,
+      edge_abilities_gained: pilot.edge_abilities || [],
+      total_sp: total_sp
+    })
+  end
+
+  # Convert all atom keys in a map to string keys
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn
+      {key, value} when is_atom(key) -> {Atom.to_string(key), value}
+      {key, value} -> {key, value}
+    end)
+  end
+
   ## Unit Selling
 
   @doc """

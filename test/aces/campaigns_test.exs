@@ -1435,4 +1435,210 @@ defmodule Aces.CampaignsTest do
       assert unchanged_sortie.status == "in_progress"
     end
   end
+
+  describe "can_hire_pilots?/1" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company, %{"warchest_balance" => 500})
+
+      %{user: user, company: company, campaign: campaign}
+    end
+
+    test "returns true when campaign is active, no sorties in progress, and has sufficient funds", %{
+      campaign: campaign
+    } do
+      assert Campaigns.can_hire_pilots?(campaign) == true
+    end
+
+    test "returns false when campaign is not active", %{campaign: campaign} do
+      {:ok, completed_campaign} = Campaigns.complete_campaign(campaign, "completed")
+      assert Campaigns.can_hire_pilots?(completed_campaign) == false
+    end
+
+    test "returns false when sortie is in progress", %{campaign: campaign, company: company} do
+      # Create a pilot and unit for deployment
+      pilot = pilot_fixture(company: company)
+      master_unit = units_master_unit_fixture()
+      company_unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      {:ok, sortie} =
+        Campaigns.create_sortie(campaign, %{
+          "mission_number" => "1",
+          "name" => "Test",
+          "pv_limit" => 100
+        })
+
+      # Add a deployment
+      {:ok, _deployment} =
+        Campaigns.create_deployment(sortie, %{
+          company_unit_id: company_unit.id,
+          pilot_id: pilot.id
+        })
+
+      # Reload sortie with deployments
+      sortie = Campaigns.get_sortie!(sortie.id)
+
+      {:ok, _started_sortie} = Campaigns.start_sortie(sortie, pilot.id)
+
+      # Reload campaign
+      updated_campaign = Campaigns.get_campaign!(campaign.id)
+      assert Campaigns.can_hire_pilots?(updated_campaign) == false
+    end
+
+    test "returns false when campaign has insufficient funds", %{user: user} do
+      # Create new company for separate campaign with less than 150 SP
+      company2 = company_fixture(user: user)
+      low_funds_campaign = campaign_fixture(company2, %{"warchest_balance" => 100})
+      assert Campaigns.can_hire_pilots?(low_funds_campaign) == false
+    end
+
+    test "returns true when campaign has exactly 150 SP", %{user: user} do
+      # Create new company for separate campaign with exactly 150 SP
+      company2 = company_fixture(user: user)
+      exact_funds_campaign = campaign_fixture(company2, %{"warchest_balance" => 150})
+      assert Campaigns.can_hire_pilots?(exact_funds_campaign) == true
+    end
+  end
+
+  describe "hire_pilot_for_campaign/2" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company, %{"warchest_balance" => 500})
+
+      %{user: user, company: company, campaign: campaign}
+    end
+
+    test "hires pilot and deducts 150 SP from campaign warchest", %{
+      campaign: campaign,
+      company: company
+    } do
+      pilot_attrs = %{name: "New Pilot", callsign: "Rookie"}
+
+      assert {:ok, pilot, updated_campaign} =
+               Campaigns.hire_pilot_for_campaign(campaign, pilot_attrs)
+
+      # Check pilot was created
+      assert pilot.name == "New Pilot"
+      assert pilot.callsign == "Rookie"
+      assert pilot.skill_level == 4
+      assert pilot.edge_tokens == 1
+      assert pilot.status == "active"
+      assert pilot.company_id == company.id
+
+      # Check warchest was deducted
+      assert updated_campaign.warchest_balance == campaign.warchest_balance - 150
+    end
+
+    test "creates initial PilotAllocation record for hired pilot", %{campaign: campaign} do
+      pilot_attrs = %{name: "New Pilot"}
+
+      assert {:ok, pilot, _updated_campaign} =
+               Campaigns.hire_pilot_for_campaign(campaign, pilot_attrs)
+
+      # Check allocation was created
+      allocations = Aces.Repo.all(Aces.Campaigns.PilotAllocation)
+      pilot_allocations = Enum.filter(allocations, &(&1.pilot_id == pilot.id))
+
+      assert length(pilot_allocations) == 1
+      allocation = hd(pilot_allocations)
+      assert allocation.allocation_type == "initial"
+      assert allocation.sp_to_skill == 0
+      assert allocation.sp_to_tokens == 0
+      assert allocation.sp_to_abilities == 0
+    end
+
+    test "creates campaign event for pilot hire", %{campaign: campaign} do
+      pilot_attrs = %{name: "Hired Pilot", callsign: "Merc"}
+
+      assert {:ok, _pilot, _updated_campaign} =
+               Campaigns.hire_pilot_for_campaign(campaign, pilot_attrs)
+
+      # Reload campaign with events
+      updated_campaign = Campaigns.get_campaign!(campaign.id)
+
+      hire_event =
+        Enum.find(updated_campaign.campaign_events, &(&1.event_type == "pilot_hired"))
+
+      assert hire_event != nil
+      assert hire_event.description =~ "Hired pilot Hired Pilot"
+      assert hire_event.description =~ "\"Merc\""
+      assert hire_event.description =~ "150 SP"
+    end
+
+    test "fails when campaign is not active", %{campaign: campaign} do
+      {:ok, completed_campaign} = Campaigns.complete_campaign(campaign, "completed")
+
+      assert {:error, message} =
+               Campaigns.hire_pilot_for_campaign(completed_campaign, %{name: "Test"})
+
+      assert message =~ "campaign is completed"
+    end
+
+    test "fails when sortie is in progress", %{campaign: campaign, company: company} do
+      # Create a pilot and unit for deployment
+      pilot = pilot_fixture(company: company)
+      master_unit = units_master_unit_fixture()
+      company_unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      {:ok, sortie} =
+        Campaigns.create_sortie(campaign, %{
+          "mission_number" => "1",
+          "name" => "Test",
+          "pv_limit" => 100
+        })
+
+      # Add a deployment
+      {:ok, _deployment} =
+        Campaigns.create_deployment(sortie, %{
+          company_unit_id: company_unit.id,
+          pilot_id: pilot.id
+        })
+
+      # Reload sortie with deployments
+      sortie = Campaigns.get_sortie!(sortie.id)
+
+      {:ok, _started_sortie} = Campaigns.start_sortie(sortie, pilot.id)
+
+      # Reload campaign
+      updated_campaign = Campaigns.get_campaign!(campaign.id)
+
+      assert {:error, message} =
+               Campaigns.hire_pilot_for_campaign(updated_campaign, %{name: "Test"})
+
+      assert message =~ "sortie is in progress"
+    end
+
+    test "fails when campaign has insufficient funds", %{user: user} do
+      # Create new company for separate campaign with insufficient funds
+      company2 = company_fixture(user: user)
+      low_funds_campaign = campaign_fixture(company2, %{"warchest_balance" => 100})
+
+      assert {:error, message} =
+               Campaigns.hire_pilot_for_campaign(low_funds_campaign, %{name: "Test"})
+
+      assert message =~ "Insufficient SP"
+      assert message =~ "need 150 SP"
+      assert message =~ "have 100 SP"
+    end
+
+    test "fails when pilot name is missing", %{campaign: campaign} do
+      assert {:error, %Ecto.Changeset{} = changeset} =
+               Campaigns.hire_pilot_for_campaign(campaign, %{})
+
+      assert errors_on(changeset) == %{name: ["can't be blank"]}
+    end
+
+    test "deducts exactly 150 SP when campaign has exactly 150 SP", %{user: user} do
+      # Create new company for separate campaign with exactly 150 SP
+      company2 = company_fixture(user: user)
+      exact_funds_campaign = campaign_fixture(company2, %{"warchest_balance" => 150})
+
+      assert {:ok, _pilot, updated_campaign} =
+               Campaigns.hire_pilot_for_campaign(exact_funds_campaign, %{name: "Test"})
+
+      assert updated_campaign.warchest_balance == 0
+    end
+  end
 end

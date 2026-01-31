@@ -43,8 +43,10 @@ defmodule AcesWeb.CampaignLive.Show do
          |> assign(:page_title, campaign.name)
          |> assign(:can_edit, Authorization.can?(:edit_company, user, company))
          |> assign(:can_purchase_units, Campaigns.can_purchase_units?(campaign))
+         |> assign(:can_hire_pilots, Campaigns.can_hire_pilots?(campaign))
          |> assign(:show_unit_search, false)
          |> assign(:show_sell_modal, false)
+         |> assign(:show_pilot_form, false)
          |> assign(:selling_unit, nil)
          |> assign(:unit_add_error, nil)}
       end
@@ -93,6 +95,15 @@ defmodule AcesWeb.CampaignLive.Show do
      socket
      |> assign(:show_unit_search, true)
      |> assign(:unit_add_error, nil)}
+  end
+
+  # Pilot hire modal handlers
+  def handle_event("hire_pilot", _params, socket) do
+    {:noreply, assign(socket, :show_pilot_form, true)}
+  end
+
+  def handle_event("close_pilot_form", _params, socket) do
+    {:noreply, assign(socket, :show_pilot_form, false)}
   end
 
   # Unit selling handlers
@@ -217,6 +228,19 @@ defmodule AcesWeb.CampaignLive.Show do
     end
   end
 
+  def handle_info({AcesWeb.CompanyLive.PilotHireComponent, {:pilot_hired, _pilot, updated_campaign}}, socket) do
+    # Refresh company and campaign data after hiring
+    updated_company = Companies.get_company!(socket.assigns.company.id)
+
+    {:noreply,
+     socket
+     |> assign(:company, updated_company)
+     |> assign(:campaign, updated_campaign)
+     |> assign(:can_purchase_units, Campaigns.can_purchase_units?(updated_campaign))
+     |> assign(:can_hire_pilots, Campaigns.can_hire_pilots?(updated_campaign))
+     |> assign(:show_pilot_form, false)}
+  end
+
   # Helper to get wounded pilots from company
   defp get_wounded_pilots(%{pilots: pilots}) when is_list(pilots) do
     Enum.filter(pilots, &(&1.status == "wounded"))
@@ -327,6 +351,7 @@ defmodule AcesWeb.CampaignLive.Show do
         pilot_performance={@pilot_performance}
         can_edit={@can_edit}
         can_purchase_units={@can_purchase_units}
+        can_hire_pilots={@can_hire_pilots}
       />
 
       <!-- Campaign Dates -->
@@ -358,6 +383,33 @@ defmodule AcesWeb.CampaignLive.Show do
         show={@show_sell_modal}
         selling_unit={@selling_unit}
       />
+
+      <!-- Pilot Hire Modal -->
+      <%= if @show_pilot_form do %>
+        <div class="modal modal-open">
+          <div class="modal-box max-w-2xl">
+            <div class="flex justify-between items-center mb-4">
+              <h3 class="font-bold text-lg">Hire Pilot</h3>
+              <button
+                type="button"
+                phx-click="close_pilot_form"
+                class="btn btn-sm btn-circle btn-ghost"
+              >
+                ✕
+              </button>
+            </div>
+
+            <.live_component
+              module={AcesWeb.CompanyLive.PilotHireComponent}
+              id={:hire_pilot}
+              company={@company}
+              campaign={@campaign}
+              patch={~p"/companies/#{@company}/campaigns/#{@campaign}"}
+            />
+          </div>
+          <div class="modal-backdrop" phx-click="close_pilot_form"></div>
+        </div>
+      <% end %>
     </div>
     """
   end
@@ -418,6 +470,20 @@ defmodule AcesWeb.CampaignLive.Show do
             title={if @can_purchase_units, do: "Purchase new unit with SP", else: "Cannot purchase units while sortie is in progress"}
           >
             Purchase Units
+          </button>
+
+          <button
+            type="button"
+            phx-click="hire_pilot"
+            class="btn btn-secondary"
+            disabled={not @can_hire_pilots}
+            title={cond do
+              @overview.has_active_sortie -> "Cannot hire pilots while sortie is in progress"
+              @campaign.warchest_balance < 150 -> "Insufficient SP (need 150 SP)"
+              true -> "Hire new pilot for 150 SP"
+            end}
+          >
+            Hire Pilot (150 SP)
           </button>
         <% end %>
       </div>
