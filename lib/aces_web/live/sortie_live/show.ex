@@ -120,13 +120,15 @@ defmodule AcesWeb.SortieLive.Show do
          {:ok, force_commander_id} <- require_force_commander_selected(socket) do
       # Delegate all validation and business logic to the context
       campaign = Campaigns.get_campaign!(socket.assigns.campaign.id)
+      user = socket.assigns.current_scope.user
 
       case Campaigns.start_sortie_with_refits(
              socket.assigns.sortie,
              socket.assigns.pending_variant_changes,
              socket.assigns.omni_variants,
              force_commander_id,
-             campaign
+             campaign,
+             user: user
            ) do
         {:ok, updated_sortie, updated_campaign} ->
           {:noreply,

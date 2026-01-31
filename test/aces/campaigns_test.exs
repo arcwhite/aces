@@ -1641,4 +1641,87 @@ defmodule Aces.CampaignsTest do
       assert updated_campaign.warchest_balance == 0
     end
   end
+
+  describe "campaign event user tracking" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user)
+      %{user: user, company: company}
+    end
+
+    test "create_campaign/3 tracks user who started the campaign", %{user: user, company: company} do
+      {:ok, campaign} = Campaigns.create_campaign(company, %{"name" => "Test Campaign"}, user: user)
+
+      # Check that the campaign_started event has the user_id
+      start_event = Enum.find(campaign.campaign_events, &(&1.event_type == "campaign_started"))
+      assert start_event != nil
+      assert start_event.user_id == user.id
+      assert start_event.user.email == user.email
+    end
+
+    test "create_campaign/3 works without user", %{company: company} do
+      {:ok, campaign} = Campaigns.create_campaign(company, %{"name" => "Test Campaign"})
+
+      start_event = Enum.find(campaign.campaign_events, &(&1.event_type == "campaign_started"))
+      assert start_event != nil
+      assert start_event.user_id == nil
+    end
+
+    test "hire_pilot_for_campaign/3 tracks user who hired the pilot", %{user: user, company: company} do
+      {:ok, campaign} = Campaigns.create_campaign(company, %{"name" => "Test Campaign"})
+
+      {:ok, pilot, _updated_campaign} =
+        Campaigns.hire_pilot_for_campaign(campaign, %{name: "Test Pilot"}, user: user)
+
+      # Reload campaign to get fresh events with user preloaded
+      updated_campaign = Campaigns.get_campaign!(campaign.id)
+      hire_event = Enum.find(updated_campaign.campaign_events, &(&1.event_type == "pilot_hired"))
+
+      assert hire_event != nil
+      assert hire_event.user_id == user.id
+      assert hire_event.event_data["pilot_name"] == pilot.name
+    end
+
+    test "purchase_unit_for_campaign/4 tracks user who purchased the unit", %{user: user} do
+      # Use an active company for purchases
+      active_company = company_fixture(user: user, status: "active")
+      master_unit = units_master_unit_fixture()
+      {:ok, campaign} = Campaigns.create_campaign(active_company, %{"name" => "Test", "warchest_balance" => 10000})
+
+      {:ok, _company_unit} =
+        Campaigns.purchase_unit_for_campaign(campaign, master_unit.mul_id, %{}, user: user)
+
+      updated_campaign = Campaigns.get_campaign!(campaign.id)
+      purchase_event = Enum.find(updated_campaign.campaign_events, &(&1.event_type == "unit_purchased"))
+
+      assert purchase_event != nil
+      assert purchase_event.user_id == user.id
+    end
+
+    test "sell_unit/3 tracks user who sold the unit", %{user: user, company: company} do
+      master_unit = units_master_unit_fixture()
+      company_unit = company_unit_fixture(company: company, master_unit: master_unit)
+      {:ok, campaign} = Campaigns.create_campaign(company, %{"name" => "Test"})
+
+      {:ok, _sell_price} = Campaigns.sell_unit(company_unit, campaign, user: user)
+
+      updated_campaign = Campaigns.get_campaign!(campaign.id)
+      sell_event = Enum.find(updated_campaign.campaign_events, &(&1.event_type == "unit_sold"))
+
+      assert sell_event != nil
+      assert sell_event.user_id == user.id
+    end
+
+    test "complete_campaign/3 tracks user who completed the campaign", %{user: user, company: company} do
+      {:ok, campaign} = Campaigns.create_campaign(company, %{"name" => "Test"})
+
+      {:ok, completed_campaign} = Campaigns.complete_campaign(campaign, "completed", user: user)
+
+      updated_campaign = Campaigns.get_campaign!(completed_campaign.id)
+      complete_event = Enum.find(updated_campaign.campaign_events, &(&1.event_type == "campaign_completed"))
+
+      assert complete_event != nil
+      assert complete_event.user_id == user.id
+    end
+  end
 end

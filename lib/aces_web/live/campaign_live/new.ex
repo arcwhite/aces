@@ -48,8 +48,9 @@ defmodule AcesWeb.CampaignLive.New do
 
   def handle_event("save", %{"campaign" => campaign_params}, socket) do
     company = socket.assigns.company
+    user = socket.assigns.current_scope.user
 
-    case Campaigns.create_campaign(company, campaign_params) do
+    case Campaigns.create_campaign(company, campaign_params, user: user) do
       {:ok, campaign} ->
         {:noreply,
          socket

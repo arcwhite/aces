@@ -5,8 +5,9 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
   """
   use AcesWeb, :live_view
 
-  alias Aces.{Companies, Campaigns}
+  alias Aces.{Companies, Campaigns, Repo}
   alias Aces.Companies.{Authorization, Pilots}
+  alias Aces.Campaigns.CampaignEvent
   alias AcesWeb.SortieLive.Complete.Helpers
 
   on_mount {AcesWeb.UserAuthLive, :default}
@@ -101,6 +102,7 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
   def handle_event("complete_sortie", _params, socket) do
     sortie = socket.assigns.sortie
     campaign = socket.assigns.campaign
+    user = socket.assigns.current_scope.user
 
     # Calculate warchest addition (net earnings minus pilot pay is already in net_earnings)
     warchest_addition = sortie.net_earnings || 0
@@ -111,10 +113,10 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
     {:ok, _campaign} =
       campaign
       |> Ecto.Changeset.change(%{warchest_balance: new_warchest})
-      |> Aces.Repo.update()
+      |> Repo.update()
 
     # Mark sortie as completed
-    {:ok, _sortie} =
+    {:ok, updated_sortie} =
       sortie
       |> Ecto.Changeset.change(%{
         status: "completed",
@@ -122,7 +124,10 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
         completed_at: DateTime.truncate(DateTime.utc_now(), :second),
         finalization_step: nil
       })
-      |> Aces.Repo.update()
+      |> Repo.update()
+
+    # Create sortie completion event with user tracking
+    create_sortie_completion_event(updated_sortie, user)
 
     # Heal pilots who were wounded in PREVIOUS sorties
     heal_previously_wounded_pilots(socket.assigns.company, sortie)
@@ -131,6 +136,21 @@ defmodule AcesWeb.SortieLive.Complete.Summary do
      socket
      |> put_flash(:info, "Sortie completed! #{warchest_addition} SP added to warchest.")
      |> push_navigate(to: ~p"/companies/#{socket.assigns.company.id}/campaigns/#{campaign.id}")}
+  end
+
+  defp create_sortie_completion_event(sortie, user) do
+    event_type = if sortie.was_successful, do: "sortie_completed", else: "sortie_failed"
+    event_data = CampaignEvent.sortie_completed_data(sortie)
+
+    %CampaignEvent{}
+    |> CampaignEvent.creation_changeset(%{
+      campaign_id: sortie.campaign_id,
+      user_id: user && user.id,
+      event_type: event_type,
+      event_data: event_data,
+      description: CampaignEvent.generate_description(event_type, event_data)
+    })
+    |> Repo.insert!()
   end
 
   defp heal_previously_wounded_pilots(company, current_sortie) do

@@ -1,10 +1,14 @@
 defmodule Aces.Campaigns.CampaignEvent do
   @moduledoc """
-  Campaign event schema - tracks timeline of events during a campaign
+  Campaign event schema - tracks timeline of events during a campaign.
+
+  Events track who performed the action (user_id) so that multi-user
+  campaigns can show which collaborator made each change.
   """
   use Ecto.Schema
   import Ecto.Changeset
 
+  alias Aces.Accounts.User
   alias Aces.Campaigns.Campaign
 
   @event_types ~w(
@@ -22,6 +26,7 @@ defmodule Aces.Campaigns.CampaignEvent do
     field :occurred_at, :utc_datetime
 
     belongs_to :campaign, Campaign
+    belongs_to :user, User
 
     timestamps(type: :utc_datetime)
   end
@@ -29,19 +34,26 @@ defmodule Aces.Campaigns.CampaignEvent do
   @doc false
   def changeset(event, attrs) do
     event
-    |> cast(attrs, [:event_type, :event_data, :description, :occurred_at])
+    |> cast(attrs, [:event_type, :event_data, :description, :occurred_at, :user_id])
     |> validate_required([:event_type, :description, :occurred_at])
     |> validate_inclusion(:event_type, @event_types)
     |> foreign_key_constraint(:campaign_id)
+    |> foreign_key_constraint(:user_id)
   end
 
+  @doc """
+  Creates a new campaign event with automatic timestamp.
+
+  Accepts optional `user_id` to track which user performed the action.
+  """
   def creation_changeset(event, attrs) do
     event
-    |> cast(attrs, [:campaign_id, :event_type, :event_data, :description])
+    |> cast(attrs, [:campaign_id, :user_id, :event_type, :event_data, :description])
     |> validate_required([:campaign_id, :event_type, :description])
     |> validate_inclusion(:event_type, @event_types)
     |> put_change(:occurred_at, DateTime.truncate(DateTime.utc_now(), :second))
     |> foreign_key_constraint(:campaign_id)
+    |> foreign_key_constraint(:user_id)
   end
 
   @doc """

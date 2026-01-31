@@ -59,8 +59,11 @@ defmodule AcesWeb.CampaignLive.Show do
     user = socket.assigns.current_scope.user
 
     if Authorization.can?(:edit_company, user, socket.assigns.company) do
-      case Campaigns.complete_campaign(campaign, outcome) do
+      case Campaigns.complete_campaign(campaign, outcome, user: user) do
         {:ok, updated_campaign} ->
+          # Refresh campaign to get updated events with user preloaded
+          updated_campaign = Campaigns.get_campaign!(updated_campaign.id)
+
           {:noreply,
            socket
            |> assign(:campaign, updated_campaign)
@@ -153,7 +156,7 @@ defmodule AcesWeb.CampaignLive.Show do
     company = socket.assigns.company
 
     if Authorization.can?(:edit_company, user, company) do
-      case Campaigns.sell_unit(selling_unit, campaign) do
+      case Campaigns.sell_unit(selling_unit, campaign, user: user) do
         {:ok, sell_price} ->
           updated_campaign = Campaigns.get_campaign!(campaign.id)
           updated_company = Companies.get_company!(company.id)
@@ -201,7 +204,7 @@ defmodule AcesWeb.CampaignLive.Show do
     user = socket.assigns.current_scope.user
 
     if Authorization.can?(:edit_company, user, socket.assigns.company) do
-      case Campaigns.purchase_unit_for_campaign(campaign, mul_id) do
+      case Campaigns.purchase_unit_for_campaign(campaign, mul_id, %{}, user: user) do
         {:ok, _company_unit} ->
           updated_campaign = Campaigns.get_campaign!(campaign.id)
           updated_company = Companies.get_company!(socket.assigns.company.id)
@@ -393,6 +396,7 @@ defmodule AcesWeb.CampaignLive.Show do
           pilot={%Aces.Companies.Pilot{}}
           company={@company}
           campaign={@campaign}
+          user={@current_scope.user}
           action={:hire}
           title="Hire New Pilot"
           patch={~p"/companies/#{@company}/campaigns/#{@campaign}"}
@@ -902,10 +906,23 @@ defmodule AcesWeb.CampaignLive.Show do
             <div class="card bg-base-100 shadow">
               <div class="card-body py-4">
                 <div class="flex justify-between items-start">
-                  <div>
+                  <div class="flex-1">
                     <h4 class="font-semibold">{event.description}</h4>
-                    <div class="flex gap-2 mt-1">
-                      <div class="badge badge-outline badge-sm">{String.replace(event.event_type, "_", " ") |> String.capitalize()}</div>
+                    <div class="flex flex-wrap gap-2 mt-1">
+                      <div class={[
+                        "badge badge-sm",
+                        event_type_badge_class(event.event_type)
+                      ]}>
+                        {format_event_type(event.event_type)}
+                      </div>
+                      <%= if event.user do %>
+                        <div class="flex items-center gap-1 text-sm text-gray-500">
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                          </svg>
+                          <span>{event.user.email}</span>
+                        </div>
+                      <% end %>
                       <div class="text-sm text-gray-500">
                         {Calendar.strftime(event.occurred_at, "%b %d, %Y at %I:%M %p")}
                       </div>
@@ -919,6 +936,39 @@ defmodule AcesWeb.CampaignLive.Show do
       <% end %>
     </div>
     """
+  end
+
+  # Helper to format event types for display
+  defp format_event_type(event_type) do
+    event_type
+    |> String.replace("_", " ")
+    |> String.split()
+    |> Enum.map(&String.capitalize/1)
+    |> Enum.join(" ")
+  end
+
+  # Helper to get appropriate badge color based on event type
+  defp event_type_badge_class(event_type) do
+    case event_type do
+      "campaign_started" -> "badge-info"
+      "campaign_completed" -> "badge-success"
+      "campaign_failed" -> "badge-error"
+      "sortie_started" -> "badge-warning"
+      "sortie_completed" -> "badge-success"
+      "sortie_failed" -> "badge-error"
+      "pilot_hired" -> "badge-info"
+      "pilot_wounded" -> "badge-warning"
+      "pilot_killed" -> "badge-error"
+      "pilot_recovered" -> "badge-success"
+      "unit_purchased" -> "badge-info"
+      "unit_sold" -> "badge-secondary"
+      "unit_destroyed" -> "badge-error"
+      "unit_repaired" -> "badge-success"
+      "unit_refitted" -> "badge-accent"
+      "keyword_gained" -> "badge-primary"
+      "mvp_awarded" -> "badge-warning"
+      _ -> "badge-outline"
+    end
   end
 
   # Sell modal component

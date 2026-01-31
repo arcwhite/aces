@@ -231,8 +231,9 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
 
   defp save_pilot(socket, :hire, pilot_params) do
     campaign = socket.assigns.campaign
+    user = socket.assigns[:user]
 
-    case Campaigns.hire_pilot_for_campaign(campaign, pilot_params) do
+    case Campaigns.hire_pilot_for_campaign(campaign, pilot_params, user: user) do
       {:ok, pilot, updated_campaign} ->
         notify_parent({:pilot_hired, pilot, updated_campaign})
         {:noreply,

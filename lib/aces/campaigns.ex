@@ -24,7 +24,7 @@ defmodule Aces.Campaigns do
     |> preload([
       :company,
       sorties: [deployments: [:company_unit, :pilot]],
-      campaign_events: []
+      campaign_events: :user
     ])
     |> Repo.get!(id)
   end
@@ -37,7 +37,7 @@ defmodule Aces.Campaigns do
     |> where(company_id: ^company_id, status: "active")
     |> preload([
       sorties: [deployments: [:company_unit, :pilot]],
-      campaign_events: []
+      campaign_events: :user
     ])
     |> Repo.one()
   end
@@ -54,13 +54,17 @@ defmodule Aces.Campaigns do
   end
 
   @doc """
-  Creates a campaign for a company
+  Creates a campaign for a company.
+
+  Options:
+  - `:user` - The user performing the action (for event tracking)
   """
-  def create_campaign(%Company{} = company, attrs \\ %{}) do
+  def create_campaign(%Company{} = company, attrs \\ %{}, opts \\ []) do
     total_pilot_sp = calculate_total_pilot_sp(company)
     experience_modifier = calculate_experience_modifier(total_pilot_sp)
+    user = Keyword.get(opts, :user)
 
-    attrs_with_company = 
+    attrs_with_company =
       attrs
       |> Map.put("company_id", company.id)
       |> Map.put("experience_modifier", experience_modifier)
@@ -71,6 +75,7 @@ defmodule Aces.Campaigns do
     |> Ecto.Multi.insert(:start_event, fn %{campaign: campaign} ->
       CampaignEvent.creation_changeset(%CampaignEvent{}, %{
         campaign_id: campaign.id,
+        user_id: user && user.id,
         event_type: "campaign_started",
         description: "Campaign started: #{campaign.name}"
       })
@@ -98,17 +103,23 @@ defmodule Aces.Campaigns do
   end
 
   @doc """
-  Completes a campaign
+  Completes a campaign.
+
+  Options:
+  - `:user` - The user performing the action (for event tracking)
   """
-  def complete_campaign(%Campaign{} = campaign, outcome \\ "completed") do
+  def complete_campaign(%Campaign{} = campaign, outcome \\ "completed", opts \\ []) do
+    user = Keyword.get(opts, :user)
+
     Ecto.Multi.new()
     |> Ecto.Multi.update(:campaign, Campaign.completion_changeset(campaign, %{status: outcome}))
     |> Ecto.Multi.insert(:completion_event, fn %{campaign: updated_campaign} ->
       event_type = if outcome == "completed", do: "campaign_completed", else: "campaign_failed"
       description = if outcome == "completed", do: "Campaign completed successfully", else: "Campaign failed"
-      
+
       CampaignEvent.creation_changeset(%CampaignEvent{}, %{
         campaign_id: updated_campaign.id,
+        user_id: user && user.id,
         event_type: event_type,
         description: description
       })
@@ -186,9 +197,13 @@ defmodule Aces.Campaigns do
   end
 
   @doc """
-  Starts a sortie (validates force commander and deployments via changeset)
+  Starts a sortie (validates force commander and deployments via changeset).
+
+  Options:
+  - `:user` - The user performing the action (for event tracking)
   """
-  def start_sortie(%Sortie{} = sortie, force_commander_id) do
+  def start_sortie(%Sortie{} = sortie, force_commander_id, opts \\ []) do
+    user = Keyword.get(opts, :user)
     changeset = Sortie.start_changeset(sortie, %{force_commander_id: force_commander_id})
 
     if changeset.valid? do
@@ -197,6 +212,7 @@ defmodule Aces.Campaigns do
       |> Ecto.Multi.insert(:start_event, fn %{sortie: updated_sortie} ->
         CampaignEvent.creation_changeset(%CampaignEvent{}, %{
           campaign_id: updated_sortie.campaign_id,
+          user_id: user && user.id,
           event_type: "sortie_started",
           description: "Started Sortie #{updated_sortie.mission_number}: #{updated_sortie.name}"
         })
@@ -213,9 +229,14 @@ defmodule Aces.Campaigns do
   end
 
   @doc """
-  Completes a sortie with post-battle processing
+  Completes a sortie with post-battle processing.
+
+  Options:
+  - `:user` - The user performing the action (for event tracking)
   """
-  def complete_sortie(%Sortie{} = sortie, completion_attrs, deployment_results \\ []) do
+  def complete_sortie(%Sortie{} = sortie, completion_attrs, deployment_results \\ [], opts \\ []) do
+    user = Keyword.get(opts, :user)
+
     Ecto.Multi.new()
     |> Ecto.Multi.update(:sortie, Sortie.completion_changeset(sortie, completion_attrs))
     |> Ecto.Multi.run(:update_deployments, fn _repo, %{sortie: updated_sortie} ->
@@ -228,7 +249,7 @@ defmodule Aces.Campaigns do
       build_pilot_awards_multi(final_sortie)
     end)
     |> Ecto.Multi.run(:record_events, fn _repo, %{calculate_expenses: final_sortie} ->
-      record_sortie_completion_events(final_sortie)
+      record_sortie_completion_events(final_sortie, user)
     end)
     |> Ecto.Multi.update(:finalize, fn %{calculate_expenses: final_sortie} ->
       Sortie.finalize_changeset(final_sortie)
@@ -422,12 +443,13 @@ defmodule Aces.Campaigns do
     |> Enum.reject(&(&1.id in participating_pilot_ids))
   end
 
-  defp record_sortie_completion_events(%Sortie{} = sortie) do
+  defp record_sortie_completion_events(%Sortie{} = sortie, user) do
     event_type = if sortie.was_successful, do: "sortie_completed", else: "sortie_failed"
 
     %CampaignEvent{}
     |> CampaignEvent.creation_changeset(%{
       campaign_id: sortie.campaign_id,
+      user_id: user && user.id,
       event_type: event_type,
       event_data: CampaignEvent.sortie_completed_data(sortie),
       description: CampaignEvent.generate_description(event_type, CampaignEvent.sortie_completed_data(sortie))
@@ -1017,9 +1039,13 @@ defmodule Aces.Campaigns do
   5. Records the configuration change and cost on the deployment
   6. Deducts the cost from the campaign warchest
 
+  Options:
+  - `:user` - The user performing the action (for event tracking)
+
   Returns {:ok, deployment} or {:error, reason}.
   """
-  def change_omni_variant(%Deployment{} = deployment, new_master_unit_id, %Campaign{} = campaign) do
+  def change_omni_variant(%Deployment{} = deployment, new_master_unit_id, %Campaign{} = campaign, opts \\ []) do
+    user = Keyword.get(opts, :user)
     require Logger
     Logger.info("change_omni_variant called - deployment: #{deployment.id}, new_master_unit_id: #{new_master_unit_id}, campaign: #{campaign.id}")
 
@@ -1075,6 +1101,7 @@ defmodule Aces.Campaigns do
         |> Ecto.Multi.insert(:event, fn _ ->
           CampaignEvent.creation_changeset(%CampaignEvent{}, %{
             campaign_id: campaign.id,
+            user_id: user && user.id,
             event_type: "unit_refitted",
             description: "#{deployment.company_unit.custom_name || current_unit.name} refitted to #{new_unit.variant} variant (-#{refit_cost} SP)"
           })
@@ -1131,9 +1158,14 @@ defmodule Aces.Campaigns do
   3. Update Campaign warchest_balance (deduct 150 SP)
   4. Insert CampaignEvent for hire
 
+  Options:
+  - `:user` - The user performing the action (for event tracking)
+
   Returns {:ok, pilot, updated_campaign} or {:error, reason}.
   """
-  def hire_pilot_for_campaign(%Campaign{} = campaign, attrs \\ %{}) do
+  def hire_pilot_for_campaign(%Campaign{} = campaign, attrs \\ %{}, opts \\ []) do
+    user = Keyword.get(opts, :user)
+
     with :ok <- validate_campaign_active(campaign),
          :ok <- validate_no_in_progress_sorties_for_purchase(campaign),
          :ok <- validate_sufficient_funds_for_hiring(campaign) do
@@ -1158,6 +1190,7 @@ defmodule Aces.Campaigns do
       |> Ecto.Multi.insert(:event, fn %{pilot: pilot} ->
         CampaignEvent.creation_changeset(%CampaignEvent{}, %{
           campaign_id: campaign.id,
+          user_id: user && user.id,
           event_type: "pilot_hired",
           event_data: %{
             pilot_id: pilot.id,
@@ -1270,9 +1303,13 @@ defmodule Aces.Campaigns do
   4. Updates the Campaign warchest_balance (adds SP)
   5. Creates a CampaignEvent for the sale
 
+  Options:
+  - `:user` - The user performing the action (for event tracking)
+
   Returns {:ok, sell_price_sp} or {:error, reason}.
   """
-  def sell_unit(%CompanyUnit{} = company_unit, %Campaign{} = campaign) do
+  def sell_unit(%CompanyUnit{} = company_unit, %Campaign{} = campaign, opts \\ []) do
+    user = Keyword.get(opts, :user)
     company_unit = Repo.preload(company_unit, :master_unit)
 
     with :ok <- validate_unit_can_be_sold(company_unit),
@@ -1290,6 +1327,7 @@ defmodule Aces.Campaigns do
       |> Ecto.Multi.insert(:event, fn _ ->
         CampaignEvent.creation_changeset(%CampaignEvent{}, %{
           campaign_id: campaign.id,
+          user_id: user && user.id,
           event_type: "unit_sold",
           event_data: %{
             "unit_name" => unit_display_name,
@@ -1356,9 +1394,14 @@ defmodule Aces.Campaigns do
   2. Update Campaign warchest_balance (deduct SP)
   3. Insert CampaignEvent for purchase
 
+  Options:
+  - `:user` - The user performing the action (for event tracking)
+
   Returns {:ok, company_unit} or {:error, reason}.
   """
-  def purchase_unit_for_campaign(%Campaign{} = campaign, mul_id, attrs \\ %{}) do
+  def purchase_unit_for_campaign(%Campaign{} = campaign, mul_id, attrs \\ %{}, opts \\ []) do
+    user = Keyword.get(opts, :user)
+
     with :ok <- validate_campaign_active(campaign),
          :ok <- validate_no_in_progress_sorties_for_purchase(campaign),
          {:ok, master_unit} <- get_master_unit_for_purchase(mul_id) do
@@ -1382,6 +1425,7 @@ defmodule Aces.Campaigns do
       |> Ecto.Multi.insert(:event, fn %{company_unit: company_unit} ->
         CampaignEvent.creation_changeset(%CampaignEvent{}, %{
           campaign_id: campaign.id,
+          user_id: user && user.id,
           event_type: "unit_purchased",
           event_data: CampaignEvent.unit_purchased_data(
             Repo.preload(company_unit, :master_unit),
@@ -1511,6 +1555,9 @@ defmodule Aces.Campaigns do
   5. Commits all pending variant changes
   6. Starts the sortie
 
+  Options:
+  - `:user` - The user performing the action (for event tracking)
+
   Returns {:ok, updated_sortie, updated_campaign} or {:error, message}.
   """
   def start_sortie_with_refits(
@@ -1518,9 +1565,12 @@ defmodule Aces.Campaigns do
         pending_changes,
         omni_variants,
         force_commander_id,
-        %Campaign{id: campaign_id}
+        %Campaign{id: campaign_id},
+        opts \\ []
       )
       when is_map(pending_changes) and is_map(omni_variants) do
+    user = Keyword.get(opts, :user)
+
     # Re-fetch campaign to ensure we have fresh data for validations
     campaign = get_campaign!(campaign_id)
 
@@ -1529,10 +1579,10 @@ defmodule Aces.Campaigns do
          :ok <- validate_warchest_for_refits(sortie, pending_changes, omni_variants, campaign),
          :ok <- validate_pv_within_limit(sortie, pending_changes, omni_variants) do
       # Commit variant changes first (if any)
-      case commit_variant_changes_if_any(sortie, pending_changes, omni_variants, campaign) do
+      case commit_variant_changes_if_any(sortie, pending_changes, omni_variants, campaign, user) do
         {:ok, updated_campaign} ->
           # Now start the sortie
-          case start_sortie(sortie, force_commander_id) do
+          case start_sortie(sortie, force_commander_id, user: user) do
             {:ok, updated_sortie} ->
               {:ok, updated_sortie, updated_campaign}
 
@@ -1593,13 +1643,13 @@ defmodule Aces.Campaigns do
     end
   end
 
-  defp commit_variant_changes_if_any(_sortie, pending_changes, _omni_variants, campaign)
+  defp commit_variant_changes_if_any(_sortie, pending_changes, _omni_variants, campaign, _user)
        when map_size(pending_changes) == 0 do
     {:ok, campaign}
   end
 
-  defp commit_variant_changes_if_any(sortie, pending_changes, omni_variants, campaign) do
-    commit_omni_refits(sortie, pending_changes, omni_variants, campaign)
+  defp commit_variant_changes_if_any(sortie, pending_changes, omni_variants, campaign, user) do
+    commit_omni_refits(sortie, pending_changes, omni_variants, campaign, user)
   end
 
   @doc """
@@ -1614,7 +1664,7 @@ defmodule Aces.Campaigns do
 
   Returns {:ok, updated_campaign} or {:error, reason}.
   """
-  def commit_omni_refits(sortie, pending_changes, omni_variants, campaign) do
+  def commit_omni_refits(sortie, pending_changes, omni_variants, campaign, user \\ nil) do
     # Build list of changes with their costs
     changes_with_costs =
       Enum.map(pending_changes, fn {deployment_id, new_variant_id} ->
@@ -1658,6 +1708,7 @@ defmodule Aces.Campaigns do
           {:event, idx},
           CampaignEvent.creation_changeset(%CampaignEvent{}, %{
             campaign_id: campaign.id,
+            user_id: user && user.id,
             event_type: "unit_refitted",
             description: "#{change.deployment.company_unit.custom_name || change.current_unit.name} refitted to #{change.new_unit.variant} variant (-#{change.cost} SP)"
           })
