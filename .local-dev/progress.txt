@@ -20,7 +20,7 @@ The following are from @.local-dev/refactor.txt, please examine that file for mo
 [x] 4. build_saved_map_from_allocations/2 refactor
 [x] 5. update_deployment_results/2 error handling
 [x] 6. enrich_allocations/1 N+N fix
-[ ] 7. Duplicate pilot ID extraction
+[x] 7. Duplicate pilot ID extraction
 [ ] 8. units.ex filter organization
 [ ] 9. Parameter extraction deduplication
 [ ] 10. Add documentation
@@ -50,3 +50,4 @@ The following are from @.local-dev/refactor.txt, please examine that file for mo
 - [x] Refactor 4 from .local-dev/refactor.txt - Refactored build_saved_map_from_allocations/2 for clarity. Extracted build_saved_entry/2 helper to handle single pilot allocation conversion. Replaced Enum.map |> Map.new() with idiomatic for comprehension. Added documentation comments.
 - [x] Refactor 5 from .local-dev/refactor.txt - Fixed update_deployment_results/2 error handling. Replaced crash-prone `{:ok, _} =` pattern matching with Ecto.Multi for transaction safety. Returns proper `{:error, {:deployment_update_failed, id, changeset}}` on failure. Also fixed finalize_changeset/1 to wrap struct in changeset before calling put_change. Added comprehensive tests for complete_sortie with deployment results.
 - [x] Refactor 6 from .local-dev/refactor.txt - Fixed N+N performance issue in enrich_allocations/1 in sortie_summary.ex. Replaced O(n) Enum.find inside Enum.map with O(1) Map.get by building pilot lookup map first. Improves complexity from O(n*m) to O(n+m).
+- [x] Refactor 7 from .local-dev/refactor.txt - Extracted duplicate pilot ID extraction logic to get_participating_pilot_ids/1 helper in campaigns.ex. The pattern `deployments |> filter |> map(& &1.pilot_id)` was duplicated in get_non_participating_pilots/1 and validate_force_commander_deployed/2. New helper centralizes logic with added Enum.uniq() for correctness.
