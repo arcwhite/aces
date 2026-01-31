@@ -339,23 +339,34 @@ defmodule AcesWeb.SortieLive.Show do
   defp require_force_commander_selected(%{assigns: %{selected_force_commander_id: id}}), do: {:ok, id}
 
   defp extract_damage_params(params) do
-    case Enum.find_value(params, fn
-           {"damage_status_" <> id_string, status} -> {String.to_integer(id_string), status}
-           _ -> nil
-         end) do
+    case extract_prefixed_param(params, "damage_status_") do
       {deployment_id, damage_status} -> {:ok, deployment_id, damage_status}
       nil -> {:error, "Invalid damage status parameters"}
     end
   end
 
   defp extract_casualty_params(params) do
-    case Enum.find_value(params, fn
-           {"pilot_casualty_" <> id_string, status} -> {String.to_integer(id_string), status}
-           _ -> nil
-         end) do
+    case extract_prefixed_param(params, "pilot_casualty_") do
       {deployment_id, casualty_status} -> {:ok, deployment_id, casualty_status}
       nil -> {:error, "Invalid pilot casualty parameters"}
     end
+  end
+
+  # Extracts a parameter with a given prefix from form params.
+  # Returns {id, value} where id is the integer parsed from the suffix after the prefix.
+  # Example: extract_prefixed_param(%{"damage_status_42" => "destroyed"}, "damage_status_")
+  #          returns {42, "destroyed"}
+  defp extract_prefixed_param(params, prefix) do
+    Enum.find_value(params, fn
+      {key, value} when is_binary(key) ->
+        case String.split(key, prefix) do
+          ["", id_string] -> {String.to_integer(id_string), value}
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end)
   end
 
   defp find_deployment(socket, deployment_id) do
