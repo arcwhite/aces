@@ -57,55 +57,67 @@ defmodule Aces.Campaigns.CampaignEvent do
   end
 
   @doc """
-  Create event data for sortie completion
+  Create event data for sortie completion.
+
+  Returns a map with string keys for consistency with JSON storage
+  and generate_description/2.
   """
   def sortie_completed_data(sortie) do
     %{
-      sortie_id: sortie.id,
-      mission_number: sortie.mission_number,
-      was_successful: sortie.was_successful,
-      net_earnings: sortie.net_earnings,
-      keywords_gained: sortie.keywords_gained || []
+      "sortie_id" => sortie.id,
+      "mission_number" => sortie.mission_number,
+      "was_successful" => sortie.was_successful,
+      "net_earnings" => sortie.net_earnings,
+      "keywords_gained" => sortie.keywords_gained || []
     }
   end
 
   @doc """
-  Create event data for pilot hiring
+  Create event data for pilot hiring.
+
+  Returns a map with string keys for consistency with JSON storage
+  and generate_description/2.
   """
   def pilot_hired_data(pilot, cost_sp) do
     %{
-      pilot_id: pilot.id,
-      pilot_name: pilot.name,
-      pilot_callsign: pilot.callsign,
-      cost_sp: cost_sp
+      "pilot_id" => pilot.id,
+      "pilot_name" => pilot.name,
+      "pilot_callsign" => pilot.callsign,
+      "cost_sp" => cost_sp
     }
   end
 
   @doc """
-  Create event data for unit purchase
+  Create event data for unit purchase.
+
+  Returns a map with string keys for consistency with JSON storage
+  and generate_description/2.
   """
   def unit_purchased_data(company_unit, cost_sp) do
     %{
-      company_unit_id: company_unit.id,
-      unit_name: company_unit.master_unit.name,
-      unit_variant: company_unit.master_unit.variant,
-      cost_sp: cost_sp,
-      custom_name: company_unit.custom_name
+      "company_unit_id" => company_unit.id,
+      "unit_name" => company_unit.master_unit.name,
+      "unit_variant" => company_unit.master_unit.variant,
+      "cost_sp" => cost_sp,
+      "custom_name" => company_unit.custom_name
     }
   end
 
   @doc """
-  Create event data for MVP award
+  Create event data for MVP award.
+
+  Returns a map with string keys for consistency with JSON storage
+  and generate_description/2.
   """
   def mvp_awarded_data(pilot, sortie) do
     %{
-      pilot_id: pilot.id,
-      pilot_name: pilot.name,
-      pilot_callsign: pilot.callsign,
-      sortie_id: sortie.id,
-      sortie_name: sortie.name,
-      mission_number: sortie.mission_number,
-      sp_bonus: 20
+      "pilot_id" => pilot.id,
+      "pilot_name" => pilot.name,
+      "pilot_callsign" => pilot.callsign,
+      "sortie_id" => sortie.id,
+      "sortie_name" => sortie.name,
+      "mission_number" => sortie.mission_number,
+      "sp_bonus" => 20
     }
   end
 
