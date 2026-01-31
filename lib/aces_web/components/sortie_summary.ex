@@ -48,10 +48,13 @@ defmodule AcesWeb.Components.SortieSummary do
   defp enrich_allocations(%{pilot_allocations: allocations, all_pilots: pilots, sortie: sortie}) do
     mvp_pilot_id = sortie.mvp_pilot_id
 
+    # Build lookup map first for O(1) lookups instead of O(n) Enum.find per allocation
+    pilot_map = Map.new(pilots, &{&1.id, &1})
+
     allocations
     |> Enum.filter(&(&1.allocation_type == "sortie"))
     |> Enum.map(fn alloc ->
-      pilot = Enum.find(pilots, &(&1.id == alloc.pilot_id))
+      pilot = Map.get(pilot_map, alloc.pilot_id)
 
       %{
         pilot_id: alloc.pilot_id,
