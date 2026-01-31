@@ -12,8 +12,6 @@
 
 # High-priority items
 - [ ] Need to update Edge Abilities to be accurate (ask your user for the actual list)
-- [ ] Company view needs to be tabbed, and it should be more obvious that the user needs to be 'on campaign' (e.g. on a planet) to purchase units or hire pilots. Or, we enable these controls for the company when no campaign is active.
-
 - [ ] Add PubSub support so multiple users can see changes to their Company, Campaign, and Sorties in real-time. Especially useful for the "live" Sortie show view, where users are tracking things happening as the game is happening.
 
 # Medium-priority items
@@ -51,3 +49,4 @@
 - [x] Campaigns view shows past campaigns - Added tabbed view (Active/Past tabs) to the campaigns index page. Active campaigns shown by default, past (completed/failed) campaigns accessible via Past tab. Features: tab badges with counts, completion date for past campaigns, appropriate empty states. Added 11 comprehensive tests.
 - [x] Campaign completion syncs warchest to company - Updated complete_campaign/3 to sync the campaign's final warchest_balance back to the company's warchest_balance. This ensures SP earned or lost during campaigns (via unit purchases, sales, pilot hiring, sorties) persists to the company. Uses Ecto.Multi for atomic transaction. Added 5 comprehensive tests covering unit purchases, sales, pilot hiring, and successful/failed campaign completions.
 - [x] Campaign navigation breadcrumb fix - Fixed CampaignLive.Show to navigate "Back to Campaigns" (/campaigns) instead of "Back to Company". Since Campaigns is a top-level navigation element, the campaign show page should go back to the campaigns list, not to the company page.
+- [x] Company view tabbed interface - Refactored Company show page to use a tabbed interface with four tabs: Overview (company stats, active campaign summary), Pilots (pilot roster), Units (unit roster), Settings (team members, danger zone). Added prominent messaging on the Overview tab explaining that unit purchases and pilot hiring require being on an active campaign. This addresses the user confusion about when these actions are available. Updated tests to verify tab navigation works correctly.
