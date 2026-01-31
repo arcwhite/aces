@@ -16,8 +16,8 @@ The following are from @.local-dev/refactor.txt, please examine that file for mo
 
 [x] 1. sortie_live/show.ex - OMNI refits extraction
 [x] 2. sortie_live/complete/pilots.ex - SP distribution extraction
-[ ] 3. company_live/show.ex - Unit search extraction
-[ ] 4. build_saved_map_from_allocations/2 refactor
+[x] 3. company_live/show.ex - Unit search extraction
+[x] 4. build_saved_map_from_allocations/2 refactor
 [ ] 5. update_deployment_results/2 error handling
 [ ] 6. enrich_allocations/1 N+N fix
 [ ] 7. Duplicate pilot ID extraction
@@ -46,3 +46,5 @@ The following are from @.local-dev/refactor.txt, please examine that file for mo
 - [x] Pilot allocations migration Phase 4 (cleanup) - Removed deprecated pilot_allocations JSON column from sorties table. Updated comments in PilotAllocationState to reference the new table structure. PilotAllocationState module retained for runtime state management during sortie completion wizard.
 - [x] Refactor 1 from .local-dev/refactor.txt - Extracted OMNI refits business logic from sortie_live/show.ex to Campaigns context. Added calculate_pending_refit_cost/3, calculate_effective_deployed_pv/3, and start_sortie_with_refits/5 to context. LiveView now delegates to context for business logic. Added comprehensive tests and OMNI unit fixtures.
 - [x] Refactor 2 from .local-dev/refactor.txt - Extracted SP distribution logic from sortie_live/complete/pilots.ex to Campaigns context. Added distribute_pilot_sp/4, revert_pilot_sp/2, and handle_mvp_change/4 functions with Ecto.Multi transaction safety. LiveView reduced from 391 to 304 lines, now only handles UI state and calls context functions. Fixed error handling to use proper case statements instead of {:ok, _} = ... patterns. Added comprehensive tests.
+- [x] Refactor 3 from .local-dev/refactor.txt - Extracted unit search business logic from company_live/show.ex to Units context. Added Units.search_units_for_company/2 with user-friendly filter format (%{eras: [...], faction: "...", type: "..."}). Moved build_search_opts logic from LiveView to context. Removed try/rescue from LiveView with proper {:ok, results} | {:error, reason} handling. Consolidated duplicate search logic (maybe_run_search, handle_info). Added comprehensive tests in units_test.exs.
+- [x] Refactor 4 from .local-dev/refactor.txt - Refactored build_saved_map_from_allocations/2 for clarity. Extracted build_saved_entry/2 helper to handle single pilot allocation conversion. Replaced Enum.map |> Map.new() with idiomatic for comprehension. Added documentation comments.
