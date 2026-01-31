@@ -347,6 +347,84 @@ defmodule Aces.Companies.CompanyUnitTest do
     end
   end
 
+  describe "active_company_changeset/3" do
+    setup do
+      user = Aces.AccountsFixtures.user_fixture()
+      company = CompaniesFixtures.company_fixture(%{status: "active", user: user})
+      company = Aces.Repo.preload(company, company_units: [:master_unit])
+
+      campaign = CompaniesFixtures.campaign_fixture(company, %{"warchest_balance" => 5000})
+
+      battlemech = CompaniesFixtures.master_unit_fixture(%{
+        name: "Atlas AS7-D",
+        variant: "AS7-D",
+        unit_type: "battlemech",
+        point_value: 50
+      })
+
+      %{company: company, campaign: campaign, battlemech: battlemech}
+    end
+
+    test "validates company is active", %{campaign: campaign, battlemech: battlemech} do
+      # Create a draft company
+      draft_company = CompaniesFixtures.company_fixture(%{status: "draft"})
+
+      attrs = %{
+        company_id: draft_company.id,
+        master_unit_id: battlemech.id
+      }
+
+      changeset = CompanyUnit.active_company_changeset(%CompanyUnit{}, attrs, campaign)
+      refute changeset.valid?
+      assert "Cannot purchase units for draft companies. Finalize the company first." in Aces.DataCase.errors_on(changeset).company_id
+    end
+
+    test "validates SP budget against campaign warchest", %{company: company, campaign: campaign} do
+      # Create an expensive unit that costs more than warchest
+      expensive_unit = CompaniesFixtures.master_unit_fixture(%{
+        point_value: 200,  # 200 * 40 = 8000 SP, more than 5000 warchest
+        unit_type: "battlemech"
+      })
+
+      attrs = %{
+        company_id: company.id,
+        master_unit_id: expensive_unit.id
+      }
+
+      changeset = CompanyUnit.active_company_changeset(%CompanyUnit{}, attrs, campaign)
+      refute changeset.valid?
+      errors = Aces.DataCase.errors_on(changeset)
+      assert Enum.any?(errors.master_unit_id, &(&1 =~ "Insufficient SP"))
+    end
+
+    test "allows purchase when SP budget is sufficient", %{company: company, campaign: campaign, battlemech: battlemech} do
+      # battlemech has PV 50, so cost is 50 * 40 = 2000 SP, less than 5000 warchest
+      attrs = %{
+        company_id: company.id,
+        master_unit_id: battlemech.id
+      }
+
+      changeset = CompanyUnit.active_company_changeset(%CompanyUnit{}, attrs, campaign)
+      assert changeset.valid?
+    end
+
+    test "validates unit type is allowed", %{company: company, campaign: campaign} do
+      invalid_unit = CompaniesFixtures.master_unit_fixture(%{
+        unit_type: "aerospace_fighter",
+        point_value: 30
+      })
+
+      attrs = %{
+        company_id: company.id,
+        master_unit_id: invalid_unit.id
+      }
+
+      changeset = CompanyUnit.active_company_changeset(%CompanyUnit{}, attrs, campaign)
+      refute changeset.valid?
+      assert "Only types Battlemech, Battle Armor, Combat Vehicle, Conventional Infantry are allowed" in Aces.DataCase.errors_on(changeset).master_unit_id
+    end
+  end
+
   describe "non-battlemech validation" do
     setup do
       company = CompaniesFixtures.company_fixture(%{status: "draft", pv_budget: 1000})

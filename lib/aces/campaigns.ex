@@ -1047,6 +1047,110 @@ defmodule Aces.Campaigns do
     end
   end
 
+  ## Unit Purchase During Campaign
+
+  @doc """
+  Check if a campaign can purchase units.
+
+  Returns true if:
+  - Campaign status is "active"
+  - No sortie is currently "in_progress"
+  """
+  def can_purchase_units?(%Campaign{} = campaign) do
+    campaign.status == "active" && !has_in_progress_sortie?(campaign)
+  end
+
+  @doc """
+  Check if a campaign has any sortie currently in progress.
+  """
+  def has_in_progress_sortie?(%Campaign{sorties: sorties}) when is_list(sorties) do
+    Enum.any?(sorties, &(&1.status == "in_progress"))
+  end
+
+  def has_in_progress_sortie?(%Campaign{id: campaign_id}) do
+    Sortie
+    |> where(campaign_id: ^campaign_id, status: "in_progress")
+    |> Repo.exists?()
+  end
+
+  @doc """
+  Purchase a unit for a campaign using SP from the warchest.
+
+  Cost is calculated as: unit's point_value × 40 SP
+
+  Uses Ecto.Multi for transaction:
+  1. Insert CompanyUnit with active_company_changeset
+  2. Update Campaign warchest_balance (deduct SP)
+  3. Insert CampaignEvent for purchase
+
+  Returns {:ok, company_unit} or {:error, reason}.
+  """
+  def purchase_unit_for_campaign(%Campaign{} = campaign, mul_id, attrs \\ %{}) do
+    with :ok <- validate_campaign_active(campaign),
+         :ok <- validate_no_in_progress_sorties_for_purchase(campaign),
+         {:ok, master_unit} <- get_master_unit_for_purchase(mul_id) do
+
+      sp_cost = (master_unit.point_value || 0) * 40
+
+      company_unit_attrs = Map.merge(attrs, %{
+        company_id: campaign.company_id,
+        master_unit_id: master_unit.id,
+        purchase_cost_sp: sp_cost
+      })
+
+      Ecto.Multi.new()
+      |> Ecto.Multi.insert(:company_unit, fn _ ->
+        CompanyUnit.active_company_changeset(%CompanyUnit{}, company_unit_attrs, campaign)
+      end)
+      |> Ecto.Multi.update(:campaign, fn %{company_unit: _company_unit} ->
+        new_balance = campaign.warchest_balance - sp_cost
+        Campaign.changeset(campaign, %{warchest_balance: new_balance})
+      end)
+      |> Ecto.Multi.insert(:event, fn %{company_unit: company_unit} ->
+        CampaignEvent.creation_changeset(%CampaignEvent{}, %{
+          campaign_id: campaign.id,
+          event_type: "unit_purchased",
+          event_data: CampaignEvent.unit_purchased_data(
+            Repo.preload(company_unit, :master_unit),
+            sp_cost
+          ),
+          description: "Purchased #{master_unit.name} #{master_unit.variant} for #{sp_cost} SP"
+        })
+      end)
+      |> Repo.transaction()
+      |> case do
+        {:ok, %{company_unit: company_unit}} ->
+          {:ok, Repo.preload(company_unit, :master_unit)}
+
+        {:error, :company_unit, %Ecto.Changeset{} = changeset, _} ->
+          {:error, changeset}
+
+        {:error, _step, error, _} ->
+          {:error, error}
+      end
+    end
+  end
+
+  defp validate_campaign_active(%Campaign{status: "active"}), do: :ok
+  defp validate_campaign_active(%Campaign{status: status}) do
+    {:error, "Cannot purchase units: campaign is #{status}"}
+  end
+
+  defp validate_no_in_progress_sorties_for_purchase(%Campaign{} = campaign) do
+    if has_in_progress_sortie?(campaign) do
+      {:error, "Cannot purchase units while a sortie is in progress"}
+    else
+      :ok
+    end
+  end
+
+  defp get_master_unit_for_purchase(mul_id) do
+    case Repo.get_by(MasterUnit, mul_id: mul_id) do
+      nil -> {:error, "Unit not found in database"}
+      master_unit -> {:ok, master_unit}
+    end
+  end
+
   @doc """
   Calculate the cost of changing to a different OMNI variant.
 

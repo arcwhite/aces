@@ -887,6 +887,159 @@ defmodule Aces.CampaignsTest do
     end
   end
 
+  describe "purchase_unit_for_campaign/3" do
+    setup do
+      user = user_fixture()
+      # Create active company for purchases
+      company = company_fixture(user: user, status: "active")
+      campaign = campaign_fixture(company, %{"warchest_balance" => 5000})
+
+      # Create a master unit for purchase
+      master_unit = units_master_unit_fixture(%{
+        point_value: 45,
+        unit_type: "battlemech"
+      })
+
+      %{
+        user: user,
+        company: company,
+        campaign: campaign,
+        master_unit: master_unit
+      }
+    end
+
+    test "purchases unit and deducts SP from warchest", %{
+      campaign: campaign,
+      master_unit: master_unit
+    } do
+      # Unit cost = 45 PV * 40 = 1800 SP
+      assert {:ok, company_unit} = Campaigns.purchase_unit_for_campaign(campaign, master_unit.mul_id)
+
+      assert company_unit.master_unit_id == master_unit.id
+      assert company_unit.purchase_cost_sp == 1800
+      assert company_unit.company_id == campaign.company_id
+
+      # Reload campaign to verify warchest was updated
+      updated_campaign = Campaigns.get_campaign!(campaign.id)
+      assert updated_campaign.warchest_balance == 5000 - 1800
+    end
+
+    test "creates campaign event for purchase", %{
+      campaign: campaign,
+      master_unit: master_unit
+    } do
+      assert {:ok, _company_unit} = Campaigns.purchase_unit_for_campaign(campaign, master_unit.mul_id)
+
+      # Reload campaign to check events
+      updated_campaign = Campaigns.get_campaign!(campaign.id)
+
+      # Find the unit_purchased event
+      purchase_event = Enum.find(updated_campaign.campaign_events, fn e ->
+        e.event_type == "unit_purchased"
+      end)
+
+      assert purchase_event != nil
+      assert purchase_event.description =~ "1800 SP"
+    end
+
+    test "fails when campaign is not active", %{master_unit: master_unit, campaign: campaign} do
+      # Complete the existing campaign
+      {:ok, completed_campaign} = Campaigns.complete_campaign(campaign, "completed")
+
+      assert {:error, message} = Campaigns.purchase_unit_for_campaign(completed_campaign, master_unit.mul_id)
+      assert message =~ "campaign is completed"
+    end
+
+    test "fails when sortie is in progress", %{campaign: campaign, company: company, master_unit: master_unit} do
+      pilot = pilot_fixture(company: company)
+      unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      # Create and start a sortie
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "Test Sortie",
+        "pv_limit" => 200
+      })
+
+      {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+        company_unit_id: unit.id,
+        pilot_id: pilot.id
+      })
+
+      sortie = Campaigns.get_sortie!(sortie.id)
+      {:ok, _started_sortie} = Campaigns.start_sortie(sortie, pilot.id)
+
+      # Reload campaign to get updated sorties
+      campaign_with_sortie = Campaigns.get_campaign!(campaign.id)
+
+      # Create a new master unit for the purchase attempt
+      new_master_unit = units_master_unit_fixture(%{
+        point_value: 30,
+        unit_type: "battlemech"
+      })
+
+      # Try to purchase - should fail
+      assert {:error, message} = Campaigns.purchase_unit_for_campaign(campaign_with_sortie, new_master_unit.mul_id)
+      assert message =~ "sortie is in progress"
+    end
+
+    test "fails when insufficient SP in warchest", %{master_unit: master_unit} do
+      # Create a separate company for this test with limited warchest
+      user = user_fixture()
+      poor_company = company_fixture(user: user, status: "active")
+      poor_campaign = campaign_fixture(poor_company, %{"warchest_balance" => 100})
+
+      assert {:error, %Ecto.Changeset{} = changeset} = Campaigns.purchase_unit_for_campaign(poor_campaign, master_unit.mul_id)
+      errors = Aces.DataCase.errors_on(changeset)
+      assert errors[:master_unit_id] != nil
+      assert Enum.any?(errors.master_unit_id, &(&1 =~ "Insufficient SP"))
+    end
+  end
+
+  describe "can_purchase_units?/1" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user, status: "active")
+      campaign = campaign_fixture(company, %{"warchest_balance" => 5000})
+
+      %{company: company, campaign: campaign}
+    end
+
+    test "returns true for active campaign with no in-progress sortie", %{campaign: campaign} do
+      assert Campaigns.can_purchase_units?(campaign) == true
+    end
+
+    test "returns false when campaign is not active", %{campaign: campaign} do
+      {:ok, completed_campaign} = Campaigns.complete_campaign(campaign, "completed")
+      assert Campaigns.can_purchase_units?(completed_campaign) == false
+    end
+
+    test "returns false when sortie is in progress", %{campaign: campaign, company: company} do
+      pilot = pilot_fixture(company: company)
+      master_unit = units_master_unit_fixture()
+      unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "Test Sortie",
+        "pv_limit" => 200
+      })
+
+      {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+        company_unit_id: unit.id,
+        pilot_id: pilot.id
+      })
+
+      sortie = Campaigns.get_sortie!(sortie.id)
+      {:ok, _started_sortie} = Campaigns.start_sortie(sortie, pilot.id)
+
+      # Reload campaign with sorties
+      campaign_with_sortie = Campaigns.get_campaign!(campaign.id)
+
+      assert Campaigns.can_purchase_units?(campaign_with_sortie) == false
+    end
+  end
+
   describe "complete_sortie/3 with deployment results" do
     setup do
       user = user_fixture()

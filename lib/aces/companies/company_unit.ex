@@ -260,4 +260,65 @@ defmodule Aces.Companies.CompanyUnit do
   def effective_skill_level(%__MODULE__{pilot: %Pilot{skill_level: skill_level}}), do: skill_level
   def effective_skill_level(%__MODULE__{pilot: nil}), do: 4
   def effective_skill_level(%__MODULE__{pilot: _not_loaded}), do: 4
+
+  @doc """
+  Changeset for purchasing units for active companies during campaigns.
+
+  Validates:
+  - Company is active (not draft)
+  - Unit type is allowed (same as draft)
+  - SP budget against campaign warchest
+  - Unit composition limits (same as draft)
+
+  The `campaign` parameter provides the warchest balance for SP validation.
+  """
+  def active_company_changeset(company_unit, attrs, campaign) do
+    company_unit
+    |> changeset(attrs)
+    |> validate_company_is_active()
+    |> validate_unit_type_allowed()
+    |> validate_sp_budget(campaign)
+    |> validate_unit_composition_limits()
+  end
+
+  defp validate_company_is_active(changeset) do
+    validate_when_valid(changeset, fn changeset ->
+      case get_company(changeset) do
+        %Company{status: "active"} ->
+          changeset
+
+        %Company{status: "draft"} ->
+          add_error(changeset, :company_id, "Cannot purchase units for draft companies. Finalize the company first.")
+
+        %Company{status: status} ->
+          add_error(changeset, :company_id, "Cannot purchase units for #{status} companies")
+
+        nil ->
+          add_error(changeset, :company_id, ValidationErrors.company_not_found())
+      end
+    end)
+  end
+
+  defp validate_sp_budget(changeset, campaign) do
+    validate_when_valid(changeset, fn changeset ->
+      case get_master_unit(changeset) do
+        %MasterUnit{point_value: pv} when is_integer(pv) ->
+          sp_cost = pv * 40
+          warchest = campaign.warchest_balance
+
+          if sp_cost <= warchest do
+            changeset
+          else
+            add_error(changeset, :master_unit_id,
+              "Insufficient SP in warchest. Need #{sp_cost} SP, but only #{warchest} SP available")
+          end
+
+        %MasterUnit{} ->
+          add_error(changeset, :master_unit_id, "Unit has no point value")
+
+        nil ->
+          add_error(changeset, :master_unit_id, ValidationErrors.master_unit_not_found())
+      end
+    end)
+  end
 end
