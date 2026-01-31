@@ -11,7 +11,6 @@
 - For complex migrations (like JSON to table), write a detailed spec first (see specs/PILOT_ALLOCATIONS.md). This captures context and decisions for future implementation.
 
 # High-priority items
-- [ ] When completing a campaign it should update the company warchest. Or, the company warchest should be updated as we finish sorties and spend SP.
 - [ ] Breadcrumbs need review, navigation is confusing (ask your user about it)
 - [ ] Need to update Edge Abilities to be accurate (ask your user for the actual list)
 - [ ] Company view needs to be tabbed, and it should be more obvious that the user needs to be 'on campaign' (e.g. on a planet) to purchase units or hire pilots. Or, we enable these controls for the company when no campaign is active.
@@ -51,3 +50,4 @@
 - [x] Campaign events user tracking - Added user_id to CampaignEvent schema to track which user performed each action. Updated all event creation points in Campaigns context (create_campaign, complete_campaign, start_sortie, hire_pilot_for_campaign, sell_unit, purchase_unit_for_campaign, change_omni_variant, commit_omni_refits, sortie completion). Updated timeline UI to display user email alongside each event, with colored badges for different event types. Added CampaignEvent preloading with user association. Updated all LiveViews to pass current_user when calling context functions. Added 6 comprehensive tests for user tracking. Also added sortie_completed event creation to the sortie completion summary step.
 - [x] Sortie creation redirect fix - Changed sortie creation to redirect to the show page (Sortie Setup view) instead of the edit page. Updated test to match new expected redirect.
 - [x] Campaigns view shows past campaigns - Added tabbed view (Active/Past tabs) to the campaigns index page. Active campaigns shown by default, past (completed/failed) campaigns accessible via Past tab. Features: tab badges with counts, completion date for past campaigns, appropriate empty states. Added 11 comprehensive tests.
+- [x] Campaign completion syncs warchest to company - Updated complete_campaign/3 to sync the campaign's final warchest_balance back to the company's warchest_balance. This ensures SP earned or lost during campaigns (via unit purchases, sales, pilot hiring, sorties) persists to the company. Uses Ecto.Multi for atomic transaction. Added 5 comprehensive tests covering unit purchases, sales, pilot hiring, and successful/failed campaign completions.
