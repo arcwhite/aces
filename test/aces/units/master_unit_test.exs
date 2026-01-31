@@ -113,4 +113,30 @@ defmodule Aces.Units.MasterUnitTest do
       assert MasterUnit.sp_cost(%MasterUnit{point_value: 100}) == 4000
     end
   end
+
+  describe "sell_price/1" do
+    test "calculates sell price as half of SP cost" do
+      # 25 PV * 40 = 1000 SP / 2 = 500 SP
+      unit = %MasterUnit{point_value: 25}
+      assert MasterUnit.sell_price(unit) == 500
+    end
+
+    test "returns nil for unit with no point value" do
+      unit = %MasterUnit{point_value: nil}
+      assert MasterUnit.sell_price(unit) == nil
+    end
+
+    test "handles various PV values" do
+      assert MasterUnit.sell_price(%MasterUnit{point_value: 1}) == 20
+      assert MasterUnit.sell_price(%MasterUnit{point_value: 48}) == 960
+      assert MasterUnit.sell_price(%MasterUnit{point_value: 100}) == 2000
+    end
+
+    test "handles odd PV values by truncating" do
+      # 45 PV * 40 = 1800 SP / 2 = 900 SP
+      assert MasterUnit.sell_price(%MasterUnit{point_value: 45}) == 900
+      # 1 PV * 40 = 40 SP / 2 = 20 SP
+      assert MasterUnit.sell_price(%MasterUnit{point_value: 1}) == 20
+    end
+  end
 end

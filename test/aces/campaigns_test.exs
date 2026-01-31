@@ -1040,6 +1040,233 @@ defmodule Aces.CampaignsTest do
     end
   end
 
+  describe "can_sell_unit?/1" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user, status: "active")
+      campaign = campaign_fixture(company, %{"warchest_balance" => 5000})
+      pilot = pilot_fixture(company: company)
+      master_unit = units_master_unit_fixture(%{point_value: 40})
+      company_unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      %{
+        company: company,
+        campaign: campaign,
+        pilot: pilot,
+        company_unit: company_unit
+      }
+    end
+
+    test "returns true when unit is not deployed in any sortie", %{company_unit: company_unit} do
+      assert Campaigns.can_sell_unit?(company_unit) == true
+    end
+
+    test "returns false when unit is deployed in setup sortie", %{
+      company_unit: company_unit,
+      campaign: campaign,
+      pilot: pilot
+    } do
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "Test Sortie",
+        "pv_limit" => 200
+      })
+
+      {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+        company_unit_id: company_unit.id,
+        pilot_id: pilot.id
+      })
+
+      assert Campaigns.can_sell_unit?(company_unit) == false
+    end
+
+    test "returns false when unit is deployed in in_progress sortie", %{
+      company_unit: company_unit,
+      campaign: campaign,
+      pilot: pilot
+    } do
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "Test Sortie",
+        "pv_limit" => 200
+      })
+
+      {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+        company_unit_id: company_unit.id,
+        pilot_id: pilot.id
+      })
+
+      sortie = Campaigns.get_sortie!(sortie.id)
+      {:ok, _started} = Campaigns.start_sortie(sortie, pilot.id)
+
+      assert Campaigns.can_sell_unit?(company_unit) == false
+    end
+
+    test "returns true when unit was deployed in completed sortie", %{
+      company_unit: company_unit,
+      campaign: campaign,
+      company: _company,
+      pilot: pilot
+    } do
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "Test Sortie",
+        "pv_limit" => 200
+      })
+
+      {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+        company_unit_id: company_unit.id,
+        pilot_id: pilot.id
+      })
+
+      sortie = Campaigns.get_sortie!(sortie.id)
+      {:ok, sortie} = Campaigns.start_sortie(sortie, pilot.id)
+
+      # Complete the sortie
+      sortie =
+        Aces.Campaigns.Sortie
+        |> Aces.Repo.get!(sortie.id)
+        |> Aces.Repo.preload([
+          :force_commander,
+          :mvp_pilot,
+          campaign: [company: :pilots],
+          deployments: [company_unit: :master_unit, pilot: []]
+        ])
+
+      {:ok, _completed} = Campaigns.complete_sortie(sortie, %{
+        was_successful: true,
+        sp_per_participating_pilot: 50,
+        primary_objective_income: 200
+      })
+
+      # Reload the company_unit
+      company_unit = Aces.Repo.get!(Aces.Companies.CompanyUnit, company_unit.id)
+
+      # Now unit should be sellable since sortie is completed
+      assert Campaigns.can_sell_unit?(company_unit) == true
+    end
+  end
+
+  describe "get_unit_active_sortie/1" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user, status: "active")
+      campaign = campaign_fixture(company, %{"warchest_balance" => 5000})
+      pilot = pilot_fixture(company: company)
+      master_unit = units_master_unit_fixture(%{point_value: 40})
+      company_unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      %{
+        company: company,
+        campaign: campaign,
+        pilot: pilot,
+        company_unit: company_unit
+      }
+    end
+
+    test "returns nil when unit is not deployed", %{company_unit: company_unit} do
+      assert Campaigns.get_unit_active_sortie(company_unit) == nil
+    end
+
+    test "returns sortie when unit is deployed in active sortie", %{
+      company_unit: company_unit,
+      campaign: campaign,
+      pilot: pilot
+    } do
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "Active Sortie",
+        "pv_limit" => 200
+      })
+
+      {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+        company_unit_id: company_unit.id,
+        pilot_id: pilot.id
+      })
+
+      result = Campaigns.get_unit_active_sortie(company_unit)
+      assert result.id == sortie.id
+      assert result.name == "Active Sortie"
+    end
+  end
+
+  describe "sell_unit/2" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user, status: "active")
+      campaign = campaign_fixture(company, %{"warchest_balance" => 1000})
+      master_unit = units_master_unit_fixture(%{point_value: 40})
+      company_unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      %{
+        company: company,
+        campaign: campaign,
+        company_unit: company_unit,
+        master_unit: master_unit
+      }
+    end
+
+    test "sells unit and refunds SP to warchest", %{
+      company_unit: company_unit,
+      campaign: campaign,
+      master_unit: master_unit
+    } do
+      # Sell price = (40 PV * 40) / 2 = 800 SP
+      expected_sell_price = div(master_unit.point_value * 40, 2)
+
+      assert {:ok, sell_price} = Campaigns.sell_unit(company_unit, campaign)
+      assert sell_price == expected_sell_price
+
+      # Verify unit was deleted
+      assert Aces.Repo.get(Aces.Companies.CompanyUnit, company_unit.id) == nil
+
+      # Verify warchest was updated
+      updated_campaign = Campaigns.get_campaign!(campaign.id)
+      assert updated_campaign.warchest_balance == 1000 + expected_sell_price
+    end
+
+    test "creates campaign event for sale", %{
+      company_unit: company_unit,
+      campaign: campaign
+    } do
+      {:ok, _sell_price} = Campaigns.sell_unit(company_unit, campaign)
+
+      updated_campaign = Campaigns.get_campaign!(campaign.id)
+
+      # Find the unit_sold event
+      sell_event = Enum.find(updated_campaign.campaign_events, fn e ->
+        e.event_type == "unit_sold"
+      end)
+
+      assert sell_event != nil
+      assert sell_event.description =~ "Sold"
+      assert sell_event.description =~ "SP"
+    end
+
+    test "fails when unit is deployed in active sortie", %{
+      company_unit: company_unit,
+      campaign: campaign,
+      company: company
+    } do
+      pilot = pilot_fixture(company: company)
+
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "Active Sortie",
+        "pv_limit" => 200
+      })
+
+      {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+        company_unit_id: company_unit.id,
+        pilot_id: pilot.id
+      })
+
+      assert {:error, message} = Campaigns.sell_unit(company_unit, campaign)
+      assert message =~ "Cannot sell unit"
+      assert message =~ "Sortie 1"
+    end
+  end
+
   describe "complete_sortie/3 with deployment results" do
     setup do
       user = user_fixture()

@@ -1061,6 +1061,120 @@ defmodule Aces.Campaigns do
     campaign.status == "active" && !has_in_progress_sortie?(campaign)
   end
 
+  ## Unit Selling
+
+  @doc """
+  Check if a unit can be sold.
+
+  Returns true if the unit is NOT deployed in any active sortie
+  (status: "setup", "in_progress", or "finalizing").
+
+  A unit cannot be sold if:
+  - It's deployed in a sortie that's currently in progress
+  - It's deployed in a sortie being set up
+  - It's deployed in a sortie being finalized
+  """
+  def can_sell_unit?(%CompanyUnit{id: unit_id}) do
+    active_deployment_count =
+      Deployment
+      |> join(:inner, [d], s in Sortie, on: d.sortie_id == s.id)
+      |> where([d, s], d.company_unit_id == ^unit_id)
+      |> where([d, s], s.status in ["setup", "in_progress", "finalizing"])
+      |> Repo.aggregate(:count)
+
+    active_deployment_count == 0
+  end
+
+  @doc """
+  Get the active sortie a unit is deployed in, if any.
+
+  Returns the sortie struct if the unit is deployed in an active sortie,
+  or nil if the unit is not currently deployed.
+  """
+  def get_unit_active_sortie(%CompanyUnit{id: unit_id}) do
+    Sortie
+    |> join(:inner, [s], d in Deployment, on: d.sortie_id == s.id)
+    |> where([s, d], d.company_unit_id == ^unit_id)
+    |> where([s, d], s.status in ["setup", "in_progress", "finalizing"])
+    |> limit(1)
+    |> Repo.one()
+  end
+
+  @doc """
+  Sells a unit from the company roster, refunding SP to the campaign warchest.
+
+  The sell price is calculated as: (unit's point_value × 40) ÷ 2
+
+  This function:
+  1. Validates the unit can be sold (not deployed in active sortie)
+  2. Calculates the sell price
+  3. Deletes the CompanyUnit
+  4. Updates the Campaign warchest_balance (adds SP)
+  5. Creates a CampaignEvent for the sale
+
+  Returns {:ok, sell_price_sp} or {:error, reason}.
+  """
+  def sell_unit(%CompanyUnit{} = company_unit, %Campaign{} = campaign) do
+    company_unit = Repo.preload(company_unit, :master_unit)
+
+    with :ok <- validate_unit_can_be_sold(company_unit),
+         {:ok, sell_price} <- calculate_sell_price(company_unit) do
+
+      unit_display_name = company_unit.custom_name ||
+        MasterUnit.display_name(company_unit.master_unit)
+
+      Ecto.Multi.new()
+      |> Ecto.Multi.delete(:company_unit, company_unit)
+      |> Ecto.Multi.update(:campaign, fn _ ->
+        new_balance = campaign.warchest_balance + sell_price
+        Campaign.changeset(campaign, %{warchest_balance: new_balance})
+      end)
+      |> Ecto.Multi.insert(:event, fn _ ->
+        CampaignEvent.creation_changeset(%CampaignEvent{}, %{
+          campaign_id: campaign.id,
+          event_type: "unit_sold",
+          event_data: %{
+            "unit_name" => unit_display_name,
+            "master_unit_name" => company_unit.master_unit.name,
+            "master_unit_variant" => company_unit.master_unit.variant,
+            "point_value" => company_unit.master_unit.point_value,
+            "sell_price" => sell_price
+          },
+          description: "Sold #{unit_display_name} for #{sell_price} SP"
+        })
+      end)
+      |> Repo.transaction()
+      |> case do
+        {:ok, _results} ->
+          {:ok, sell_price}
+
+        {:error, _step, error, _changes} ->
+          {:error, error}
+      end
+    end
+  end
+
+  defp validate_unit_can_be_sold(company_unit) do
+    if can_sell_unit?(company_unit) do
+      :ok
+    else
+      case get_unit_active_sortie(company_unit) do
+        %Sortie{name: name, mission_number: number} ->
+          {:error, "Cannot sell unit: it is deployed in Sortie #{number} (#{name})"}
+
+        nil ->
+          {:error, "Cannot sell unit: it is deployed in an active sortie"}
+      end
+    end
+  end
+
+  defp calculate_sell_price(%CompanyUnit{master_unit: master_unit}) do
+    case MasterUnit.sell_price(master_unit) do
+      nil -> {:error, "Cannot calculate sell price: unit has no point value"}
+      price -> {:ok, price}
+    end
+  end
+
   @doc """
   Check if a campaign has any sortie currently in progress.
   """

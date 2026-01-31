@@ -157,6 +157,22 @@ defmodule Aces.Units.MasterUnit do
   def sp_cost(%__MODULE__{point_value: nil}), do: nil
 
   @doc """
+  Calculates the SP sell price for this unit.
+
+  Units sell for half their purchase cost: (Point Value × #{@sp_per_pv}) ÷ 2.
+
+  ## Examples
+
+      iex> sell_price(%MasterUnit{point_value: 25})
+      500
+
+      iex> sell_price(%MasterUnit{point_value: nil})
+      nil
+  """
+  def sell_price(%__MODULE__{point_value: pv}) when is_integer(pv), do: div(pv_to_sp(pv), 2)
+  def sell_price(%__MODULE__{point_value: nil}), do: nil
+
+  @doc """
   Returns the Sarna.net search URL for this unit
   """
   def sarna_url(%__MODULE__{name: name}) do
