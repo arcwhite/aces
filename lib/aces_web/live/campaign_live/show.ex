@@ -228,7 +228,7 @@ defmodule AcesWeb.CampaignLive.Show do
     end
   end
 
-  def handle_info({AcesWeb.CompanyLive.PilotHireComponent, {:pilot_hired, _pilot, updated_campaign}}, socket) do
+  def handle_info({AcesWeb.CompanyLive.PilotFormComponent, {:pilot_hired, _pilot, updated_campaign}}, socket) do
     # Refresh company and campaign data after hiring
     updated_company = Companies.get_company!(socket.assigns.company.id)
 
@@ -387,23 +387,25 @@ defmodule AcesWeb.CampaignLive.Show do
       <!-- Pilot Hire Modal -->
       <%= if @show_pilot_form do %>
         <div class="modal modal-open">
-          <div class="modal-box max-w-2xl">
+          <div class="modal-box max-w-4xl">
             <div class="flex justify-between items-center mb-4">
-              <h3 class="font-bold text-lg">Hire Pilot</h3>
               <button
                 type="button"
                 phx-click="close_pilot_form"
-                class="btn btn-sm btn-circle btn-ghost"
+                class="btn btn-sm btn-circle btn-ghost absolute right-4 top-4"
               >
                 ✕
               </button>
             </div>
 
             <.live_component
-              module={AcesWeb.CompanyLive.PilotHireComponent}
+              module={AcesWeb.CompanyLive.PilotFormComponent}
               id={:hire_pilot}
+              pilot={%Aces.Companies.Pilot{}}
               company={@company}
               campaign={@campaign}
+              action={:hire}
+              title="Hire New Pilot"
               patch={~p"/companies/#{@company}/campaigns/#{@campaign}"}
             />
           </div>

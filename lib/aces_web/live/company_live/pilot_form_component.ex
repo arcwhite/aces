@@ -1,8 +1,28 @@
 defmodule AcesWeb.CompanyLive.PilotFormComponent do
+  @moduledoc """
+  LiveComponent for creating and editing pilots with full SP allocation.
+
+  Supports three modes via the `action` assign:
+  - `:new` - Creating a pilot during company draft (free, no SP cost)
+  - `:edit` - Editing an existing pilot
+  - `:hire` - Hiring a pilot for a campaign (costs 150 SP from campaign warchest)
+
+  ## Required Assigns
+
+  - `pilot` - The Pilot struct (use %Pilot{} for new/hire)
+  - `company` - The company to add the pilot to
+  - `action` - One of :new, :edit, or :hire
+  - `patch` - URL to navigate to after successful save
+
+  ## Optional Assigns (for :hire mode)
+
+  - `campaign` - The campaign (required for :hire mode)
+  """
   use AcesWeb, :live_component
 
   alias Aces.Companies.Pilot
   alias Aces.Companies.Pilots
+  alias Aces.Campaigns
 
   @impl true
   def update(%{pilot: pilot} = assigns, socket) do
@@ -17,6 +37,7 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
      |> assign(:available_edge_abilities, available_abilities)
      |> assign(:max_allowed_abilities, max_abilities)
      |> assign(:sp_allocation_error, false)
+     |> assign_new(:campaign, fn -> nil end)
      |> assign(:sp_costs, %{
        skill: Pilot.skill_sp_required(pilot.skill_level - 1),
        edge_tokens: Pilot.edge_tokens_sp_required((pilot.edge_tokens || 1) + 1),
@@ -203,6 +224,32 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
     end
   end
 
+  defp save_pilot(socket, :hire, pilot_params) do
+    campaign = socket.assigns.campaign
+
+    case Campaigns.hire_pilot_for_campaign(campaign, pilot_params) do
+      {:ok, pilot, updated_campaign} ->
+        notify_parent({:pilot_hired, pilot, updated_campaign})
+        {:noreply,
+         socket
+         |> put_flash(:info, "Pilot #{pilot.name} hired successfully for 150 SP!")
+         |> push_patch(to: socket.assigns.patch)}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        # Check for base errors (campaign-level validation failures)
+        base_errors = Keyword.get_values(changeset.errors, :base)
+        if length(base_errors) > 0 do
+          {message, _opts} = hd(base_errors)
+          {:noreply, put_flash(socket, :error, message)}
+        else
+          {:noreply, assign(socket, form: to_form(changeset))}
+        end
+
+      {:error, message} when is_binary(message) ->
+        {:noreply, put_flash(socket, :error, message)}
+    end
+  end
+
   defp notify_parent(msg), do: send(self(), {__MODULE__, msg})
 
   @impl true
@@ -211,8 +258,23 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
     <div>
       <div class="mb-6">
         <h3 class="text-lg font-bold"><%= @title %></h3>
-        <p class="text-sm opacity-70">Create a skilled pilot and allocate their starting 150 SP</p>
+        <p class="text-sm opacity-70">
+          <%= if @action == :hire do %>
+            Hire a new pilot for 150 SP and allocate their starting skills
+          <% else %>
+            Create a skilled pilot and allocate their starting 150 SP
+          <% end %>
+        </p>
       </div>
+
+      <%= if @action == :hire do %>
+        <div class="alert alert-warning mb-4">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <span>Hiring cost: <strong>150 SP</strong> | Campaign Warchest: <strong><%= @campaign.warchest_balance %> SP</strong></span>
+        </div>
+      <% end %>
 
       <.form
         for={@form}
@@ -473,10 +535,14 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
           <button
             type="submit"
             class="btn btn-primary"
-            phx-disable-with="Saving..."
+            phx-disable-with={if @action == :hire, do: "Hiring...", else: "Saving..."}
             disabled={@sp_allocation_error or length(@pilot.edge_abilities || []) > @max_allowed_abilities}
           >
-            Save Pilot
+            <%= if @action == :hire do %>
+              Hire Pilot for 150 SP
+            <% else %>
+              Save Pilot
+            <% end %>
           </button>
         </div>
       </.form>
