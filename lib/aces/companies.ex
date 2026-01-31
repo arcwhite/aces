@@ -412,6 +412,16 @@ defmodule Aces.Companies do
   end
 
   @doc """
+  Lists all invitations (any status) for a user's email.
+  Useful for showing invitation history.
+  """
+  def list_user_all_invitations(%User{} = user) do
+    user.email
+    |> CompanyInvitation.all_for_email_query()
+    |> Repo.all()
+  end
+
+  @doc """
   Gets an invitation by ID, preloading company and invited_by.
   """
   def get_invitation!(id) do

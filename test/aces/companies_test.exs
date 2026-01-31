@@ -782,5 +782,38 @@ defmodule Aces.CompaniesTest do
       assert company1.id in company_ids
       assert company2.id in company_ids
     end
+
+    test "list_user_all_invitations/1 returns all invitations including accepted and cancelled" do
+      %{company: company1, owner: owner1} = company_with_members_fixture()
+      %{company: company2, owner: owner2} = company_with_members_fixture()
+      %{company: company3, owner: owner3} = company_with_members_fixture()
+
+      invitee = user_fixture(email: "invitee@example.com")
+
+      # Create three invitations
+      {:ok, _} = Companies.create_invitation(company1, owner1, invitee.email)
+      {:ok, {_, inv2}} = Companies.create_invitation(company2, owner2, invitee.email)
+      {:ok, {_, inv3}} = Companies.create_invitation(company3, owner3, invitee.email)
+
+      # Accept one
+      inv2 = Companies.get_invitation!(inv2.id)
+      {:ok, _} = Companies.accept_invitation(inv2, invitee)
+
+      # Cancel one
+      inv3 = Companies.get_invitation!(inv3.id)
+      {:ok, _} = Companies.cancel_invitation(inv3)
+
+      # Should return all three
+      all_invitations = Companies.list_user_all_invitations(invitee)
+      assert length(all_invitations) == 3
+
+      statuses = Enum.map(all_invitations, & &1.status) |> Enum.sort()
+      assert statuses == ["accepted", "cancelled", "pending"]
+
+      # Pending should only return one
+      pending = Companies.list_user_pending_invitations(invitee)
+      assert length(pending) == 1
+      assert hd(pending).status == "pending"
+    end
   end
 end

@@ -169,6 +169,19 @@ defmodule Aces.Companies.CompanyInvitation do
   end
 
   @doc """
+  Returns a query for all invitations (any status) for an email address.
+  Useful for showing invitation history.
+  """
+  def all_for_email_query(email) do
+    email = String.downcase(email)
+
+    from i in __MODULE__,
+      where: i.invited_email == ^email,
+      order_by: [desc: i.inserted_at],
+      preload: [:company, :invited_by]
+  end
+
+  @doc """
   Returns the invitation validity period in days.
   """
   def validity_in_days, do: @invitation_validity_in_days
