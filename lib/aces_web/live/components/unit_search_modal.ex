@@ -185,13 +185,13 @@ defmodule AcesWeb.Components.UnitSearchModal do
   defp unit_sp_cost(unit), do: (unit.point_value || 0) * 40
 
   # Check if user can afford unit based on mode
-  defp can_afford?(unit, socket) do
-    case socket.assigns.mode do
+  defp can_afford?(unit, assigns) do
+    case assigns.mode do
       :pv_budget ->
-        (unit.point_value || 0) <= (socket.assigns.budget || 0)
+        (unit.point_value || 0) <= (assigns.budget || 0)
 
       :sp_purchase ->
-        unit_sp_cost(unit) <= (socket.assigns.budget || 0)
+        unit_sp_cost(unit) <= (assigns.budget || 0)
     end
   end
 
