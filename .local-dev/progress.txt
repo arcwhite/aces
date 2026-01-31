@@ -14,8 +14,8 @@
 
 The following are from @.local-dev/refactor.txt, please examine that file for more information
 
-[ ] 1. sortie_live/show.ex - OMNI refits extraction
-[ ] 2. sortie_live/complete/pilots.ex - SP distribution extraction
+[x] 1. sortie_live/show.ex - OMNI refits extraction
+[x] 2. sortie_live/complete/pilots.ex - SP distribution extraction
 [ ] 3. company_live/show.ex - Unit search extraction
 [ ] 4. build_saved_map_from_allocations/2 refactor
 [ ] 5. update_deployment_results/2 error handling
@@ -44,3 +44,5 @@ The following are from @.local-dev/refactor.txt, please examine that file for mo
 - [x] Pilot allocations migration Phase 3 - Updated application code to read/write pilot allocations from the new pilot_allocations table instead of the JSON field. Changes: Sortie schema has_many relationship, Pilot schema has_many :allocations, Campaigns context CRUD functions (get_sortie_pilot_allocations_as_saved_map, save_sortie_pilot_allocations, delete_sortie_pilot_allocations), SortieCompletion reversal functions accept sortie_id, spend_sp.ex/pilots.ex/costs.ex updated to use new table. Old JSON column preserved for Phase 4 cleanup.
 - [x] Sortie summary component - Created reusable SortieSummary component displaying mission details, financial summary, unit status, and pilot SP allocations (skill/edge/abilities gained). Completed sorties now show full summary on the sortie show page instead of requiring separate "View Full Summary" link. Component used in both show.ex and finalization wizard summary step.
 - [x] Pilot allocations migration Phase 4 (cleanup) - Removed deprecated pilot_allocations JSON column from sorties table. Updated comments in PilotAllocationState to reference the new table structure. PilotAllocationState module retained for runtime state management during sortie completion wizard.
+- [x] Refactor 1 from .local-dev/refactor.txt - Extracted OMNI refits business logic from sortie_live/show.ex to Campaigns context. Added calculate_pending_refit_cost/3, calculate_effective_deployed_pv/3, and start_sortie_with_refits/5 to context. LiveView now delegates to context for business logic. Added comprehensive tests and OMNI unit fixtures.
+- [x] Refactor 2 from .local-dev/refactor.txt - Extracted SP distribution logic from sortie_live/complete/pilots.ex to Campaigns context. Added distribute_pilot_sp/4, revert_pilot_sp/2, and handle_mvp_change/4 functions with Ecto.Multi transaction safety. LiveView reduced from 391 to 304 lines, now only handles UI state and calls context functions. Fixed error handling to use proper case statements instead of {:ok, _} = ... patterns. Added comprehensive tests.

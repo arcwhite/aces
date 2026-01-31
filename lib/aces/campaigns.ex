@@ -594,7 +594,7 @@ defmodule Aces.Campaigns do
           {:pilot_allocation, pilot_id},
           changeset,
           on_conflict: {:replace, [:sp_to_skill, :sp_to_tokens, :sp_to_abilities, :edge_abilities_gained, :total_sp, :updated_at]},
-          conflict_target: [:sortie_id, :pilot_id]
+          conflict_target: {:unsafe_fragment, "(sortie_id, pilot_id) WHERE sortie_id IS NOT NULL"}
         )
       end)
 
@@ -613,6 +613,246 @@ defmodule Aces.Campaigns do
       |> Repo.delete_all()
 
     {:ok, deleted}
+  end
+
+  ## Pilot SP Distribution Functions
+
+  @doc """
+  Distribute SP to all pilots after a sortie is completed.
+
+  This function:
+  1. Uses SortieCompletion to calculate the SP distribution
+  2. Updates the sortie with pilot_sp_cost, expenses, and net_earnings
+  3. Updates each pilot's SP fields (sp_earned, sp_available, sorties_participated, mvp_awards)
+  4. Applies casualty status updates (wounded/deceased) to pilots
+  5. Uses Ecto.Multi for transaction safety
+
+  Returns {:ok, updated_sortie} or {:error, reason}.
+
+  ## Parameters
+  - `sortie` - The sortie struct with preloaded deployments
+  - `all_pilots` - List of all company pilots
+  - `pilot_earnings` - Map from SortieCompletion.calculate_pilot_earnings/3
+  - `mvp_id` - ID of the MVP pilot (or nil)
+  """
+  def distribute_pilot_sp(%Sortie{} = sortie, all_pilots, pilot_earnings, mvp_id) do
+    alias Aces.Campaigns.SortieCompletion
+
+    # Use business logic module to calculate distribution
+    distribution = SortieCompletion.distribute_sp_to_pilots(all_pilots, pilot_earnings, mvp_id)
+
+    # Recalculate expenses and net earnings including pilot SP cost
+    new_total_expenses = (sortie.total_expenses || 0) + distribution.total_pilot_sp_cost
+    new_net_earnings = (sortie.total_income || 0) - new_total_expenses
+
+    # Build the multi transaction
+    multi =
+      Ecto.Multi.new()
+      |> Ecto.Multi.update(:sortie, fn _ ->
+        sortie
+        |> Ecto.Changeset.change(%{
+          mvp_pilot_id: mvp_id,
+          pilot_sp_cost: distribution.total_pilot_sp_cost,
+          total_expenses: new_total_expenses,
+          net_earnings: new_net_earnings,
+          finalization_step: "spend_sp"
+        })
+      end)
+
+    # Apply pilot changes
+    multi =
+      Enum.reduce(distribution.pilot_changes, multi, fn {pilot_id, changes}, acc ->
+        pilot = Enum.find(all_pilots, &(&1.id == pilot_id))
+
+        if pilot do
+          Ecto.Multi.update(
+            acc,
+            {:pilot, pilot_id},
+            Ecto.Changeset.change(pilot, changes)
+          )
+        else
+          acc
+        end
+      end)
+
+    # Apply casualty updates
+    casualty_updates = SortieCompletion.build_casualty_updates(sortie.deployments)
+
+    multi =
+      Enum.reduce(casualty_updates, multi, fn {pilot_id, changes}, acc ->
+        deployment = Enum.find(sortie.deployments, &(&1.pilot_id == pilot_id))
+
+        if deployment && deployment.pilot do
+          Ecto.Multi.update(
+            acc,
+            {:casualty, pilot_id},
+            Ecto.Changeset.change(deployment.pilot, changes)
+          )
+        else
+          acc
+        end
+      end)
+
+    # Execute transaction
+    case Repo.transaction(multi) do
+      {:ok, %{sortie: updated_sortie}} ->
+        {:ok, get_sortie!(updated_sortie.id)}
+
+      {:error, _step, error, _changes} ->
+        {:error, error}
+    end
+  end
+
+  @doc """
+  Revert pilot SP allocations from the spend_sp step.
+
+  This function:
+  1. Uses SortieCompletion to calculate reversal changes
+  2. Deletes pilot allocations from the database
+  3. Updates each pilot with reversed values
+  4. Uses Ecto.Multi for transaction safety
+
+  Returns {:ok, deleted_count} or {:error, reason}.
+
+  ## Parameters
+  - `sortie_id` - The sortie ID to revert allocations for
+  - `all_pilots` - List of all company pilots
+  """
+  def revert_pilot_sp(sortie_id, all_pilots) do
+    alias Aces.Campaigns.SortieCompletion
+
+    # Calculate reversals using business logic module
+    reversals = SortieCompletion.reverse_pilot_allocations(sortie_id, all_pilots)
+
+    # Build the multi transaction
+    multi =
+      Ecto.Multi.new()
+      |> Ecto.Multi.run(:delete_allocations, fn _repo, _changes ->
+        # delete_sortie_pilot_allocations returns {:ok, count}
+        case delete_sortie_pilot_allocations(sortie_id) do
+          {:ok, count} -> {:ok, count}
+          error -> error
+        end
+      end)
+
+    # Apply pilot reversals
+    multi =
+      Enum.reduce(reversals, multi, fn {pilot_id, changes}, acc ->
+        pilot = Enum.find(all_pilots, &(&1.id == pilot_id))
+
+        if pilot do
+          Ecto.Multi.update(
+            acc,
+            {:pilot_reversal, pilot_id},
+            Ecto.Changeset.change(pilot, changes)
+          )
+        else
+          acc
+        end
+      end)
+
+    # Execute transaction
+    case Repo.transaction(multi) do
+      {:ok, %{delete_allocations: deleted_count}} ->
+        {:ok, deleted_count}
+
+      {:error, _step, error, _changes} ->
+        {:error, error}
+    end
+  end
+
+  @doc """
+  Handle MVP change after SP has already been distributed.
+
+  This function:
+  1. Reverts any pilot allocations from the spend_sp step
+  2. Applies MVP changes to the old and new MVPs
+  3. Updates the sortie with the new MVP and finalization step
+  4. Uses Ecto.Multi for transaction safety
+
+  Returns {:ok, updated_sortie} or {:error, reason}.
+
+  ## Parameters
+  - `sortie` - The sortie struct
+  - `old_mvp_id` - ID of the previous MVP (or nil)
+  - `new_mvp_id` - ID of the new MVP (or nil)
+  - `all_pilots` - List of all company pilots
+  """
+  def handle_mvp_change(%Sortie{} = sortie, old_mvp_id, new_mvp_id, all_pilots) do
+    alias Aces.Campaigns.SortieCompletion
+
+    # Only process if MVP actually changed
+    if old_mvp_id == new_mvp_id do
+      # Just update finalization step
+      sortie
+      |> Ecto.Changeset.change(%{finalization_step: "spend_sp"})
+      |> Repo.update()
+    else
+      # Calculate MVP changes using business logic module
+      mvp_changes = SortieCompletion.calculate_mvp_change(old_mvp_id, new_mvp_id, all_pilots)
+
+      # Build the multi transaction
+      multi =
+        Ecto.Multi.new()
+        |> Ecto.Multi.run(:revert_allocations, fn _repo, _changes ->
+          revert_pilot_sp(sortie.id, all_pilots)
+        end)
+
+      # Apply old MVP changes
+      multi =
+        if mvp_changes.old_mvp_changes do
+          old_mvp = Enum.find(all_pilots, &(&1.id == old_mvp_id))
+
+          if old_mvp do
+            Ecto.Multi.update(
+              multi,
+              :old_mvp,
+              Ecto.Changeset.change(old_mvp, mvp_changes.old_mvp_changes)
+            )
+          else
+            multi
+          end
+        else
+          multi
+        end
+
+      # Apply new MVP changes
+      multi =
+        if mvp_changes.new_mvp_changes do
+          new_mvp = Enum.find(all_pilots, &(&1.id == new_mvp_id))
+
+          if new_mvp do
+            Ecto.Multi.update(
+              multi,
+              :new_mvp,
+              Ecto.Changeset.change(new_mvp, mvp_changes.new_mvp_changes)
+            )
+          else
+            multi
+          end
+        else
+          multi
+        end
+
+      # Update sortie with new MVP
+      multi =
+        Ecto.Multi.update(multi, :sortie, fn _ ->
+          sortie
+          |> Ecto.Changeset.change(%{
+            mvp_pilot_id: new_mvp_id,
+            finalization_step: "spend_sp"
+          })
+        end)
+
+      # Execute transaction
+      case Repo.transaction(multi) do
+        {:ok, %{sortie: updated_sortie}} ->
+          {:ok, get_sortie!(updated_sortie.id)}
+
+        {:error, _step, error, _changes} ->
+          {:error, error}
+      end
+    end
   end
 
   @doc """

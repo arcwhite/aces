@@ -96,126 +96,39 @@ defmodule AcesWeb.SortieLive.Complete.Pilots do
     sortie = socket.assigns.sortie
     mvp_id = socket.assigns.selected_mvp_id
     pilot_earnings = socket.assigns.pilot_earnings
+    all_pilots = socket.assigns.all_pilots
     already_distributed = (sortie.pilot_sp_cost || 0) > 0
 
-    if already_distributed do
-      # SP was already distributed - only handle MVP changes
-      handle_mvp_change_only(socket, sortie, mvp_id)
-    else
-      # First time through - distribute SP to pilots
-      distribute_sp_to_pilots(socket, sortie, mvp_id, pilot_earnings)
-    end
+    result =
+      if already_distributed do
+        # SP was already distributed - only handle MVP changes
+        Campaigns.handle_mvp_change(sortie, sortie.mvp_pilot_id, mvp_id, all_pilots)
+      else
+        # First time through - distribute SP to pilots
+        Campaigns.distribute_pilot_sp(sortie, all_pilots, pilot_earnings, mvp_id)
+      end
+
+    socket =
+      case result do
+        {:ok, _updated_sortie} ->
+          socket
+
+        {:error, %Ecto.Changeset{} = changeset} ->
+          errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
+          error_message = "Failed to save: #{inspect(errors)}"
+          put_flash(socket, :error, error_message)
+
+        {:error, message} when is_binary(message) ->
+          put_flash(socket, :error, "Failed to save: #{message}")
+
+        {:error, error} ->
+          put_flash(socket, :error, "Failed to save: #{inspect(error)}")
+      end
 
     {:noreply,
      push_navigate(socket,
        to: ~p"/companies/#{socket.assigns.company.id}/campaigns/#{socket.assigns.campaign.id}/sorties/#{sortie.id}/complete/spend_sp"
      )}
-  end
-
-  defp handle_mvp_change_only(socket, sortie, new_mvp_id) do
-    old_mvp_id = sortie.mvp_pilot_id
-    all_pilots = socket.assigns.all_pilots
-
-    # Only process if MVP actually changed
-    if old_mvp_id != new_mvp_id do
-      # First, reverse any SP allocations that were made in spend_sp step
-      apply_pilot_reversals(sortie.id, all_pilots)
-
-      # Delete pilot allocations from database
-      Campaigns.delete_sortie_pilot_allocations(sortie.id)
-
-      # Apply MVP changes using business logic module
-      mvp_changes = SortieCompletion.calculate_mvp_change(old_mvp_id, new_mvp_id, all_pilots)
-
-      if mvp_changes.old_mvp_changes do
-        old_mvp = Enum.find(all_pilots, &(&1.id == old_mvp_id))
-        if old_mvp do
-          old_mvp
-          |> Ecto.Changeset.change(mvp_changes.old_mvp_changes)
-          |> Aces.Repo.update()
-        end
-      end
-
-      if mvp_changes.new_mvp_changes do
-        new_mvp = Enum.find(all_pilots, &(&1.id == new_mvp_id))
-        if new_mvp do
-          new_mvp
-          |> Ecto.Changeset.change(mvp_changes.new_mvp_changes)
-          |> Aces.Repo.update()
-        end
-      end
-
-      # Update sortie with new MVP
-      sortie
-      |> Ecto.Changeset.change(%{
-        mvp_pilot_id: new_mvp_id,
-        finalization_step: "spend_sp"
-      })
-      |> Aces.Repo.update()
-    else
-      # Just update finalization step
-      sortie
-      |> Ecto.Changeset.change(%{finalization_step: "spend_sp"})
-      |> Aces.Repo.update()
-    end
-  end
-
-  defp apply_pilot_reversals(sortie_id, all_pilots) do
-    reversals = SortieCompletion.reverse_pilot_allocations(sortie_id, all_pilots)
-
-    Enum.each(reversals, fn {pilot_id, changes} ->
-      pilot = Enum.find(all_pilots, &(&1.id == pilot_id))
-      if pilot do
-        pilot
-        |> Ecto.Changeset.change(changes)
-        |> Aces.Repo.update()
-      end
-    end)
-  end
-
-  defp distribute_sp_to_pilots(socket, sortie, mvp_id, pilot_earnings) do
-    all_pilots = socket.assigns.all_pilots
-
-    # Use business logic module to calculate distribution
-    distribution = SortieCompletion.distribute_sp_to_pilots(all_pilots, pilot_earnings, mvp_id)
-
-    # Recalculate expenses and net earnings including pilot SP cost
-    new_total_expenses = (sortie.total_expenses || 0) + distribution.total_pilot_sp_cost
-    new_net_earnings = (sortie.total_income || 0) - new_total_expenses
-
-    # Update sortie with MVP and pilot SP cost
-    {:ok, _} =
-      sortie
-      |> Ecto.Changeset.change(%{
-        mvp_pilot_id: mvp_id,
-        pilot_sp_cost: distribution.total_pilot_sp_cost,
-        total_expenses: new_total_expenses,
-        net_earnings: new_net_earnings,
-        finalization_step: "spend_sp"
-      })
-      |> Aces.Repo.update()
-
-    # Apply pilot changes
-    Enum.each(distribution.pilot_changes, fn {pilot_id, changes} ->
-      pilot = Enum.find(all_pilots, &(&1.id == pilot_id))
-      if pilot do
-        pilot
-        |> Ecto.Changeset.change(changes)
-        |> Aces.Repo.update()
-      end
-    end)
-
-    # Apply casualty updates using business logic module
-    casualty_updates = SortieCompletion.build_casualty_updates(sortie.deployments)
-
-    Enum.each(casualty_updates, fn {pilot_id, changes} ->
-      deployment = Enum.find(sortie.deployments, &(&1.pilot_id == pilot_id))
-      if deployment && deployment.pilot do
-        deployment.pilot
-        |> Ecto.Changeset.change(changes)
-        |> Aces.Repo.update()
-      end
-    end)
   end
 
   @impl true
