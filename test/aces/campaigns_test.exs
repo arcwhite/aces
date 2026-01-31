@@ -1724,4 +1724,104 @@ defmodule Aces.CampaignsTest do
       assert complete_event.user_id == user.id
     end
   end
+
+  describe "complete_campaign/3 warchest sync" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user, warchest_balance: 1000, status: "active")
+
+      %{user: user, company: company}
+    end
+
+    test "syncs campaign warchest balance to company warchest on completion", %{company: company} do
+      # Create campaign - it should inherit company's warchest (1000 SP)
+      {:ok, campaign} = Campaigns.create_campaign(company, %{"name" => "Test Campaign"})
+      assert campaign.warchest_balance == 1000
+
+      # Simulate campaign activity by updating warchest (normally done via sorties, purchases, etc.)
+      {:ok, campaign} =
+        Campaigns.update_campaign(campaign, %{warchest_balance: 2500})
+
+      # Complete the campaign
+      {:ok, completed_campaign} = Campaigns.complete_campaign(campaign, "completed")
+
+      assert completed_campaign.status == "completed"
+      assert completed_campaign.warchest_balance == 2500
+
+      # Verify company warchest was updated to match campaign final balance
+      updated_company = Aces.Companies.get_company!(company.id)
+      assert updated_company.warchest_balance == 2500
+    end
+
+    test "syncs campaign warchest to company on failed campaign", %{company: company} do
+      {:ok, campaign} = Campaigns.create_campaign(company, %{"name" => "Failed Campaign"})
+
+      # Campaign lost money during failed campaign
+      {:ok, campaign} =
+        Campaigns.update_campaign(campaign, %{warchest_balance: 500})
+
+      {:ok, failed_campaign} = Campaigns.complete_campaign(campaign, "failed")
+
+      assert failed_campaign.status == "failed"
+
+      # Company should still get the remaining warchest
+      updated_company = Aces.Companies.get_company!(company.id)
+      assert updated_company.warchest_balance == 500
+    end
+
+    test "syncs campaign warchest after unit purchases reduce balance", %{company: company} do
+      {:ok, campaign} = Campaigns.create_campaign(company, %{"name" => "Purchase Campaign"})
+      master_unit = units_master_unit_fixture(%{point_value: 10})
+
+      # Purchase a unit (costs 10 PV × 40 = 400 SP)
+      {:ok, _unit} = Campaigns.purchase_unit_for_campaign(campaign, master_unit.mul_id)
+
+      # Reload campaign to get updated warchest
+      campaign = Campaigns.get_campaign!(campaign.id)
+      assert campaign.warchest_balance == 600
+
+      # Complete the campaign
+      {:ok, _completed} = Campaigns.complete_campaign(campaign, "completed")
+
+      # Company warchest should be 600 SP (1000 - 400)
+      updated_company = Aces.Companies.get_company!(company.id)
+      assert updated_company.warchest_balance == 600
+    end
+
+    test "syncs campaign warchest after unit sales increase balance", %{company: company} do
+      master_unit = units_master_unit_fixture(%{point_value: 20})
+      company_unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      {:ok, campaign} = Campaigns.create_campaign(company, %{"name" => "Sale Campaign"})
+
+      # Sell a unit (refunds 20 PV × 20 = 400 SP)
+      {:ok, _sell_price} = Campaigns.sell_unit(company_unit, campaign)
+
+      campaign = Campaigns.get_campaign!(campaign.id)
+      assert campaign.warchest_balance == 1400
+
+      {:ok, _completed} = Campaigns.complete_campaign(campaign, "completed")
+
+      # Company warchest should be 1400 SP (1000 + 400)
+      updated_company = Aces.Companies.get_company!(company.id)
+      assert updated_company.warchest_balance == 1400
+    end
+
+    test "syncs campaign warchest after hiring pilots", %{company: company} do
+      {:ok, campaign} = Campaigns.create_campaign(company, %{"name" => "Hire Campaign"})
+
+      # Hire a pilot (costs 150 SP)
+      {:ok, _pilot, _updated_campaign} =
+        Campaigns.hire_pilot_for_campaign(campaign, %{name: "New Recruit"})
+
+      campaign = Campaigns.get_campaign!(campaign.id)
+      assert campaign.warchest_balance == 850
+
+      {:ok, _completed} = Campaigns.complete_campaign(campaign, "completed")
+
+      # Company warchest should be 850 SP (1000 - 150)
+      updated_company = Aces.Companies.get_company!(company.id)
+      assert updated_company.warchest_balance == 850
+    end
+  end
 end

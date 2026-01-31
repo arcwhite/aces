@@ -105,14 +105,25 @@ defmodule Aces.Campaigns do
   @doc """
   Completes a campaign.
 
+  When a campaign is completed, the campaign's final warchest balance is synced
+  back to the company's warchest balance. This ensures the company retains
+  any SP earned (or lost) during the campaign.
+
   Options:
   - `:user` - The user performing the action (for event tracking)
   """
   def complete_campaign(%Campaign{} = campaign, outcome \\ "completed", opts \\ []) do
     user = Keyword.get(opts, :user)
 
+    # Ensure company is loaded for warchest sync
+    campaign = Repo.preload(campaign, :company)
+
     Ecto.Multi.new()
     |> Ecto.Multi.update(:campaign, Campaign.completion_changeset(campaign, %{status: outcome}))
+    |> Ecto.Multi.update(:company, fn %{campaign: updated_campaign} ->
+      # Sync campaign warchest back to company warchest
+      Company.changeset(campaign.company, %{warchest_balance: updated_campaign.warchest_balance})
+    end)
     |> Ecto.Multi.insert(:completion_event, fn %{campaign: updated_campaign} ->
       event_type = if outcome == "completed", do: "campaign_completed", else: "campaign_failed"
       description = if outcome == "completed", do: "Campaign completed successfully", else: "Campaign failed"
@@ -128,6 +139,7 @@ defmodule Aces.Campaigns do
     |> case do
       {:ok, %{campaign: campaign}} -> {:ok, campaign}
       {:error, :campaign, changeset, _} -> {:error, changeset}
+      {:error, :company, changeset, _} -> {:error, changeset}
       {:error, _step, error, _} -> {:error, error}
     end
   end
