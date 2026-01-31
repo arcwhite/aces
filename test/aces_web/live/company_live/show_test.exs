@@ -17,6 +17,35 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       assert html =~ "Test description"
     end
 
+    test "has tabbed navigation with Overview, Pilots, Units, Settings tabs", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      {:ok, show_live, html} = live(conn, ~p"/companies/#{company.id}")
+
+      # All tabs should be visible
+      assert html =~ "Overview"
+      assert html =~ "Pilots"
+      assert html =~ "Units"
+      assert html =~ "Settings"
+
+      # Overview tab should be active by default and show stats
+      assert html =~ "Active Campaign"
+      assert html =~ "Warchest"
+
+      # Click on Pilots tab
+      html = show_live |> element("button", "Pilots") |> render_click()
+      assert html =~ "Pilot Roster"
+
+      # Click on Units tab
+      html = show_live |> element("button", "Units") |> render_click()
+      assert html =~ "Unit Roster"
+
+      # Click on Settings tab
+      html = show_live |> element("button", "Settings") |> render_click()
+      assert html =~ "Team Members"
+      assert html =~ "Danger Zone"
+    end
+
     test "redirects draft companies to draft setup page", %{conn: conn, user: user} do
       company = company_fixture(user: user, name: "Draft Company", status: "draft")
 
@@ -41,10 +70,13 @@ defmodule AcesWeb.CompanyLive.ShowTest do
     test "shows empty roster message when no units", %{conn: conn, user: user} do
       company = company_fixture(user: user, status: "active")
 
-      {:ok, _show_live, html} = live(conn, ~p"/companies/#{company.id}")
+      {:ok, show_live, _html} = live(conn, ~p"/companies/#{company.id}")
 
-      assert html =~ "No units in roster yet"
-      assert html =~ "Add your first unit to get started"
+      # Navigate to Units tab to see the unit roster
+      html = show_live |> element("button", "Units") |> render_click()
+
+      assert html =~ "No units yet"
+      assert html =~ "Start a campaign to purchase units"
     end
 
     test "displays unit roster when units exist", %{conn: conn, user: user} do
@@ -52,7 +84,10 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       master_unit = master_unit_fixture(name: "Atlas", variant: "AS7-D")
       company_unit_fixture(company: company, master_unit: master_unit, custom_name: "The Hammer")
 
-      {:ok, _show_live, html} = live(conn, ~p"/companies/#{company.id}")
+      {:ok, show_live, _html} = live(conn, ~p"/companies/#{company.id}")
+
+      # Navigate to Units tab to see the unit roster
+      html = show_live |> element("button", "Units") |> render_click()
 
       assert html =~ "Atlas AS7-D"
       assert html =~ "The Hammer"
@@ -75,13 +110,15 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       assert path == ~p"/companies/#{company}/draft"
     end
 
-    test "hides add unit button for active companies", %{conn: conn, user: user} do
+    test "shows campaign purchase guidance for active companies", %{conn: conn, user: user} do
       company = company_fixture(user: user, status: "active")
 
       {:ok, _show_live, html} = live(conn, ~p"/companies/#{company.id}")
 
-      refute html =~ "Add Unit"
-      assert html =~ "PV purchases disabled for finalized companies"
+      # Overview tab should show the campaign purchase guidance
+      assert html =~ "Unit Purchases"
+      assert html =~ "Pilot Hiring"
+      assert html =~ "Start a campaign to purchase units"
     end
 
     test "prevents access when user is not a member", %{conn: conn} do
@@ -101,9 +138,9 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       # Can view
       assert html =~ company.name
 
-      # Add Unit button should NOT be visible for active companies
-      refute html =~ "Add Unit"
-      assert html =~ "PV purchases disabled for finalized companies"
+      # Overview tab shows the guidance message about campaign purchases
+      assert html =~ "Unit Purchases"
+      assert html =~ "Pilot Hiring"
     end
 
     test "prevents unauthorized access when not logged in", %{conn: conn, user: user} do
