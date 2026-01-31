@@ -302,19 +302,21 @@ defmodule Aces.Companies.CompanyUnit do
   defp validate_sp_budget(changeset, campaign) do
     validate_when_valid(changeset, fn changeset ->
       case get_master_unit(changeset) do
-        %MasterUnit{point_value: pv} when is_integer(pv) ->
-          sp_cost = pv * 40
-          warchest = campaign.warchest_balance
+        %MasterUnit{} = master_unit ->
+          case MasterUnit.sp_cost(master_unit) do
+            sp_cost when is_integer(sp_cost) ->
+              warchest = campaign.warchest_balance
 
-          if sp_cost <= warchest do
-            changeset
-          else
-            add_error(changeset, :master_unit_id,
-              "Insufficient SP in warchest. Need #{sp_cost} SP, but only #{warchest} SP available")
+              if sp_cost <= warchest do
+                changeset
+              else
+                add_error(changeset, :master_unit_id,
+                  "Insufficient SP in warchest. Need #{sp_cost} SP, but only #{warchest} SP available")
+              end
+
+            nil ->
+              add_error(changeset, :master_unit_id, "Unit has no point value")
           end
-
-        %MasterUnit{} ->
-          add_error(changeset, :master_unit_id, "Unit has no point value")
 
         nil ->
           add_error(changeset, :master_unit_id, ValidationErrors.master_unit_not_found())

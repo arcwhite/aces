@@ -1,7 +1,7 @@
 defmodule AcesWeb.SortieLive.New do
   use AcesWeb, :live_view
 
-  alias Aces.{Companies, Campaigns}
+  alias Aces.{Companies, Campaigns, ChangesetHelpers}
   alias Aces.Companies.Authorization
   alias Aces.Campaigns.Sortie
 
@@ -88,7 +88,7 @@ defmodule AcesWeb.SortieLive.New do
 
       {:error, %Ecto.Changeset{} = changeset} ->
         # Extract error message for flash
-        error_message = format_changeset_errors(changeset)
+        error_message = ChangesetHelpers.format_errors(changeset)
 
         {:noreply,
          socket
@@ -176,12 +176,6 @@ defmodule AcesWeb.SortieLive.New do
   def handle_event("assign_pilot", _params, socket) do
     # Fallback for malformed events
     {:noreply, socket}
-  end
-
-  defp format_changeset_errors(changeset) do
-    changeset.errors
-    |> Enum.map(fn {field, {msg, _opts}} -> "#{field} #{msg}" end)
-    |> Enum.join(", ")
   end
 
   defp assign_form(socket, changeset) do

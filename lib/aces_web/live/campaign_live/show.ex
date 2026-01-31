@@ -1,7 +1,7 @@
 defmodule AcesWeb.CampaignLive.Show do
   use AcesWeb, :live_view
 
-  alias Aces.{Companies, Campaigns}
+  alias Aces.{Companies, Campaigns, ChangesetHelpers}
   alias Aces.Companies.Authorization
 
   on_mount {AcesWeb.UserAuthLive, :default}
@@ -108,7 +108,7 @@ defmodule AcesWeb.CampaignLive.Show do
            |> assign(:show_unit_search, false)}
 
         {:error, %Ecto.Changeset{} = changeset} ->
-          error_message = format_changeset_errors(changeset)
+          error_message = ChangesetHelpers.format_errors(changeset)
           {:noreply, assign(socket, :unit_add_error, error_message)}
 
         {:error, message} when is_binary(message) ->
@@ -119,12 +119,6 @@ defmodule AcesWeb.CampaignLive.Show do
        socket
        |> put_flash(:error, "You don't have permission to purchase units")}
     end
-  end
-
-  defp format_changeset_errors(changeset) do
-    changeset.errors
-    |> Enum.map(fn {field, {msg, _opts}} -> "#{field}: #{msg}" end)
-    |> Enum.join(", ")
   end
 
   @impl true

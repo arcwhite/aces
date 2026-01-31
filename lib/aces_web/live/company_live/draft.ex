@@ -1,7 +1,7 @@
 defmodule AcesWeb.CompanyLive.Draft do
   use AcesWeb, :live_view
 
-  alias Aces.Companies
+  alias Aces.{Companies, ChangesetHelpers}
   alias Aces.Companies.Authorization
   alias Aces.Companies.Pilots, as: CompanyPilots
   alias Aces.Companies.Units, as: CompanyUnits
@@ -146,7 +146,7 @@ defmodule AcesWeb.CompanyLive.Draft do
            |> assign(:unit_add_error, nil)}
 
         {:error, %Ecto.Changeset{} = changeset} ->
-          error_message = format_changeset_errors(changeset)
+          error_message = ChangesetHelpers.format_errors(changeset)
           {:noreply, assign(socket, :unit_add_error, error_message)}
       end
     else
@@ -270,7 +270,7 @@ defmodule AcesWeb.CompanyLive.Draft do
            |> redirect(to: ~p"/companies/#{finalized_company}")}
 
         {:error, %Ecto.Changeset{} = changeset} ->
-          error_message = format_changeset_errors(changeset)
+          error_message = ChangesetHelpers.format_errors(changeset)
           {:noreply,
            socket
            |> put_flash(:error, "Failed to finalize company: #{error_message}")}
@@ -369,12 +369,6 @@ defmodule AcesWeb.CompanyLive.Draft do
     else
       socket
     end
-  end
-
-  defp format_changeset_errors(changeset) do
-    changeset.errors
-    |> Enum.map(fn {field, {msg, _opts}} -> "#{field}: #{msg}" end)
-    |> Enum.join(", ")
   end
 
   @impl true

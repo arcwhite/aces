@@ -1,7 +1,7 @@
 defmodule AcesWeb.CompanyLive.Show do
   use AcesWeb, :live_view
 
-  alias Aces.{Companies, Campaigns}
+  alias Aces.{Companies, Campaigns, ChangesetHelpers}
   alias Aces.Companies.Authorization
   alias Aces.Companies.Units, as: CompanyUnits
 
@@ -152,7 +152,7 @@ defmodule AcesWeb.CompanyLive.Show do
            |> assign(:show_unit_search, false)}
 
         {:error, %Ecto.Changeset{} = changeset} ->
-          error_message = format_changeset_errors(changeset)
+          error_message = ChangesetHelpers.format_errors(changeset)
 
           {:noreply,
            socket
@@ -617,11 +617,5 @@ defmodule AcesWeb.CompanyLive.Show do
       <% end %>
     </div>
     """
-  end
-
-  defp format_changeset_errors(changeset) do
-    changeset.errors
-    |> Enum.map(fn {field, {msg, _opts}} -> "#{field}: #{msg}" end)
-    |> Enum.join(", ")
   end
 end

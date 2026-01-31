@@ -41,8 +41,8 @@ defmodule Mix.Tasks.SeedMasterUnits do
   """
 
   use Mix.Task
+  alias Aces.{ChangesetHelpers, Units}
   alias Aces.MUL.Client
-  alias Aces.Units
 
   require Logger
 
@@ -294,7 +294,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
             %{acc | success: acc.success + 1}
 
           {:error, changeset} ->
-            error_msg = format_changeset_errors(changeset)
+            error_msg = ChangesetHelpers.format_errors(changeset)
             log_error_details(acc.log_file, unit_data, changeset)
             %{
               acc |
@@ -342,12 +342,6 @@ defmodule Mix.Tasks.SeedMasterUnits do
     IO.puts("💾 Total cached units in database: #{total_cached}")
     IO.puts("")
     IO.puts("🎉 Master unit seeding completed!")
-  end
-
-  defp format_changeset_errors(changeset) do
-    changeset.errors
-    |> Enum.map(fn {field, {msg, _opts}} -> "#{field}: #{msg}" end)
-    |> Enum.join(", ")
   end
 
   # Error logging helpers

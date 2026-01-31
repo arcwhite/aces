@@ -14,6 +14,7 @@ defmodule Aces.Companies do
 
   alias Aces.Accounts.User
   alias Aces.Companies.{Company, CompanyMembership}
+  alias Aces.Units.MasterUnit
 
   ## Company CRUD
 
@@ -124,13 +125,13 @@ defmodule Aces.Companies do
   end
 
   @doc """
-  Finalizes a company, converting unused PV to SP at a 1:40 ratio
+  Finalizes a company, converting unused PV to SP at a 1:#{MasterUnit.sp_per_pv()} ratio
   and setting status to active.
   """
   def finalize_company(%Company{} = company) do
     company_with_stats = add_company_stats(company)
     unused_pv = company_with_stats.stats.pv_remaining
-    bonus_sp = unused_pv * 40
+    bonus_sp = MasterUnit.pv_to_sp(unused_pv)
 
     attrs = %{
       status: "active",

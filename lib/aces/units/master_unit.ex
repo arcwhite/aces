@@ -113,6 +113,49 @@ defmodule Aces.Units.MasterUnit do
   """
   def mul_url(%__MODULE__{mul_id: mul_id}), do: "https://www.masterunitlist.info/Unit/Details/#{mul_id}"
 
+  # The SP to PV conversion rate. Units cost 40 SP per point of PV.
+  @sp_per_pv 40
+
+  @doc """
+  Returns the SP per PV conversion rate.
+
+  This is the standard rate used for:
+  - Unit purchase costs (PV × 40)
+  - Converting unused PV budget to SP during company finalization
+
+  ## Examples
+
+      iex> sp_per_pv()
+      40
+  """
+  def sp_per_pv, do: @sp_per_pv
+
+  @doc """
+  Converts a raw PV value to SP.
+
+  ## Examples
+
+      iex> pv_to_sp(25)
+      1000
+  """
+  def pv_to_sp(pv) when is_integer(pv), do: pv * @sp_per_pv
+
+  @doc """
+  Calculates the SP cost to purchase this unit.
+
+  The cost is calculated as Point Value × #{@sp_per_pv} SP.
+
+  ## Examples
+
+      iex> sp_cost(%MasterUnit{point_value: 25})
+      1000
+
+      iex> sp_cost(%MasterUnit{point_value: nil})
+      nil
+  """
+  def sp_cost(%__MODULE__{point_value: pv}) when is_integer(pv), do: pv_to_sp(pv)
+  def sp_cost(%__MODULE__{point_value: nil}), do: nil
+
   @doc """
   Returns the Sarna.net search URL for this unit
   """

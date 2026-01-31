@@ -8,6 +8,7 @@ defmodule Aces.Campaigns do
 
   import Ecto.Query, warn: false
   alias Aces.Repo
+  alias Aces.ChangesetHelpers
 
   alias Aces.Companies.{Company, CompanyUnit, Pilot}
   alias Aces.Campaigns.{Campaign, Sortie, Deployment, CampaignEvent, PilotAllocation}
@@ -1264,7 +1265,7 @@ defmodule Aces.Campaigns do
               {:ok, updated_sortie, updated_campaign}
 
             {:error, changeset} when is_struct(changeset, Ecto.Changeset) ->
-              {:error, format_changeset_errors(changeset)}
+              {:error, ChangesetHelpers.format_errors(changeset)}
 
             {:error, message} ->
               {:error, message}
@@ -1327,12 +1328,6 @@ defmodule Aces.Campaigns do
 
   defp commit_variant_changes_if_any(sortie, pending_changes, omni_variants, campaign) do
     commit_omni_refits(sortie, pending_changes, omni_variants, campaign)
-  end
-
-  defp format_changeset_errors(changeset) do
-    changeset.errors
-    |> Enum.map(fn {field, {msg, _opts}} -> "#{field} #{msg}" end)
-    |> Enum.join(", ")
   end
 
   @doc """
