@@ -522,31 +522,37 @@ defmodule Aces.Campaigns do
     prior_allocations = get_prior_allocations_for_pilots(pilot_ids, sortie_id)
 
     # Build the saved map for each pilot
-    allocations
-    |> Enum.map(fn alloc ->
-      pilot_prior = Map.get(prior_allocations, alloc.pilot_id, [])
+    for alloc <- allocations, into: %{} do
+      {to_string(alloc.pilot_id), build_saved_entry(alloc, prior_allocations)}
+    end
+  end
 
-      # Baseline is sum of all allocations BEFORE this sortie
-      baseline_skill = Enum.sum(Enum.map(pilot_prior, & &1.sp_to_skill))
-      baseline_tokens = Enum.sum(Enum.map(pilot_prior, & &1.sp_to_tokens))
-      baseline_abilities = Enum.sum(Enum.map(pilot_prior, & &1.sp_to_abilities))
-      baseline_edge_abilities = Enum.flat_map(pilot_prior, & &1.edge_abilities_gained)
+  # Converts a single pilot allocation into the "saved" format used by PilotAllocationState.
+  #
+  # Takes an allocation struct and the map of prior allocations (keyed by pilot_id), then:
+  # - Looks up all prior allocations for this pilot
+  # - Calculates baseline values (sum of all prior allocations)
+  # - Returns a map with baseline values and current allocation deltas
+  defp build_saved_entry(alloc, prior_allocations) do
+    pilot_prior = Map.get(prior_allocations, alloc.pilot_id, [])
 
-      saved = %{
-        "baseline_skill" => baseline_skill,
-        "baseline_tokens" => baseline_tokens,
-        "baseline_abilities" => baseline_abilities,
-        "baseline_edge_abilities" => baseline_edge_abilities,
-        "add_skill" => alloc.sp_to_skill,
-        "add_tokens" => alloc.sp_to_tokens,
-        "add_abilities" => alloc.sp_to_abilities,
-        "new_edge_abilities" => alloc.edge_abilities_gained,
-        "sp_to_spend" => alloc.total_sp
-      }
+    # Baseline is sum of all allocations BEFORE this sortie
+    baseline_skill = Enum.sum(Enum.map(pilot_prior, & &1.sp_to_skill))
+    baseline_tokens = Enum.sum(Enum.map(pilot_prior, & &1.sp_to_tokens))
+    baseline_abilities = Enum.sum(Enum.map(pilot_prior, & &1.sp_to_abilities))
+    baseline_edge_abilities = Enum.flat_map(pilot_prior, & &1.edge_abilities_gained)
 
-      {to_string(alloc.pilot_id), saved}
-    end)
-    |> Map.new()
+    %{
+      "baseline_skill" => baseline_skill,
+      "baseline_tokens" => baseline_tokens,
+      "baseline_abilities" => baseline_abilities,
+      "baseline_edge_abilities" => baseline_edge_abilities,
+      "add_skill" => alloc.sp_to_skill,
+      "add_tokens" => alloc.sp_to_tokens,
+      "add_abilities" => alloc.sp_to_abilities,
+      "new_edge_abilities" => alloc.edge_abilities_gained,
+      "sp_to_spend" => alloc.total_sp
+    }
   end
 
   defp get_prior_allocations_for_pilots(pilot_ids, sortie_id) do
