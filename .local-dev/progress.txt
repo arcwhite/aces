@@ -11,7 +11,6 @@
 - For complex migrations (like JSON to table), write a detailed spec first (see specs/PILOT_ALLOCATIONS.md). This captures context and decisions for future implementation.
 
 # High-priority items
-- [ ] Breadcrumbs need review, navigation is confusing (ask your user about it)
 - [ ] Need to update Edge Abilities to be accurate (ask your user for the actual list)
 - [ ] Company view needs to be tabbed, and it should be more obvious that the user needs to be 'on campaign' (e.g. on a planet) to purchase units or hire pilots. Or, we enable these controls for the company when no campaign is active.
 
@@ -51,3 +50,4 @@
 - [x] Sortie creation redirect fix - Changed sortie creation to redirect to the show page (Sortie Setup view) instead of the edit page. Updated test to match new expected redirect.
 - [x] Campaigns view shows past campaigns - Added tabbed view (Active/Past tabs) to the campaigns index page. Active campaigns shown by default, past (completed/failed) campaigns accessible via Past tab. Features: tab badges with counts, completion date for past campaigns, appropriate empty states. Added 11 comprehensive tests.
 - [x] Campaign completion syncs warchest to company - Updated complete_campaign/3 to sync the campaign's final warchest_balance back to the company's warchest_balance. This ensures SP earned or lost during campaigns (via unit purchases, sales, pilot hiring, sorties) persists to the company. Uses Ecto.Multi for atomic transaction. Added 5 comprehensive tests covering unit purchases, sales, pilot hiring, and successful/failed campaign completions.
+- [x] Campaign navigation breadcrumb fix - Fixed CampaignLive.Show to navigate "Back to Campaigns" (/campaigns) instead of "Back to Company". Since Campaigns is a top-level navigation element, the campaign show page should go back to the campaigns list, not to the company page.
