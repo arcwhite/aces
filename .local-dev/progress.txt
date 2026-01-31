@@ -17,11 +17,10 @@ The following are from @.local-dev/refactor.txt, please examine that file for mo
 [x] 1. Unit search modal duplication - DONE
 [x] 2. Medium-priority, Smaller DRY improvements - DONE
 [x] 3. Parameter extraction deduplication - DONE
-[ ] 4. Add a mechanism to "invite" users to co-manage a Company, using our role system. The invitation system should send the user in question a notification by email, if they exist in the DB, and let them "accept" that role. If they don't exist in the system yet, it should send them an invitation to join the platform and, upon joining the platform, they should have the option (somewhere) to view & accept the invitation to co-manage the Company (and its Campaigns, etc.)
+[x] 4. Company invitation system - DONE
 
 # Medium-priority items
 - [ ] Figure out how to compute code coverage
-- [ ] Allow users to 'invite' someone else to be co-commander (user) of their Company, its Campaigns and Sorties. We've already got roles to support this, but we need to lean into it.
 
 # Low-priority items
 - [ ] Add PubSub support so multiple users can see changes to their Company, Campaign, and Sorties in real-time. Especially useful for the "live" Sortie show view, where users are tracking things happening as the game is happening.
@@ -49,3 +48,4 @@ The following are from @.local-dev/refactor.txt, please examine that file for mo
 - [x] Refactor: Unit search modal duplication - Extracted unit search modal from company_live/show.ex and campaign_live/show.ex (~300 lines each) to shared AcesWeb.Components.UnitSearchModal LiveComponent. Supports two modes: :pv_budget for draft company setup and :sp_purchase for campaign purchases. Net reduction of ~750 lines of duplicated code.
 - [x] Medium-priority DRY improvements from .local-dev/refactor.txt - Created Aces.ChangesetHelpers module with format_errors/1 (replaced 6 duplicate functions across campaigns.ex, LiveViews, and mix task). Added MasterUnit.sp_cost/1, pv_to_sp/1, and sp_per_pv/0 for centralized SP cost calculations (used in company_unit.ex and companies.ex). Added comprehensive tests for all new functions.
 - [x] Refactor 9 from .local-dev/refactor.txt - Extracted generic extract_prefixed_param/2 helper in sortie_live/show.ex to deduplicate extract_damage_params/1 and extract_casualty_params/1. Both functions had identical patterns for parsing form params like "damage_status_123" or "pilot_casualty_456". New helper is documented with examples.
+- [x] Company invitation system - Implemented full invitation system for company co-management. Created CompanyInvitation schema with hashed tokens (7-day validity), migration for company_invitations table with unique constraint on pending invitations. Added context functions: create_invitation/4, get_invitation_by_token/1, accept_invitation/2, cancel_invitation/1, list_pending_invitations/1, list_user_pending_invitations/1. Extended UserNotifier with deliver_company_invitation/3. Created InvitationLive.Index (list/accept/decline pending invitations) and InvitationLive.Accept (token-based acceptance with login/register flow for new users). Added invite modal to company show page for owners. Navigation link added. 13 comprehensive tests.
