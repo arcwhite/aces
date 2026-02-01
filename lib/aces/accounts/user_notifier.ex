@@ -5,10 +5,13 @@ defmodule Aces.Accounts.UserNotifier do
 
   # Delivers the email using the application mailer.
   defp deliver(recipient, subject, body) do
+    from_email = Application.get_env(:aces, :mailer_from_email, "noreply@example.com")
+    from_name = Application.get_env(:aces, :mailer_from_name, "Aces")
+
     email =
       new()
       |> to(recipient)
-      |> from({"Aces", "contact@example.com"})
+      |> from({from_name, from_email})
       |> subject(subject)
       |> text_body(body)
 

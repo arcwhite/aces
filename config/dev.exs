@@ -86,3 +86,8 @@ config :phoenix_live_view,
 
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
+
+# Default mailer from address for development (uses local adapter, so not actually sent)
+config :aces,
+  mailer_from_email: "noreply@localhost",
+  mailer_from_name: "Aces Dev"

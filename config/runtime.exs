@@ -101,19 +101,34 @@ if config_env() == :prod do
 
   # ## Configuring the mailer
   #
-  # In production you need to configure the mailer to use a different adapter.
-  # Here is an example configuration for Mailgun:
+  # Using Amazon SES via SMTP. Required env vars:
+  # - AWS_REGION (e.g., "us-east-1")
+  # - SMTP_USERNAME (SES SMTP username)
+  # - SMTP_PASSWORD (SES SMTP password)
+  # - MAILER_FROM_EMAIL (must be SES-verified, e.g., "noreply@yourdomain.com")
+  # - MAILER_FROM_NAME (optional, defaults to "Aces")
   #
-  #     config :aces, Aces.Mailer,
-  #       adapter: Swoosh.Adapters.Mailgun,
-  #       api_key: System.get_env("MAILGUN_API_KEY"),
-  #       domain: System.get_env("MAILGUN_DOMAIN")
-  #
-  # Most non-SMTP adapters require an API client. Swoosh supports Req, Hackney,
-  # and Finch out-of-the-box. This configuration is typically done at
-  # compile-time in your config/prod.exs:
-  #
-  #     config :swoosh, :api_client, Swoosh.ApiClient.Req
-  #
-  # See https://hexdocs.pm/swoosh/Swoosh.html#module-installation for details.
+  smtp_server = "email-smtp.#{System.get_env("AWS_REGION", "us-east-1")}.amazonaws.com"
+
+  config :aces,
+    mailer_from_email: System.get_env("MAILER_FROM_EMAIL") || raise("MAILER_FROM_EMAIL not set"),
+    mailer_from_name: System.get_env("MAILER_FROM_NAME", "Andy's Aces Accounting")
+
+  config :aces, Aces.Mailer,
+    adapter: Swoosh.Adapters.SMTP,
+    relay: smtp_server,
+    port: 587,
+    username: System.get_env("SMTP_USERNAME"),
+    password: System.get_env("SMTP_PASSWORD"),
+    tls: :always,
+    tls_options: [
+      verify: :verify_peer,
+      cacerts: :public_key.cacerts_get(),
+      depth: 3,
+      versions: [:"tlsv1.2"],
+      server_name_indication: String.to_charlist(smtp_server)
+    ],
+    ssl: false,
+    auth: :always
+
 end
