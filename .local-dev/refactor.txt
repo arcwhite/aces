@@ -1,244 +1,913 @@
-# ACES Codebase Refactoring Plan
+# ACES Codebase Refactoring Analysis
+Generated: 2026-02-01
 
-Generated: 2026-01-31
-Priority: Extract business logic from LiveViews first, then smaller improvements
-Approach: Structural changes OK (new context functions, extracted modules)
-Error handling: Fix as we touch files for other reasons
+## Executive Summary
 
-USE THE ELIXIR EXPERT AGENT FOR THESE REFACTORINGS
-
----
-
-## HIGH PRIORITY: LiveView Business Logic Extraction
-
-### 1. sortie_live/show.ex (692 lines) - OMNI Refits & Sortie Start
-
-**Problem**: LiveView handles business logic for OMNI variant selection, cost calculation, and sortie initialization.
-
-**Files involved**:
-- lib/aces_web/live/sortie_live/show.ex (lines 117-154, 235-271, 296-358)
-- lib/aces/campaigns.ex (target for extracted logic)
-
-**Specific extractions**:
-
-a) Move `handle_event("start_sortie")` logic (lines 117-154) to context:
-   - Create `Campaigns.start_sortie_with_refits(sortie, pending_variant_changes, force_commander_id)`
-   - The complex `with` chain validating and committing should be in the context
-   - LiveView should just call context and handle success/error
-
-b) Move cost calculation helpers to context:
-   - `calculate_pending_refit_cost/1` (lines 296-322) -> `Campaigns.calculate_pending_refit_cost(sortie, pending_changes, omni_variants)`
-   - `calculate_effective_deployed_pv/1` (lines 329-358) -> `Campaigns.calculate_effective_deployed_pv(sortie, pending_changes, omni_variants)`
-   - These duplicate logic that partially exists in Campaigns context
-
-c) Consider: The variant change tracking (`pending_variant_changes` in assigns) is acceptable for ephemeral UI state, but calculations should delegate.
-
-**When done**: LiveView should be ~500 lines, handling only UI state and delegating to Campaigns context.
+This analysis identifies opportunities for improving code quality across the ACES codebase
+in four key areas: Readability, Duplication, Elegance, and Reusability. The findings are
+organized by priority to maximize impact on maintainability and developer experience.
 
 ---
 
-### 2. sortie_live/complete/pilots.ex - SP Distribution
+## HIGH PRIORITY ISSUES
 
-**Problem**: LiveView directly updates pilots via Ecto changesets instead of delegating to context.
+### 1. DUPLICATION: Repeated Tab Navigation Pattern (3 LiveViews)
 
-**Files involved**:
-- lib/aces_web/live/sortie_live/complete/pilots.ex (lines 100-219)
-- lib/aces/campaigns.ex or lib/aces/companies.ex (target)
+**Files Affected:**
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/company_live/show.ex` (lines 364-379)
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/campaign_live/show.ex` (lines 433-449)
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/campaign_live/index.ex` (lines 49-72)
 
-**Specific extractions**:
+**Issue:** The tab navigation component is duplicated across multiple LiveViews with slight variations.
 
-a) Move distribution logic:
-   - `distribute_sp_to_pilots/4` -> `Campaigns.distribute_pilot_sp(sortie, distribution_map, mvp_id)`
-   - `apply_pilot_reversals/2` -> `Campaigns.revert_pilot_sp(sortie, reversal_data)`
-   - `handle_mvp_change_only/3` -> Can use the same context function with different params
-
-b) LiveView should receive results back and update UI state, not perform updates directly.
-
-**Note**: Fix error handling while in this file - any `{:ok, _} = ...` pattern matches should become proper `case` or `with` statements.
-
----
-
-### 3. company_live/show.ex (1022 lines) - Unit Search
-
-**Problem**: Search logic, filter building, and error handling mixed into LiveView.
-
-**Files involved**:
-- lib/aces_web/live/company_live/show.ex (lines 240-308)
-- lib/aces/units.ex (target for search extraction)
-
-**Specific extractions**:
-
-a) Move search to context:
-   - Create `Units.search_units(term, opts)` where opts is `[era: ..., faction: ..., type: ...]`
-   - Context function handles API call, error handling, result transformation
-   - `build_search_opts/1` (lines 265-285) moves into context - LiveView shouldn't know about API filter format
-
-b) Remove DRY violation:
-   - `maybe_run_search/1` (lines 287-308) duplicates logic from `handle_info({:perform_search})`
-   - After extraction, both call same context function
-
-c) Remove try/rescue from LiveView:
-   - Lines 240-263 have try/rescue error handling
-   - Error handling moves to context, LiveView receives `{:ok, results}` or `{:error, reason}`
-
----
-
-## MEDIUM PRIORITY: Imperative -> Functional Refactors
-
-### 4. campaigns.ex - build_saved_map_from_allocations/2 (lines 516-550)
-
-**Problem**: Imperative reduction with many intermediate calculations.
-
-**Current**:
+**Current Code Pattern:**
 ```elixir
-allocations
-|> Enum.map(fn alloc ->
-  pilot_prior = Map.get(prior_allocations, alloc.pilot_id, [])
-  baseline_skill = Enum.sum(Enum.map(pilot_prior, & &1.sp_to_skill))
-  # ... more calculations
-  {to_string(alloc.pilot_id), saved}
-end)
-|> Map.new()
-```
-
-**Improvement**: Extract helper `build_saved_entry(alloc, prior_allocations)` for clarity:
-```elixir
-for alloc <- allocations, into: %{} do
-  {to_string(alloc.pilot_id), build_saved_entry(alloc, prior_allocations)}
+defp tab_navigation(assigns) do
+  ~H"""
+  <div role="tablist" class="tabs tabs-boxed mb-6">
+    <button
+      :for={{label, tab} <- [{"Overview", :overview}, {"Pilots", :pilots}, ...]}
+      role="tab"
+      class={["tab", @active_tab == tab && "tab-active"]}
+      phx-click="set_tab"
+      phx-value-tab={tab}
+    >
+      {label}
+    </button>
+  </div>
+  """
 end
 ```
 
----
+**Proposed Solution:**
+Create a reusable `TabNavigation` component in `core_components.ex`:
 
-### 5. campaigns.ex - update_deployment_results/2 (lines 314-325)
-
-**Problem**: Pattern matches `{:ok, _}` which will crash on errors.
-
-**Current**:
 ```elixir
-Enum.map(deployments, fn deployment ->
-  {deployment_id, result_attrs} = ...
-  {:ok, updated} =
-    deployment
-    |> Deployment.post_battle_changeset(result_attrs)
-    |> Repo.update()
-  updated
-end)
-```
+defmodule AcesWeb.CoreComponents do
+  # ... existing code ...
 
-**Improvement**: Use `Ecto.Multi` for transaction safety:
-```elixir
-def update_deployment_results(deployments, results) do
-  deployments
-  |> Enum.reduce(Ecto.Multi.new(), fn deployment, multi ->
-    {deployment_id, result_attrs} = find_result(deployment.id, results)
-    changeset = Deployment.post_battle_changeset(deployment, result_attrs)
-    Ecto.Multi.update(multi, {:deployment, deployment.id}, changeset)
-  end)
-  |> Repo.transaction()
+  @doc """
+  Renders a tabbed navigation interface.
+
+  ## Examples
+
+      <.tab_navigation
+        tabs={[{"Overview", :overview}, {"Units", :units}]}
+        active_tab={@active_tab}
+        on_change="set_tab"
+      />
+  """
+  attr :tabs, :list, required: true, doc: "List of {label, value} tuples"
+  attr :active_tab, :atom, required: true
+  attr :on_change, :string, default: "set_tab"
+  attr :show_counts, :map, default: %{}
+  attr :class, :string, default: "tabs tabs-boxed mb-6"
+
+  def tab_navigation(assigns) do
+    ~H"""
+    <div role="tablist" class={@class}>
+      <button
+        :for={{label, tab} <- @tabs}
+        role="tab"
+        class={["tab", @active_tab == tab && "tab-active"]}
+        phx-click={@on_change}
+        phx-value-tab={tab}
+      >
+        {label}
+        <span :if={Map.has_key?(@show_counts, tab)} class="badge badge-sm ml-2">
+          {Map.get(@show_counts, tab)}
+        </span>
+      </button>
+    </div>
+    """
+  end
 end
 ```
 
----
-
-### 6. sortie_summary.ex - enrich_allocations/1 (lines 48-71)
-
-**Problem**: N+N performance issue - `Enum.find` inside map creates O(n*m) lookup.
-
-**Current**:
-```elixir
-allocations
-|> Enum.filter(fn alloc -> alloc.pilot_id != nil end)
-|> Enum.map(fn alloc ->
-  pilot = Enum.find(pilots, &(&1.id == alloc.pilot_id))  # O(n) per allocation
-  %{alloc | pilot: pilot}
-end)
-```
-
-**Improvement**: Build lookup map first:
-```elixir
-pilot_map = Map.new(pilots, &{&1.id, &1})
-
-allocations
-|> Enum.filter(& &1.pilot_id)
-|> Enum.map(fn alloc ->
-  %{alloc | pilot: Map.get(pilot_map, alloc.pilot_id)}
-end)
-```
+**Impact:** Eliminates ~50 lines of duplicated code across 3 files.
 
 ---
 
-### 7. campaigns.ex - Duplicate pilot ID extraction logic
+### 2. DUPLICATION: List User Companies Query Pattern (3 variations)
 
-**Problem**: Same logic in 3 places (lines 385-389, 393-400, 466-468).
+**Files Affected:**
+- `/home/arcwhite/Documents/aces/lib/aces/companies.ex` (lines 25-62)
 
-**Fix**: Extract `get_participating_pilot_ids(sortie)` helper:
+**Issue:** Three nearly identical functions with only the WHERE clause differing.
+
+**Current Code:**
 ```elixir
-defp get_participating_pilot_ids(%Sortie{} = sortie) do
-  sortie.deployments
-  |> Enum.filter(& &1.pilot_id)
-  |> Enum.map(& &1.pilot_id)
-  |> Enum.uniq()
+def list_user_companies(%User{} = user) do
+  from(c in Company,
+    join: m in CompanyMembership,
+    on: m.company_id == c.id,
+    where: m.user_id == ^user.id,
+    preload: [:memberships, :pilots, company_units: :master_unit],
+    order_by: [desc: c.updated_at]
+  )
+  |> Repo.all()
+end
+
+def list_user_active_companies(%User{} = user) do
+  from(c in Company,
+    join: m in CompanyMembership,
+    on: m.company_id == c.id,
+    where: m.user_id == ^user.id and c.status == "active",
+    # ... same preload and order_by
+  )
+  |> Repo.all()
+end
+
+def list_user_draft_companies(%User{} = user) do
+  # ... nearly identical with different status filter
 end
 ```
 
-Then use in:
-- `get_participating_pilots/1`
-- `get_non_participating_pilots/1`
-- `participating_pilot_deployments/1`
+**Proposed Solution:**
+Use a single base query with optional filters:
 
----
-
-## LOW PRIORITY: Readability & Organization
-
-### 8. units.ex - apply_filters/2 (lines 209-322)
-
-**Problem**: 10+ function heads for different filter types, hard to see all at a glance.
-
-**Options**:
-a) Add comprehensive @moduledoc listing all supported filters
-b) Extract to dedicated `Units.Filters` module
-c) Use a single function with pattern matching on filter key
-
----
-
-### 9. sortie_live/show.ex - Parameter extraction duplication (lines 447-473)
-
-**Problem**: `extract_damage_params/1` and `extract_casualty_params/1` have identical patterns.
-
-**Fix**: Extract generic helper:
 ```elixir
-defp extract_prefixed_param(params, prefix) do
-  Enum.find_value(params, fn
-    {key, value} when is_binary(key) ->
-      case String.split(key, prefix) do
-        ["", id_string] -> {String.to_integer(id_string), value}
-        _ -> nil
+defp user_companies_base_query(%User{} = user, opts \\ []) do
+  query = from(c in Company,
+    join: m in CompanyMembership,
+    on: m.company_id == c.id,
+    where: m.user_id == ^user.id,
+    preload: [:memberships, :pilots, company_units: :master_unit],
+    order_by: [desc: c.updated_at]
+  )
+
+  case Keyword.get(opts, :status) do
+    nil -> query
+    status when is_binary(status) -> where(query, [c], c.status == ^status)
+    statuses when is_list(statuses) -> where(query, [c], c.status in ^statuses)
+  end
+end
+
+def list_user_companies(%User{} = user), do: Repo.all(user_companies_base_query(user))
+def list_user_active_companies(%User{} = user), do: Repo.all(user_companies_base_query(user, status: "active"))
+def list_user_draft_companies(%User{} = user), do: Repo.all(user_companies_base_query(user, status: "draft"))
+```
+
+**Impact:** Reduces duplication from 3 full query definitions to 1 base + 3 one-liners. Easier to maintain and modify.
+
+---
+
+### 3. READABILITY: Complex Tab Content Routing Pattern
+
+**Files Affected:**
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/company_live/show.ex` (lines 381-890)
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/campaign_live/show.ex` (lines 451-1067)
+
+**Issue:** Tab content routing uses pattern matching on assigns, which buries the router function and makes it hard to find the actual tab implementations.
+
+**Current Code:**
+```elixir
+defp tab_content(%{active_tab: :overview} = assigns), do: overview_tab(assigns)
+defp tab_content(%{active_tab: :pilots} = assigns), do: pilots_tab(assigns)
+defp tab_content(%{active_tab: :units} = assigns), do: units_tab(assigns)
+defp tab_content(%{active_tab: :settings} = assigns), do: settings_tab(assigns)
+```
+
+**Proposed Solution:**
+More explicit routing with better discoverability:
+
+```elixir
+defp tab_content(assigns) do
+  case assigns.active_tab do
+    :overview -> overview_tab(assigns)
+    :pilots -> pilots_tab(assigns)
+    :units -> units_tab(assigns)
+    :settings -> settings_tab(assigns)
+  end
+end
+```
+
+Or even better, create a tab registry at the top of the module:
+
+```elixir
+@tabs %{
+  overview: {&overview_tab/1, "Overview"},
+  pilots: {&pilots_tab/1, "Pilots"},
+  units: {&units_tab/1, "Units"},
+  settings: {&settings_tab/1, "Settings"}
+}
+
+defp tab_content(assigns) do
+  {render_fn, _label} = Map.fetch!(@tabs, assigns.active_tab)
+  render_fn.(assigns)
+end
+
+defp tab_list, do: Enum.map(@tabs, fn {key, {_, label}} -> {label, key} end)
+```
+
+**Impact:** Better code organization, easier to understand control flow, tab definitions in one place.
+
+---
+
+### 4. DUPLICATION: Badge Class Helper Functions (Multiple files)
+
+**Files Affected:**
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/campaign_live/index.ex` (lines 184-194)
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/campaign_live/show.ex` (lines 975-997)
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/sortie_live/show.ex` (lines 1059-1097)
+
+**Issue:** Badge color/class helpers are duplicated across multiple LiveViews.
+
+**Current Pattern:**
+```elixir
+# In campaign_live/index.ex
+defp difficulty_badge_class("recruit"), do: "badge-success"
+defp difficulty_badge_class("regular"), do: "badge-info"
+# ... etc
+
+defp status_badge_class("active"), do: "badge-success"
+defp status_badge_class("completed"), do: "badge-info"
+# ... etc
+
+# In campaign_live/show.ex
+defp event_type_badge_class(event_type) do
+  case event_type do
+    "campaign_started" -> "badge-info"
+    # ... 15 more cases
+  end
+end
+
+# In sortie_live/show.ex
+defp damage_status_color(status) do
+  case status do
+    "operational" -> "select-success"
+    # ... etc
+  end
+end
+
+defp casualty_status_color(status) do
+  case status do
+    "none" -> "select-success"
+    # ... etc
+  end
+end
+```
+
+**Proposed Solution:**
+Create a dedicated helper module for UI styling:
+
+```elixir
+defmodule AcesWeb.UIHelpers do
+  @moduledoc """
+  Shared helper functions for UI elements across LiveViews.
+  """
+
+  @doc "Returns badge class for campaign difficulty levels"
+  def difficulty_badge_class(difficulty) do
+    case difficulty do
+      "recruit" -> "badge-success"
+      "regular" -> "badge-info"
+      "veteran" -> "badge-warning"
+      level when level in ["elite", "legendary"] -> "badge-error"
+      _ -> "badge-ghost"
+    end
+  end
+
+  @doc "Returns badge class for campaign/sortie status"
+  def status_badge_class(status) do
+    case status do
+      "active" -> "badge-success"
+      "completed" -> "badge-info"
+      "failed" -> "badge-error"
+      _ -> "badge-ghost"
+    end
+  end
+
+  @doc "Returns badge class for campaign event types"
+  def event_type_badge_class(event_type) do
+    event_type_mappings = %{
+      # Success events
+      "campaign_completed" => "badge-success",
+      "sortie_completed" => "badge-success",
+      "pilot_recovered" => "badge-success",
+      "unit_repaired" => "badge-success",
+
+      # Warning/Info events
+      "campaign_started" => "badge-info",
+      "sortie_started" => "badge-warning",
+      "pilot_hired" => "badge-info",
+      "pilot_wounded" => "badge-warning",
+      "unit_purchased" => "badge-info",
+
+      # Error events
+      "campaign_failed" => "badge-error",
+      "sortie_failed" => "badge-error",
+      "pilot_killed" => "badge-error",
+      "unit_destroyed" => "badge-error",
+
+      # Other
+      "unit_sold" => "badge-secondary",
+      "unit_refitted" => "badge-accent",
+      "keyword_gained" => "badge-primary",
+      "mvp_awarded" => "badge-warning"
+    }
+
+    Map.get(event_type_mappings, event_type, "badge-outline")
+  end
+
+  @doc "Returns select class for damage status dropdowns"
+  def damage_status_color(status) do
+    case status do
+      "operational" -> "select-success"
+      status when status in ["armor_damaged", "structure_damaged"] -> "select-warning"
+      status when status in ["crippled", "destroyed"] -> "select-error"
+      _ -> ""
+    end
+  end
+
+  @doc "Returns select class for pilot casualty status dropdowns"
+  def casualty_status_color(status) do
+    case status do
+      "none" -> "select-success"
+      "wounded" -> "select-warning"
+      "killed" -> "select-error"
+      _ -> ""
+    end
+  end
+
+  @doc "Formats display text for damage status"
+  def format_damage_status(status) do
+    case status do
+      "operational" -> "Operational"
+      "armor_damaged" -> "Armor Damage"
+      "structure_damaged" -> "Structure Damage"
+      "crippled" -> "Crippled"
+      "destroyed" -> "Destroyed"
+      _ -> humanize_atom(status)
+    end
+  end
+
+  @doc "Formats display text for casualty status"
+  def format_casualty_status(status) do
+    case status do
+      "none" -> "Unharmed"
+      "wounded" -> "Wounded"
+      "killed" -> "Killed"
+      _ -> humanize_atom(status)
+    end
+  end
+
+  @doc "Formats event type for display"
+  def format_event_type(event_type) do
+    event_type
+    |> String.replace("_", " ")
+    |> String.split()
+    |> Enum.map(&String.capitalize/1)
+    |> Enum.join(" ")
+  end
+
+  defp humanize_atom(atom_or_string) do
+    (atom_or_string || "unknown")
+    |> to_string()
+    |> String.capitalize()
+  end
+end
+```
+
+Then import in `aces_web.ex`:
+
+```elixir
+def live_view do
+  quote do
+    # ... existing imports ...
+    import AcesWeb.UIHelpers
+  end
+end
+```
+
+**Impact:** Eliminates ~100+ lines of duplicated badge/formatting logic across files. Single source of truth for UI styling decisions.
+
+---
+
+### 5. DUPLICATION: PubSub Real-Time Update Pattern
+
+**Files Affected:**
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/company_live/show.ex` (lines 264-292)
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/campaign_live/show.ex` (lines 252-269)
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/sortie_live/show.ex` (lines 227-268)
+
+**Issue:** Similar PubSub subscription and event handling pattern repeated across views.
+
+**Current Pattern:**
+```elixir
+# In mount/3
+if connected?(socket), do: Broadcasts.subscribe_company(company.id)
+
+# In handle_info/2
+def handle_info({:company_updated, %{event: _event, payload: _payload}}, socket) do
+  # Reload data
+  company = Companies.get_company!(socket.assigns.company.id)
+  campaign = Campaigns.get_campaign!(socket.assigns.campaign.id)
+  # ... more reloads
+
+  {:noreply, assign(socket, :company, company, :campaign, campaign, ...)}
+end
+```
+
+**Proposed Solution:**
+Create a behaviour/macro for standardizing real-time updates:
+
+```elixir
+defmodule AcesWeb.LiveHelpers do
+  @moduledoc """
+  Common patterns for LiveView components.
+  """
+
+  @doc """
+  Subscribe to PubSub updates if socket is connected.
+
+  ## Examples
+
+      subscribe_if_connected(socket, fn ->
+        Broadcasts.subscribe_company(company_id)
+      end)
+  """
+  def subscribe_if_connected(socket, subscription_fn) do
+    if Phoenix.LiveView.connected?(socket) do
+      subscription_fn.()
+    end
+    socket
+  end
+
+  @doc """
+  Standard reload pattern for entities.
+
+  Reloads specified entities and updates socket assigns.
+  """
+  def reload_and_assign(socket, reloads) do
+    assigns =
+      Enum.reduce(reloads, %{}, fn {key, {module, func, args}}, acc ->
+        value = apply(module, func, args)
+        Map.put(acc, key, value)
+      end)
+
+    Phoenix.Component.assign(socket, assigns)
+  end
+end
+```
+
+Usage:
+
+```elixir
+def mount(...) do
+  socket
+  |> subscribe_if_connected(fn -> Broadcasts.subscribe_company(company.id) end)
+  |> assign(:company, company)
+  # ...
+end
+
+def handle_info({:company_updated, _}, socket) do
+  socket = reload_and_assign(socket, [
+    company: {Companies, :get_company!, [socket.assigns.company.id]},
+    members: {Companies, :list_company_members, [socket.assigns.company]}
+  ])
+
+  {:noreply, socket}
+end
+```
+
+**Impact:** Cleaner real-time update handling, less boilerplate.
+
+---
+
+## MEDIUM PRIORITY ISSUES
+
+### 6. ELEGANCE: Validation Helper Pattern in Context
+
+**Files Affected:**
+- `/home/arcwhite/Documents/aces/lib/aces/campaigns.ex` (lines 1679-1697)
+
+**Issue:** Multiple similar validation functions could use a more DRY pattern.
+
+**Current Code:**
+```elixir
+defp validate_campaign_active(%Campaign{status: "active"}), do: :ok
+defp validate_campaign_active(%Campaign{status: status}) do
+  {:error, "Cannot purchase units: campaign is #{status}"}
+end
+
+defp validate_no_in_progress_sorties_for_purchase(%Campaign{} = campaign) do
+  if has_in_progress_sortie?(campaign) do
+    {:error, "Cannot purchase units while a sortie is in progress"}
+  else
+    :ok
+  end
+end
+```
+
+**Proposed Solution:**
+Create a validation DSL or helper:
+
+```elixir
+defmodule Aces.ValidationHelpers do
+  @doc """
+  Validates a condition and returns :ok or error tuple.
+  """
+  def validate(condition, error_message) when is_boolean(condition) do
+    if condition, do: :ok, else: {:error, error_message}
+  end
+
+  def validate({:ok, value}, _error_message), do: {:ok, value}
+  def validate({:error, _} = error, _error_message), do: error
+  def validate(true, _error_message), do: :ok
+  def validate(false, error_message), do: {:error, error_message}
+end
+```
+
+Then use in context:
+
+```elixir
+import Aces.ValidationHelpers
+
+defp validate_campaign_active(campaign) do
+  validate(campaign.status == "active", "Cannot purchase units: campaign is #{campaign.status}")
+end
+
+defp validate_no_in_progress_sorties(campaign) do
+  validate(!has_in_progress_sortie?(campaign), "Cannot purchase units while a sortie is in progress")
+end
+```
+
+**Impact:** More consistent validation pattern, easier to read and write.
+
+---
+
+### 7. REUSABILITY: Stats Card Component
+
+**Files Affected:**
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/company_live/show.ex` (lines 392-422)
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/campaign_live/show.ex` (lines 338-366)
+
+**Issue:** Stats display cards are manually repeated across views.
+
+**Proposed Solution:**
+Create a reusable stats component:
+
+```elixir
+defmodule AcesWeb.CoreComponents do
+  # ... existing code ...
+
+  @doc """
+  Renders a statistics display card/grid.
+
+  ## Examples
+
+      <.stats_grid>
+        <:stat title="Units" value={@company.stats.unit_count} color="primary" />
+        <:stat title="Pilots" value={@company.stats.pilot_count} color="info" />
+      </.stats_grid>
+  """
+  attr :class, :string, default: "grid grid-cols-2 gap-3 md:gap-6 lg:grid-cols-4"
+  slot :stat, required: true do
+    attr :title, :string, required: true
+    attr :value, :any, required: true
+    attr :color, :string
+    attr :desc, :string
+    attr :compact, :boolean
+  end
+
+  def stats_grid(assigns) do
+    ~H"""
+    <div class={@class}>
+      <%= for stat <- @stat do %>
+        <div class="stat bg-base-200 rounded-lg shadow p-3 md:p-4">
+          <div class="stat-title text-xs md:text-sm">{stat.title}</div>
+          <div class={[
+            "stat-value text-xl md:text-3xl",
+            stat[:color] && "text-#{stat.color}"
+          ]}>
+            {stat.value}
+          </div>
+          <div :if={stat[:desc]} class="stat-desc text-xs hidden md:block">{stat.desc}</div>
+        </div>
+      <% end %>
+    </div>
+    """
+  end
+end
+```
+
+**Impact:** Consistent stats displays, less markup duplication.
+
+---
+
+### 8. READABILITY: Extract Private Helper Reload Functions
+
+**Files Affected:**
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/company_live/show.ex` (lines 54-69)
+
+**Issue:** `reload_members` and `reload_invitations` are overly simple and could be inlined or consolidated.
+
+**Current Code:**
+```elixir
+defp reload_members(socket) do
+  company = socket.assigns.company
+  members = Companies.list_company_members(company)
+  assign(socket, :members, members)
+end
+
+defp reload_invitations(socket) do
+  company = socket.assigns.company
+  if socket.assigns.can_manage_members do
+    pending_invitations = Companies.list_pending_invitations(company)
+    assign(socket, :pending_invitations, pending_invitations)
+  else
+    socket
+  end
+end
+```
+
+**Proposed Solution:**
+Create a more generic reload helper:
+
+```elixir
+defp reload_company_data(socket, keys) when is_list(keys) do
+  company = socket.assigns.company
+
+  assigns =
+    Enum.reduce(keys, %{}, fn key, acc ->
+      case key do
+        :members ->
+          Map.put(acc, :members, Companies.list_company_members(company))
+        :invitations when socket.assigns.can_manage_members ->
+          Map.put(acc, :pending_invitations, Companies.list_pending_invitations(company))
+        :invitations ->
+          acc
+        _ ->
+          acc
       end
-    _ -> nil
-  end)
+    end)
+
+  assign(socket, assigns)
 end
 ```
 
----
+Usage:
+```elixir
+socket = reload_company_data(socket, [:members, :invitations])
+```
 
-### 10. campaigns.ex - Add documentation
-
-**Problem**: Complex functions lack documentation explaining intent.
-
-**Priority functions needing @doc**:
-- `get_prior_allocations_for_pilots/2` (lines 559-566) - temporal allocation logic
-- `build_saved_map_from_allocations/2` (lines 516-550) - allocation baseline calculation
-- `commit_omni_refits/3` (lines 813-860) - multi-transaction refit logic
+**Impact:** Less boilerplate, more flexible data reloading.
 
 ---
 
-## NOTES FOR IMPLEMENTATION
+### 9. ELEGANCE: Sortie Validation Helper Pattern
 
-- Work through items 1-3 first (LiveView extractions) as they're the biggest wins
-- When touching a file, look for error handling issues to fix opportunistically
-- Run tests after each refactor: `mix test`
-- Consider adding tests for extracted context functions
-- The codebase uses good Elixir patterns overall; these are refinements, not fixes
+**Files Affected:**
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/sortie_live/show.ex` (lines 357-409)
+
+**Issue:** Validation helpers are verbose and could use a cleaner pattern.
+
+**Current Code:**
+```elixir
+defp require_can_edit(%{assigns: %{can_edit: true}}), do: :ok
+defp require_can_edit(_socket), do: {:error, "You don't have permission to perform this action"}
+
+defp require_sortie_status(%{assigns: %{sortie: %{status: status}}}, expected) when status == expected, do: :ok
+defp require_sortie_status(%{assigns: %{sortie: %{status: actual}}}, expected) do
+  {:error, "Sortie must be in #{expected} state (currently #{actual})"}
+end
+
+defp require_force_commander_selected(%{assigns: %{selected_force_commander_id: nil}}) do
+  {:error, "Please select a Force Commander"}
+end
+defp require_force_commander_selected(%{assigns: %{selected_force_commander_id: id}}), do: {:ok, id}
+```
+
+**Proposed Solution:**
+More composable validation:
+
+```elixir
+defmodule AcesWeb.LiveValidations do
+  @doc """
+  Validates socket state and returns :ok or {:error, message}.
+  """
+  def validate_permission(socket, key) do
+    if socket.assigns[key], do: :ok, else: {:error, "Permission denied"}
+  end
+
+  def validate_status(socket, entity_key, expected_status) do
+    actual = get_in(socket.assigns, [entity_key, :status])
+    if actual == expected_status do
+      :ok
+    else
+      {:error, "#{entity_key} must be in #{expected_status} state (currently #{actual})"}
+    end
+  end
+
+  def validate_present(socket, key, error_message \\ nil) do
+    message = error_message || "#{key} is required"
+    case socket.assigns[key] do
+      nil -> {:error, message}
+      value -> {:ok, value}
+    end
+  end
+end
+```
+
+**Impact:** More reusable validation helpers across LiveViews.
 
 ---
+
+## LOW PRIORITY ISSUES
+
+### 10. READABILITY: Long Mount Functions
+
+**Files Affected:**
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/company_live/show.ex` (lines 12-52)
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/campaign_live/show.ex` (lines 11-58)
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/sortie_live/show.ex` (lines 12-83)
+
+**Issue:** Mount functions are doing too much - authorization, data loading, PubSub subscription, state initialization.
+
+**Proposed Solution:**
+Break down into smaller, named functions:
+
+```elixir
+def mount(params, _session, socket) do
+  with {:ok, socket} <- authorize_and_load_entities(params, socket),
+       socket <- subscribe_to_updates(socket),
+       socket <- initialize_state(socket) do
+    {:ok, socket}
+  end
+end
+
+defp authorize_and_load_entities(params, socket) do
+  company = Companies.get_company!(params["company_id"])
+  user = socket.assigns.current_scope.user
+
+  unless Authorization.can?(:view_company, user, company) do
+    {:error, redirect_unauthorized(socket)}
+  else
+    socket = assign(socket, company: company, user: user)
+    {:ok, load_related_data(socket, params)}
+  end
+end
+
+defp subscribe_to_updates(socket) do
+  if connected?(socket) do
+    Broadcasts.subscribe_company(socket.assigns.company.id)
+  end
+  socket
+end
+
+defp initialize_state(socket) do
+  assign(socket,
+    active_tab: :overview,
+    show_modals: %{},
+    # ... other state
+  )
+end
+```
+
+**Impact:** Easier to understand mount logic, testable pieces.
+
+---
+
+### 11. DUPLICATION: Date Formatting
+
+**Files Affected:**
+- Multiple LiveViews use `Calendar.strftime` with similar patterns
+
+**Proposed Solution:**
+Add to UIHelpers:
+
+```elixir
+defmodule AcesWeb.UIHelpers do
+  def format_date(nil), do: "—"
+  def format_date(datetime), do: Calendar.strftime(datetime, "%b %d, %Y")
+
+  def format_datetime(nil), do: "—"
+  def format_datetime(datetime), do: Calendar.strftime(datetime, "%B %d, %Y at %I:%M %p")
+
+  def format_date_short(nil), do: "—"
+  def format_date_short(datetime), do: Calendar.strftime(datetime, "%m/%d/%y")
+end
+```
+
+**Impact:** Consistent date formatting across the app.
+
+---
+
+### 12. ELEGANCE: OMNI Variant Change Pattern
+
+**Files Affected:**
+- `/home/arcwhite/Documents/aces/lib/aces_web/live/sortie_live/show.ex` (lines 271-307, 309-356)
+
+**Issue:** OMNI variant logic is complex and spread across multiple functions.
+
+**Proposed Solution:**
+Extract to a dedicated module:
+
+```elixir
+defmodule AcesWeb.SortieLive.OmniVariantManager do
+  @moduledoc """
+  Handles OMNI variant reconfiguration logic for sortie deployment.
+  """
+
+  alias Aces.{Campaigns, Units}
+
+  def load_variants(deployments) do
+    deployments
+    |> Enum.filter(&has_omni_unit?/1)
+    |> Enum.map(fn d ->
+      variants = Units.list_variants_for_chassis(d.company_unit.master_unit)
+      {d.id, variants}
+    end)
+    |> Map.new()
+  end
+
+  def track_change(pending_changes, deployment_id, new_variant_id, current_variant_id) do
+    if new_variant_id == current_variant_id do
+      Map.delete(pending_changes, deployment_id)
+    else
+      Map.put(pending_changes, deployment_id, new_variant_id)
+    end
+  end
+
+  def calculate_total_cost(sortie, pending_changes, omni_variants) do
+    Campaigns.calculate_pending_refit_cost(sortie, pending_changes, omni_variants)
+  end
+
+  def calculate_effective_pv(sortie, pending_changes, omni_variants) do
+    Campaigns.calculate_effective_deployed_pv(sortie, pending_changes, omni_variants)
+  end
+
+  defp has_omni_unit?(deployment) do
+    deployment.company_unit &&
+    deployment.company_unit.master_unit &&
+    Units.is_omni?(deployment.company_unit.master_unit)
+  end
+end
+```
+
+**Impact:** Better separation of concerns, easier to test OMNI logic.
+
+---
+
+## RECOMMENDATIONS SUMMARY
+
+### Implementation Order:
+
+1. **Phase 1 - Quick Wins (1-2 days)**
+   - Create UIHelpers module (#4)
+   - Create TabNavigation component (#1)
+   - Add date formatting helpers (#11)
+
+2. **Phase 2 - Medium Refactors (3-5 days)**
+   - Refactor list_user_companies queries (#2)
+   - Create StatsGrid component (#7)
+   - Extract validation helpers (#6, #9)
+
+3. **Phase 3 - Larger Restructuring (1 week)**
+   - Refactor tab content routing (#3)
+   - Create LiveHelpers for PubSub pattern (#5)
+   - Break down mount functions (#10)
+   - Extract OMNI variant manager (#12)
+
+### Testing Strategy:
+
+- All refactorings should maintain existing test coverage
+- Add integration tests for extracted components
+- Consider property-based tests for validation helpers
+- Add visual regression tests for UI components
+
+### Migration Path:
+
+- Create new modules/components alongside existing code
+- Migrate one LiveView at a time
+- Use feature flags if needed for gradual rollout
+- Deprecate old patterns with @deprecated tags
+
+---
+
+## METRICS
+
+**Lines of Code Reduction:**
+- Estimated: ~500-700 lines across all refactorings
+- Most impact: Badge helpers (~150 lines), Tab navigation (~80 lines)
+
+**Files Affected:**
+- Direct changes: ~15 files
+- New files: ~3-4 new modules/components
+
+**Developer Experience Improvements:**
+- Faster feature development (less copy-paste)
+- Easier onboarding (clearer patterns)
+- Better maintainability (single source of truth)
+- Improved testability (smaller, focused functions)
+
+---
+
+## NOTES
+
+- All file paths are absolute as requested
+- Priority is based on: frequency of use, lines saved, developer pain points
+- Focus on Phoenix/LiveView best practices and OTP principles
+- Maintains immutability and functional programming style
+- No changes to business logic, only code organization
