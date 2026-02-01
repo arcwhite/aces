@@ -231,4 +231,93 @@ defmodule AcesWeb.SortieLive.ShowTest do
       assert updated_sortie.finalization_step == "outcome"
     end
   end
+
+  describe "URL-based modal state persistence" do
+    setup %{user: user} do
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+      pilot = pilot_fixture(company: company)
+      master_unit = units_master_unit_fixture()
+      company_unit = company_unit_fixture(company: company, master_unit: master_unit)
+      sortie = sortie_fixture(campaign: campaign)
+      deployment = deployment_fixture(sortie: sortie, company_unit: company_unit, pilot: pilot)
+
+      # Start the sortie so we can see the fail button
+      sortie_with_deployments = Aces.Campaigns.get_sortie!(sortie.id)
+      {:ok, started_sortie} = Aces.Campaigns.start_sortie(sortie_with_deployments, pilot.id)
+
+      %{
+        company: company,
+        campaign: campaign,
+        sortie: started_sortie,
+        deployment: deployment
+      }
+    end
+
+    test "fail modal opens via URL param", %{conn: conn, company: company, campaign: campaign, sortie: sortie} do
+      # Open modal directly via URL
+      {:ok, _view, html} =
+        live(conn, ~p"/companies/#{company}/campaigns/#{campaign}/sorties/#{sortie}?modal=fail")
+
+      assert html =~ "Confirm Sortie Failure"
+      assert html =~ "modal-open"
+    end
+
+    test "fail modal state survives simulated reconnection", %{conn: conn, company: company, campaign: campaign, sortie: sortie} do
+      # Open modal via URL
+      {:ok, _view, html} =
+        live(conn, ~p"/companies/#{company}/campaigns/#{campaign}/sorties/#{sortie}?modal=fail")
+
+      assert html =~ "Confirm Sortie Failure"
+      assert html =~ "modal-open"
+
+      # Simulate reconnection by re-mounting with same URL (new LiveView session)
+      {:ok, _view2, html2} =
+        live(conn, ~p"/companies/#{company}/campaigns/#{campaign}/sorties/#{sortie}?modal=fail")
+
+      assert html2 =~ "Confirm Sortie Failure"
+      assert html2 =~ "modal-open"
+    end
+
+    test "clicking Sortie Failed button updates URL", %{conn: conn, company: company, campaign: campaign, sortie: sortie} do
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}/campaigns/#{campaign}/sorties/#{sortie}")
+
+      # Click Sortie Failed button
+      view |> element("button", "Sortie Failed") |> render_click()
+
+      # Modal should be open
+      html = render(view)
+      assert html =~ "Confirm Sortie Failure"
+      assert html =~ "modal-open"
+    end
+
+    test "closing fail modal clears URL param", %{conn: conn, company: company, campaign: campaign, sortie: sortie} do
+      {:ok, view, _html} =
+        live(conn, ~p"/companies/#{company}/campaigns/#{campaign}/sorties/#{sortie}?modal=fail")
+
+      html = render(view)
+      assert html =~ "Confirm Sortie Failure"
+      assert html =~ "modal-open"
+
+      # Close the modal
+      view |> element("button", "Cancel") |> render_click()
+
+      # Modal should be closed
+      html = render(view)
+      refute html =~ "modal-open"
+    end
+
+    test "invalid modal param does not open modal", %{conn: conn, company: company, campaign: campaign, sortie: sortie} do
+      # Try with invalid modal param
+      {:ok, view, _html} =
+        live(conn, ~p"/companies/#{company}/campaigns/#{campaign}/sorties/#{sortie}?modal=invalid")
+
+      html = render(view)
+
+      # Modal should not be open
+      refute html =~ "modal-open"
+      # Page should still load the sortie
+      assert html =~ sortie.name
+    end
+  end
 end

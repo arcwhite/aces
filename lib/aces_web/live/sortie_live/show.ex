@@ -83,6 +83,23 @@ defmodule AcesWeb.SortieLive.Show do
   end
 
   @impl true
+  def handle_params(params, _uri, socket) do
+    {:noreply, apply_modal_state(socket, params)}
+  end
+
+  # Apply modal state from URL params - enables modal state to survive reconnection
+  defp apply_modal_state(socket, %{"modal" => "fail"}) do
+    socket
+    |> assign(:show_fail_modal, true)
+  end
+
+  # Default case: close all modals
+  defp apply_modal_state(socket, _params) do
+    socket
+    |> assign(:show_fail_modal, false)
+  end
+
+  @impl true
   def handle_event("update_damage_status", params, socket) do
     with :ok <- require_can_edit(socket),
          :ok <- require_sortie_status(socket, "in_progress"),
@@ -175,12 +192,18 @@ defmodule AcesWeb.SortieLive.Show do
 
   @impl true
   def handle_event("show_fail_modal", _params, socket) do
-    {:noreply, assign(socket, :show_fail_modal, true)}
+    {:noreply,
+     push_patch(socket,
+       to: ~p"/companies/#{socket.assigns.company}/campaigns/#{socket.assigns.campaign}/sorties/#{socket.assigns.sortie}?modal=fail"
+     )}
   end
 
   @impl true
   def handle_event("hide_fail_modal", _params, socket) do
-    {:noreply, assign(socket, :show_fail_modal, false)}
+    {:noreply,
+     push_patch(socket,
+       to: ~p"/companies/#{socket.assigns.company}/campaigns/#{socket.assigns.campaign}/sorties/#{socket.assigns.sortie}"
+     )}
   end
 
   @impl true
