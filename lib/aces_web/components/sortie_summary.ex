@@ -438,8 +438,8 @@ defmodule AcesWeb.Components.SortieSummary do
   defp format_damage_status(status) do
     case status do
       "operational" -> "Operational"
-      "armor_damaged" -> "Armor Damaged"
-      "structure_damaged" -> "Structure Damaged"
+      "armor_damaged" -> "Armor"
+      "structure_damaged" -> "Structure"
       "crippled" -> "Crippled"
       "destroyed" -> "Destroyed"
       _ -> String.capitalize(status || "unknown")
