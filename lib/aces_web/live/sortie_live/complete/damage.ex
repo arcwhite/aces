@@ -75,77 +75,99 @@ defmodule AcesWeb.SortieLive.Complete.Damage do
   @impl true
   def handle_event("update_damage_status", %{"deployment_id" => id_str, "status" => status}, socket) do
     id = String.to_integer(id_str)
-    statuses = socket.assigns.deployment_statuses
+    deployment = find_deployment(socket.assigns.sortie, id)
 
-    updated_statuses =
-      Map.update!(statuses, id, fn current ->
-        # Reset salvageable when changing from destroyed
-        new_salvageable = if status != "destroyed", do: false, else: current.is_salvageable
-        %{current | damage_status: status, is_salvageable: new_salvageable}
-      end)
+    # Reset salvageable when changing from destroyed
+    new_salvaged = if status != "destroyed", do: false, else: deployment.was_salvaged
 
-    {:noreply, assign(socket, :deployment_statuses, updated_statuses)}
+    # Persist to database immediately
+    case update_deployment_fields(deployment, %{damage_status: status, was_salvaged: new_salvaged}) do
+      {:ok, _updated} ->
+        # Reload sortie to get fresh data
+        sortie = Campaigns.get_sortie!(socket.assigns.sortie.id)
+        {:noreply, assign(socket, :sortie, sortie) |> rebuild_deployment_statuses()}
+
+      {:error, _changeset} ->
+        {:noreply, put_flash(socket, :error, "Failed to update damage status")}
+    end
   end
 
   @impl true
   def handle_event("update_casualty_status", %{"deployment_id" => id_str, "status" => status}, socket) do
     id = String.to_integer(id_str)
-    statuses = socket.assigns.deployment_statuses
+    deployment = find_deployment(socket.assigns.sortie, id)
 
-    updated_statuses =
-      Map.update!(statuses, id, fn current ->
-        %{current | pilot_casualty: status}
-      end)
+    # Persist to database immediately
+    case update_deployment_fields(deployment, %{pilot_casualty: status}) do
+      {:ok, _updated} ->
+        # Reload sortie to get fresh data
+        sortie = Campaigns.get_sortie!(socket.assigns.sortie.id)
+        {:noreply, assign(socket, :sortie, sortie) |> rebuild_deployment_statuses()}
 
-    {:noreply, assign(socket, :deployment_statuses, updated_statuses)}
+      {:error, _changeset} ->
+        {:noreply, put_flash(socket, :error, "Failed to update casualty status")}
+    end
   end
 
   @impl true
   def handle_event("toggle_salvageable", %{"deployment_id" => id_str}, socket) do
     id = String.to_integer(id_str)
-    statuses = socket.assigns.deployment_statuses
+    deployment = find_deployment(socket.assigns.sortie, id)
 
-    updated_statuses =
-      Map.update!(statuses, id, fn current ->
-        %{current | is_salvageable: !current.is_salvageable}
-      end)
+    # Persist to database immediately
+    new_salvaged = !deployment.was_salvaged
 
-    {:noreply, assign(socket, :deployment_statuses, updated_statuses)}
+    case update_deployment_fields(deployment, %{was_salvaged: new_salvaged}) do
+      {:ok, _updated} ->
+        # Reload sortie to get fresh data
+        sortie = Campaigns.get_sortie!(socket.assigns.sortie.id)
+        {:noreply, assign(socket, :sortie, sortie) |> rebuild_deployment_statuses()}
+
+      {:error, _changeset} ->
+        {:noreply, put_flash(socket, :error, "Failed to update salvage status")}
+    end
   end
 
   @impl true
   def handle_event("save", _params, socket) do
     sortie = socket.assigns.sortie
-    statuses = socket.assigns.deployment_statuses
 
-    # Update all deployments
-    results =
-      Enum.map(sortie.deployments, fn deployment ->
-        status = Map.get(statuses, deployment.id)
+    # Changes are already persisted - just advance to next step
+    {:ok, _} =
+      sortie
+      |> Ecto.Changeset.change(%{finalization_step: "costs"})
+      |> Aces.Repo.update()
 
-        deployment
-        |> Deployment.changeset(%{
-          damage_status: status.damage_status,
-          pilot_casualty: status.pilot_casualty,
-          was_salvaged: status.is_salvageable
-        })
-        |> Aces.Repo.update()
+    {:noreply,
+     push_navigate(socket,
+       to: ~p"/companies/#{socket.assigns.company.id}/campaigns/#{socket.assigns.campaign.id}/sorties/#{sortie.id}/complete/costs"
+     )}
+  end
+
+  defp find_deployment(sortie, deployment_id) do
+    Enum.find(sortie.deployments, &(&1.id == deployment_id))
+  end
+
+  defp update_deployment_fields(deployment, attrs) do
+    deployment
+    |> Deployment.changeset(attrs)
+    |> Aces.Repo.update()
+  end
+
+  defp rebuild_deployment_statuses(socket) do
+    deployment_statuses =
+      socket.assigns.sortie.deployments
+      |> Enum.map(fn d ->
+        {d.id,
+         %{
+           damage_status: d.damage_status || "operational",
+           pilot_casualty: d.pilot_casualty || "none",
+           is_salvageable: d.was_salvaged || false
+         }}
       end)
+      |> Map.new()
 
-    if Enum.all?(results, fn {:ok, _} -> true; _ -> false end) do
-      # Update sortie to next step
-      {:ok, _} =
-        sortie
-        |> Ecto.Changeset.change(%{finalization_step: "costs"})
-        |> Aces.Repo.update()
-
-      {:noreply,
-       push_navigate(socket,
-         to: ~p"/companies/#{socket.assigns.company.id}/campaigns/#{socket.assigns.campaign.id}/sorties/#{sortie.id}/complete/costs"
-       )}
-    else
-      {:noreply, put_flash(socket, :error, "Failed to save unit statuses")}
-    end
+    assign(socket, :deployment_statuses, deployment_statuses)
   end
 
   @impl true
