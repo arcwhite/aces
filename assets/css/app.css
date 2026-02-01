@@ -29,7 +29,7 @@
    The primary experience - amber phosphor on deep space black */
 @plugin "../vendor/daisyui-theme" {
   name: "dark";
-  default: false;
+  default: true;
   prefersdark: true;
   color-scheme: "dark";
   /* Base: Dark navy blue - readable terminal, not pure black */
@@ -73,7 +73,7 @@
    For bright environments - aged technical printout aesthetic */
 @plugin "../vendor/daisyui-theme" {
   name: "light";
-  default: true;
+  default: false;
   prefersdark: false;
   color-scheme: "light";
   /* Base: Warm off-white - aged technical paper, military briefing docs */
