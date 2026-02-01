@@ -3,7 +3,7 @@ defmodule AcesWeb.SortieLive.Show do
 
   alias Aces.{Companies, Campaigns, Units}
   alias Aces.Companies.{Authorization, Pilots}
-  alias Aces.Campaigns.Deployment
+  alias Aces.PubSub.Broadcasts
   alias AcesWeb.SortieLive.Complete.Helpers, as: CompleteHelpers
 
   on_mount {AcesWeb.UserAuthLive, :default}
@@ -53,6 +53,9 @@ defmodule AcesWeb.SortieLive.Show do
             {[], []}
           end
 
+        # Subscribe to sortie updates for real-time sync
+        if connected?(socket), do: Broadcasts.subscribe_sortie(sortie.id)
+
         # For setup status, load OMNI variants for reconfiguration
         omni_variants =
           if sortie.status == "setup" do
@@ -85,7 +88,7 @@ defmodule AcesWeb.SortieLive.Show do
          :ok <- require_sortie_status(socket, "in_progress"),
          {:ok, deployment_id, damage_status} <- extract_damage_params(params),
          {:ok, deployment} <- find_deployment(socket, deployment_id) do
-      case update_deployment_damage(deployment, damage_status) do
+      case Campaigns.update_deployment_damage_status(deployment, damage_status) do
         {:ok, _updated_deployment} ->
           updated_sortie = Campaigns.get_sortie!(socket.assigns.sortie.id)
 
@@ -152,7 +155,7 @@ defmodule AcesWeb.SortieLive.Show do
          :ok <- require_sortie_status(socket, "in_progress"),
          {:ok, deployment_id, casualty_status} <- extract_casualty_params(params),
          {:ok, deployment} <- find_deployment(socket, deployment_id) do
-      case update_deployment_casualty(deployment, casualty_status) do
+      case Campaigns.update_deployment_casualty(deployment, casualty_status) do
         {:ok, _updated_deployment} ->
           updated_sortie = Campaigns.get_sortie!(socket.assigns.sortie.id)
           casualty_type = if deployment.pilot_id, do: "Pilot", else: "Crew"
@@ -186,9 +189,7 @@ defmodule AcesWeb.SortieLive.Show do
          :ok <- require_sortie_status(socket, "in_progress") do
       attrs = if notes && String.trim(notes) != "", do: %{recon_notes: notes}, else: %{}
 
-      case socket.assigns.sortie
-           |> Aces.Campaigns.Sortie.fail_changeset(attrs)
-           |> Aces.Repo.update() do
+      case Campaigns.fail_sortie(socket.assigns.sortie, attrs) do
         {:ok, _sortie} ->
           {:noreply,
            socket
@@ -207,9 +208,7 @@ defmodule AcesWeb.SortieLive.Show do
   def handle_event("begin_finalization", _params, socket) do
     with :ok <- require_can_edit(socket),
          :ok <- require_sortie_status(socket, "in_progress") do
-      case socket.assigns.sortie
-           |> Aces.Campaigns.Sortie.begin_finalization_changeset()
-           |> Aces.Repo.update() do
+      case Campaigns.begin_sortie_finalization(socket.assigns.sortie) do
         {:ok, _sortie} ->
           {:noreply,
            push_navigate(socket,
@@ -222,6 +221,50 @@ defmodule AcesWeb.SortieLive.Show do
     else
       {:error, message} -> {:noreply, put_flash(socket, :error, message)}
     end
+  end
+
+  # Handle PubSub sortie updates for real-time sync across tabs/users
+  @impl true
+  def handle_info({:sortie_updated, %{event: _event, payload: _payload}}, socket) do
+    # Reload sortie and related data
+    sortie = Campaigns.get_sortie!(socket.assigns.sortie.id)
+    campaign = Campaigns.get_campaign!(socket.assigns.campaign.id)
+    company = Companies.get_company!(socket.assigns.company.id)
+
+    # Update deployed pilots list
+    deployed_pilots =
+      sortie.deployments
+      |> Enum.filter(& &1.pilot_id)
+      |> Enum.map(& &1.pilot)
+      |> Enum.filter(& &1)
+
+    # Reload OMNI variants if in setup status
+    omni_variants =
+      if sortie.status == "setup" do
+        load_omni_variants(sortie.deployments)
+      else
+        socket.assigns.omni_variants
+      end
+
+    # For completed sorties, reload allocations
+    {pilot_allocations, all_pilots} =
+      if sortie.status == "completed" do
+        allocs = Campaigns.get_sortie_pilot_allocations(sortie.id)
+        pilots = Pilots.list_company_pilots(company)
+        {allocs, pilots}
+      else
+        {socket.assigns.pilot_allocations, socket.assigns.all_pilots}
+      end
+
+    {:noreply,
+     socket
+     |> assign(:sortie, sortie)
+     |> assign(:campaign, campaign)
+     |> assign(:company, company)
+     |> assign(:deployed_pilots, deployed_pilots)
+     |> assign(:omni_variants, omni_variants)
+     |> assign(:pilot_allocations, pilot_allocations)
+     |> assign(:all_pilots, all_pilots)}
   end
 
   @impl true
@@ -261,12 +304,6 @@ defmodule AcesWeb.SortieLive.Show do
         {:error, message} -> {:noreply, put_flash(socket, :error, message)}
       end
     end
-  end
-
-  defp update_deployment_damage(deployment, damage_status) do
-    deployment
-    |> Deployment.changeset(%{damage_status: damage_status})
-    |> Aces.Repo.update()
   end
 
   # Load available variants for all OMNI units in the deployment list
@@ -315,13 +352,6 @@ defmodule AcesWeb.SortieLive.Show do
       assigns.pending_variant_changes,
       assigns.omni_variants
     )
-  end
-
-
-  defp update_deployment_casualty(deployment, pilot_casualty) do
-    deployment
-    |> Deployment.changeset(%{pilot_casualty: pilot_casualty})
-    |> Aces.Repo.update()
   end
 
   # Validation helpers for `with` chains

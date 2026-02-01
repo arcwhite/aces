@@ -3,6 +3,7 @@ defmodule AcesWeb.CampaignLive.Show do
 
   alias Aces.{Companies, Campaigns, ChangesetHelpers}
   alias Aces.Companies.Authorization
+  alias Aces.PubSub.Broadcasts
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
@@ -25,6 +26,9 @@ defmodule AcesWeb.CampaignLive.Show do
          |> put_flash(:error, "Campaign not found")
          |> redirect(to: ~p"/companies/#{company_id}")}
       else
+        # Subscribe to campaign updates for real-time sync
+        if connected?(socket), do: Broadcasts.subscribe_campaign(campaign.id)
+
         # Calculate pilot performance from actual sortie data
         pilot_performance = Campaigns.calculate_pilot_performance(campaign)
 
@@ -242,6 +246,26 @@ defmodule AcesWeb.CampaignLive.Show do
      |> assign(:can_purchase_units, Campaigns.can_purchase_units?(updated_campaign))
      |> assign(:can_hire_pilots, Campaigns.can_hire_pilots?(updated_campaign))
      |> assign(:show_pilot_form, false)}
+  end
+
+  # Handle PubSub campaign updates for real-time sync across tabs/users
+  def handle_info({:campaign_updated, %{event: _event, payload: _payload}}, socket) do
+    # Reload all campaign-related data
+    campaign = Campaigns.get_campaign!(socket.assigns.campaign.id)
+    company = Companies.get_company!(socket.assigns.company.id)
+    pilot_performance = Campaigns.calculate_pilot_performance(campaign)
+    overview = Campaigns.calculate_campaign_overview(campaign)
+    wounded_pilots = get_wounded_pilots(company)
+
+    {:noreply,
+     socket
+     |> assign(:campaign, campaign)
+     |> assign(:company, company)
+     |> assign(:pilot_performance, pilot_performance)
+     |> assign(:overview, overview)
+     |> assign(:wounded_pilots, wounded_pilots)
+     |> assign(:can_purchase_units, Campaigns.can_purchase_units?(campaign))
+     |> assign(:can_hire_pilots, Campaigns.can_hire_pilots?(campaign))}
   end
 
   # Helper to get wounded pilots from company
@@ -578,13 +602,14 @@ defmodule AcesWeb.CampaignLive.Show do
       </div>
 
       <!-- Campaign Keywords -->
-      <%= if @campaign.keywords && length(@campaign.keywords) > 0 do %>
+      <%= if @overview.keywords_gained && length(@overview.keywords_gained) > 0 do %>
         <div class="card bg-base-200 shadow">
           <div class="card-body">
-            <h3 class="card-title">Campaign Keywords</h3>
+            <h3 class="card-title">Keywords Gained</h3>
+            <p class="text-sm opacity-70 mb-2">Earned from completed sorties</p>
             <div class="flex gap-2 flex-wrap">
-              <%= for keyword <- @campaign.keywords do %>
-                <div class="badge badge-outline">{keyword}</div>
+              <%= for keyword <- @overview.keywords_gained do %>
+                <div class="badge badge-primary">{keyword}</div>
               <% end %>
             </div>
           </div>

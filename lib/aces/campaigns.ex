@@ -12,6 +12,7 @@ defmodule Aces.Campaigns do
 
   alias Aces.Companies.{Company, CompanyUnit, Pilot}
   alias Aces.Campaigns.{Campaign, Sortie, Deployment, CampaignEvent, PilotAllocation}
+  alias Aces.PubSub.Broadcasts
   alias Aces.Units.MasterUnit
 
   ## Campaign CRUD
@@ -137,7 +138,10 @@ defmodule Aces.Campaigns do
     end)
     |> Repo.transaction()
     |> case do
-      {:ok, %{campaign: campaign}} -> {:ok, campaign}
+      {:ok, %{campaign: campaign}} ->
+        Broadcasts.broadcast_campaign_update(campaign.id, :campaign_completed, %{outcome: outcome})
+        {:ok, campaign}
+
       {:error, :campaign, changeset, _} -> {:error, changeset}
       {:error, :company, changeset, _} -> {:error, changeset}
       {:error, _step, error, _} -> {:error, error}
@@ -147,15 +151,16 @@ defmodule Aces.Campaigns do
   ## Sortie CRUD
 
   @doc """
-  Gets a sortie by ID with full associations
+  Gets a sortie by ID with full associations.
+  Deployments are ordered by PV ascending (lowest to highest), with id as tiebreaker for stability.
   """
   def get_sortie!(id) do
-    # Build a query for deployments ordered by PV (descending)
+    # Build a query for deployments ordered by PV (ascending) with stable secondary sort
     deployments_query =
       from d in Deployment,
         join: cu in CompanyUnit, on: cu.id == d.company_unit_id,
         join: mu in MasterUnit, on: mu.id == cu.master_unit_id,
-        order_by: [desc: mu.point_value],
+        order_by: [asc: mu.point_value, asc: d.id],
         preload: [company_unit: {cu, master_unit: mu}, pilot: []]
 
     Sortie
@@ -181,6 +186,7 @@ defmodule Aces.Campaigns do
     |> Repo.insert()
     |> case do
       {:ok, sortie} ->
+        Broadcasts.broadcast_campaign_update(campaign.id, :sortie_created, %{sortie_id: sortie.id})
         {:ok, get_sortie!(sortie.id)}
 
       {:error, changeset} ->
@@ -231,7 +237,16 @@ defmodule Aces.Campaigns do
       end)
       |> Repo.transaction()
       |> case do
-        {:ok, %{sortie: sortie}} -> {:ok, get_sortie!(sortie.id)}
+        {:ok, %{sortie: sortie}} ->
+          Broadcasts.broadcast_sortie_and_campaign_update(
+            sortie.id,
+            sortie.campaign_id,
+            :sortie_started,
+            %{}
+          )
+
+          {:ok, get_sortie!(sortie.id)}
+
         {:error, :sortie, changeset, _} -> {:error, changeset}
         {:error, _step, error, _} -> {:error, error}
       end
@@ -269,6 +284,13 @@ defmodule Aces.Campaigns do
     |> Repo.transaction()
     |> case do
       {:ok, %{finalize: sortie}} ->
+        Broadcasts.broadcast_sortie_and_campaign_update(
+          sortie.id,
+          sortie.campaign_id,
+          :sortie_completed,
+          %{}
+        )
+
         {:ok, get_sortie!(sortie.id)}
 
       {:error, :sortie, %Ecto.Changeset{} = changeset, _} ->
@@ -290,27 +312,171 @@ defmodule Aces.Campaigns do
   def create_deployment(%Sortie{} = sortie, attrs) do
     attrs_with_sortie = Map.put(attrs, :sortie_id, sortie.id)
 
-    %Deployment{}
-    |> Deployment.creation_changeset(attrs_with_sortie)
-    |> validate_unit_not_already_deployed(sortie)
-    |> validate_pilot_not_already_deployed(sortie)
-    |> Repo.insert()
+    result =
+      %Deployment{}
+      |> Deployment.creation_changeset(attrs_with_sortie)
+      |> validate_unit_not_already_deployed(sortie)
+      |> validate_pilot_not_already_deployed(sortie)
+      |> Repo.insert()
+
+    case result do
+      {:ok, deployment} ->
+        Broadcasts.broadcast_sortie_update(sortie.id, :deployment_created, %{deployment_id: deployment.id})
+        {:ok, deployment}
+
+      error ->
+        error
+    end
   end
 
   @doc """
   Removes a deployment from a sortie
   """
   def remove_deployment(%Deployment{} = deployment) do
-    Repo.delete(deployment)
+    result = Repo.delete(deployment)
+
+    case result do
+      {:ok, deleted_deployment} ->
+        Broadcasts.broadcast_sortie_update(deployment.sortie_id, :deployment_removed, %{deployment_id: deployment.id})
+        {:ok, deleted_deployment}
+
+      error ->
+        error
+    end
   end
 
   @doc """
   Updates a deployment (e.g., to change pilot assignment)
   """
   def update_deployment(%Deployment{} = deployment, attrs) do
-    deployment
-    |> Deployment.creation_changeset(attrs)
-    |> Repo.update()
+    result =
+      deployment
+      |> Deployment.creation_changeset(attrs)
+      |> Repo.update()
+
+    case result do
+      {:ok, updated_deployment} ->
+        # Need to get the sortie to find campaign_id
+        sortie = Repo.get!(Sortie, deployment.sortie_id)
+
+        Broadcasts.broadcast_sortie_update(
+          deployment.sortie_id,
+          :deployment_updated,
+          %{deployment_id: deployment.id}
+        )
+
+        # Also notify campaign for warchest-affecting changes
+        if Map.has_key?(attrs, :damage_taken) or Map.has_key?(attrs, "damage_taken") do
+          Broadcasts.broadcast_campaign_update(sortie.campaign_id, :deployment_updated, %{})
+        end
+
+        {:ok, updated_deployment}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Updates a deployment's damage status during an in-progress sortie.
+  Broadcasts the change to all connected clients.
+  """
+  def update_deployment_damage_status(%Deployment{} = deployment, damage_status) do
+    result =
+      deployment
+      |> Deployment.changeset(%{damage_status: damage_status})
+      |> Repo.update()
+
+    case result do
+      {:ok, updated_deployment} ->
+        Broadcasts.broadcast_sortie_update(
+          deployment.sortie_id,
+          :damage_updated,
+          %{deployment_id: deployment.id, damage_status: damage_status}
+        )
+
+        {:ok, updated_deployment}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Updates a deployment's pilot casualty status during an in-progress sortie.
+  Broadcasts the change to all connected clients.
+  """
+  def update_deployment_casualty(%Deployment{} = deployment, pilot_casualty) do
+    result =
+      deployment
+      |> Deployment.changeset(%{pilot_casualty: pilot_casualty})
+      |> Repo.update()
+
+    case result do
+      {:ok, updated_deployment} ->
+        Broadcasts.broadcast_sortie_update(
+          deployment.sortie_id,
+          :pilot_casualty_updated,
+          %{deployment_id: deployment.id, pilot_casualty: pilot_casualty}
+        )
+
+        {:ok, updated_deployment}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Marks a sortie as failed. No outcomes are applied to the company.
+  Broadcasts the change to all connected clients.
+  """
+  def fail_sortie(%Sortie{} = sortie, attrs \\ %{}) do
+    result =
+      sortie
+      |> Sortie.fail_changeset(attrs)
+      |> Repo.update()
+
+    case result do
+      {:ok, updated_sortie} ->
+        Broadcasts.broadcast_sortie_and_campaign_update(
+          sortie.id,
+          sortie.campaign_id,
+          :sortie_failed,
+          %{}
+        )
+
+        {:ok, updated_sortie}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Begins the finalization process for a victorious sortie.
+  Broadcasts the change to all connected clients.
+  """
+  def begin_sortie_finalization(%Sortie{} = sortie) do
+    result =
+      sortie
+      |> Sortie.begin_finalization_changeset()
+      |> Repo.update()
+
+    case result do
+      {:ok, updated_sortie} ->
+        Broadcasts.broadcast_sortie_and_campaign_update(
+          sortie.id,
+          sortie.campaign_id,
+          :sortie_finalizing,
+          %{}
+        )
+
+        {:ok, updated_sortie}
+
+      error ->
+        error
+    end
   end
 
   ## Helper Functions
@@ -758,6 +924,13 @@ defmodule Aces.Campaigns do
     # Execute transaction
     case Repo.transaction(multi) do
       {:ok, %{sortie: updated_sortie}} ->
+        Broadcasts.broadcast_sortie_and_campaign_update(
+          sortie.id,
+          sortie.campaign_id,
+          :sp_distributed,
+          %{mvp_id: mvp_id}
+        )
+
         {:ok, get_sortie!(updated_sortie.id)}
 
       {:error, _step, error, _changes} ->
@@ -909,6 +1082,13 @@ defmodule Aces.Campaigns do
       # Execute transaction
       case Repo.transaction(multi) do
         {:ok, %{sortie: updated_sortie}} ->
+          Broadcasts.broadcast_sortie_and_campaign_update(
+            sortie.id,
+            sortie.campaign_id,
+            :mvp_changed,
+            %{old_mvp_id: old_mvp_id, new_mvp_id: new_mvp_id}
+          )
+
           {:ok, get_sortie!(updated_sortie.id)}
 
         {:error, _step, error, _changes} ->
@@ -929,6 +1109,7 @@ defmodule Aces.Campaigns do
   - :units_lost - count of units destroyed during the campaign
   - :pilots_killed - count of pilots killed during the campaign
   - :pilots_wounded - count of pilots wounded during the campaign
+  - :keywords_gained - unique keywords earned from all completed sorties
   """
   def calculate_campaign_overview(%Campaign{} = campaign) do
     completed = Enum.filter(campaign.sorties, &(&1.status == "completed"))
@@ -936,6 +1117,13 @@ defmodule Aces.Campaigns do
 
     # Count losses from campaign events
     {units_lost, pilots_killed, pilots_wounded} = count_campaign_losses(campaign.campaign_events)
+
+    # Collect unique keywords from all completed sorties
+    keywords_gained =
+      completed
+      |> Enum.flat_map(& &1.keywords_gained || [])
+      |> Enum.uniq()
+      |> Enum.sort()
 
     %{
       has_active_sortie: active != nil,
@@ -945,7 +1133,8 @@ defmodule Aces.Campaigns do
       net_profit: Enum.sum(Enum.map(completed, & &1.net_earnings || 0)),
       units_lost: units_lost,
       pilots_killed: pilots_killed,
-      pilots_wounded: pilots_wounded
+      pilots_wounded: pilots_wounded,
+      keywords_gained: keywords_gained
     }
   end
 
@@ -1121,6 +1310,15 @@ defmodule Aces.Campaigns do
         |> Repo.transaction()
         |> case do
           {:ok, %{deployment: updated_deployment}} ->
+            sortie = Repo.get!(Sortie, deployment.sortie_id)
+
+            Broadcasts.broadcast_sortie_and_campaign_update(
+              deployment.sortie_id,
+              sortie.campaign_id,
+              :omni_variant_changed,
+              %{deployment_id: deployment.id}
+            )
+
             {:ok, Repo.preload(updated_deployment, [company_unit: :master_unit], force: true)}
 
           {:error, _step, error, _} ->
@@ -1216,6 +1414,12 @@ defmodule Aces.Campaigns do
       |> Repo.transaction()
       |> case do
         {:ok, %{pilot: pilot, campaign: updated_campaign}} ->
+          Broadcasts.broadcast_campaign_update(
+            campaign.id,
+            :pilot_hired,
+            %{pilot_id: pilot.id, pilot_name: pilot.name, cost_sp: @hiring_cost}
+          )
+
           {:ok, pilot, updated_campaign}
 
         {:error, :pilot, %Ecto.Changeset{} = changeset, _} ->
@@ -1354,6 +1558,12 @@ defmodule Aces.Campaigns do
       |> Repo.transaction()
       |> case do
         {:ok, _results} ->
+          Broadcasts.broadcast_campaign_update(
+            campaign.id,
+            :unit_sold,
+            %{unit_name: unit_display_name, sell_price: sell_price}
+          )
+
           {:ok, sell_price}
 
         {:error, _step, error, _changes} ->
@@ -1449,6 +1659,12 @@ defmodule Aces.Campaigns do
       |> Repo.transaction()
       |> case do
         {:ok, %{company_unit: company_unit}} ->
+          Broadcasts.broadcast_campaign_update(
+            campaign.id,
+            :unit_purchased,
+            %{unit_name: "#{master_unit.name} #{master_unit.variant}", cost_sp: sp_cost}
+          )
+
           {:ok, Repo.preload(company_unit, :master_unit)}
 
         {:error, :company_unit, %Ecto.Changeset{} = changeset, _} ->
@@ -1736,6 +1952,13 @@ defmodule Aces.Campaigns do
     # Execute transaction
     case Repo.transaction(multi) do
       {:ok, %{campaign: updated_campaign}} ->
+        Broadcasts.broadcast_sortie_and_campaign_update(
+          sortie.id,
+          campaign.id,
+          :omni_refits_committed,
+          %{total_cost: total_cost}
+        )
+
         {:ok, get_campaign!(updated_campaign.id)}
 
       {:error, _step, error, _changes} ->

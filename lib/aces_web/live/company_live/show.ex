@@ -4,6 +4,7 @@ defmodule AcesWeb.CompanyLive.Show do
   alias Aces.{Companies, Campaigns, ChangesetHelpers}
   alias Aces.Companies.Authorization
   alias Aces.Companies.Units, as: CompanyUnits
+  alias Aces.PubSub.Broadcasts
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
@@ -24,6 +25,9 @@ defmodule AcesWeb.CompanyLive.Show do
          |> put_flash(:info, "This company is still in draft status. Complete setup to activate it.")
          |> redirect(to: ~p"/companies/#{company}/draft")}
       else
+        # Subscribe to company updates for real-time sync
+        if connected?(socket), do: Broadcasts.subscribe_company(company.id)
+
         active_campaign = Campaigns.get_active_campaign(company)
         can_manage = Authorization.can?(:manage_members, user, company)
         pending_invitations = if can_manage, do: Companies.list_pending_invitations(company), else: []
@@ -51,6 +55,17 @@ defmodule AcesWeb.CompanyLive.Show do
     company = socket.assigns.company
     members = Companies.list_company_members(company)
     assign(socket, :members, members)
+  end
+
+  defp reload_invitations(socket) do
+    company = socket.assigns.company
+
+    if socket.assigns.can_manage_members do
+      pending_invitations = Companies.list_pending_invitations(company)
+      assign(socket, :pending_invitations, pending_invitations)
+    else
+      socket
+    end
   end
 
   @impl true
@@ -242,6 +257,37 @@ defmodule AcesWeb.CompanyLive.Show do
       {:noreply,
        socket
        |> put_flash(:error, "You don't have permission to add units to this company")}
+    end
+  end
+
+  # Handle PubSub company updates for real-time sync across tabs/users
+  def handle_info({:company_updated, %{event: event, payload: _payload}}, socket) do
+    company = socket.assigns.company
+    user = socket.assigns.current_scope.user
+
+    # Re-verify authorization - user might have been removed
+    unless Authorization.can?(:view_company, user, company) do
+      {:noreply,
+       socket
+       |> put_flash(:error, "You no longer have access to this company")
+       |> redirect(to: ~p"/companies")}
+    else
+      # Reload data based on event type
+      socket =
+        case event do
+          event when event in [:member_added, :member_removed, :member_role_changed] ->
+            socket
+            |> reload_members()
+            |> reload_invitations()
+
+          event when event in [:invitation_created, :invitation_cancelled] ->
+            reload_invitations(socket)
+
+          _ ->
+            socket
+        end
+
+      {:noreply, socket}
     end
   end
 

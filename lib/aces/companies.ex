@@ -14,6 +14,7 @@ defmodule Aces.Companies do
 
   alias Aces.Accounts.User
   alias Aces.Companies.{Company, CompanyInvitation, CompanyMembership}
+  alias Aces.PubSub.Broadcasts
   alias Aces.Units.MasterUnit
 
   ## Company CRUD
@@ -214,16 +215,45 @@ defmodule Aces.Companies do
   Updates a member's role.
   """
   def update_member_role(%CompanyMembership{} = membership, role) do
-    membership
-    |> CompanyMembership.changeset(%{role: role})
-    |> Repo.update()
+    result =
+      membership
+      |> CompanyMembership.changeset(%{role: role})
+      |> Repo.update()
+
+    case result do
+      {:ok, updated_membership} ->
+        Broadcasts.broadcast_company_update(
+          membership.company_id,
+          :member_role_changed,
+          %{user_id: membership.user_id, new_role: role}
+        )
+
+        {:ok, updated_membership}
+
+      error ->
+        error
+    end
   end
 
   @doc """
   Removes a user from a company.
   """
   def remove_member(%CompanyMembership{} = membership) do
-    Repo.delete(membership)
+    result = Repo.delete(membership)
+
+    case result do
+      {:ok, deleted_membership} ->
+        Broadcasts.broadcast_company_update(
+          membership.company_id,
+          :member_removed,
+          %{user_id: membership.user_id}
+        )
+
+        {:ok, deleted_membership}
+
+      error ->
+        error
+    end
   end
 
   @doc """
@@ -336,6 +366,12 @@ defmodule Aces.Companies do
 
       case Repo.insert(changeset) do
         {:ok, saved_invitation} ->
+          Broadcasts.broadcast_company_update(
+            company.id,
+            :invitation_created,
+            %{invited_email: invited_email, role: role}
+          )
+
           {:ok, {encoded_token, saved_invitation}}
 
         {:error, changeset} ->
@@ -386,6 +422,12 @@ defmodule Aces.Companies do
       |> Repo.transaction()
       |> case do
         {:ok, %{membership: membership}} ->
+          Broadcasts.broadcast_company_update(
+            invitation.company_id,
+            :member_added,
+            %{user_id: user.id, email: user.email, role: invitation.role}
+          )
+
           {:ok, membership}
 
         {:error, :invitation, changeset, _} ->
@@ -404,9 +446,24 @@ defmodule Aces.Companies do
     if invitation.status != "pending" do
       {:error, :not_pending}
     else
-      invitation
-      |> CompanyInvitation.cancel_changeset()
-      |> Repo.update()
+      result =
+        invitation
+        |> CompanyInvitation.cancel_changeset()
+        |> Repo.update()
+
+      case result do
+        {:ok, cancelled_invitation} ->
+          Broadcasts.broadcast_company_update(
+            invitation.company_id,
+            :invitation_cancelled,
+            %{invited_email: invitation.invited_email}
+          )
+
+          {:ok, cancelled_invitation}
+
+        error ->
+          error
+      end
     end
   end
 
