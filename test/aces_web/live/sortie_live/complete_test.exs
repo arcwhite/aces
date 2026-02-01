@@ -123,6 +123,9 @@ defmodule AcesWeb.SortieLive.CompleteTest do
         |> render_change(%{"status" => "armor_damaged", "deployment_id" => to_string(deployment.id)})
 
       assert html =~ "armor_damaged\" selected"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(live)
     end
 
     test "damage step saves and navigates to costs step", %{conn: conn, company: company, campaign: campaign, sortie: sortie} do
@@ -260,6 +263,9 @@ defmodule AcesWeb.SortieLive.CompleteTest do
 
       # Should show MVP bonus indicator for selected pilot
       assert html =~ ">+20</span>"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(live)
     end
 
     test "pilots step saves and navigates to spend_sp step", %{conn: conn, company: company, campaign: campaign, sortie: sortie} do

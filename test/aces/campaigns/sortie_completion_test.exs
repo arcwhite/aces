@@ -301,7 +301,7 @@ defmodule Aces.Campaigns.SortieCompletionTest do
         sp_allocated_to_skill: 400,
         sp_allocated_to_edge_tokens: 60,
         sp_allocated_to_edge_abilities: 0,
-        edge_abilities: ["Accurate"],
+        edge_abilities: ["Marksman"],
         skill_level: 3,
         edge_tokens: 2
       }

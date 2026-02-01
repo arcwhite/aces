@@ -11,7 +11,7 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
         sp_allocated_to_skill: 400,
         sp_allocated_to_edge_tokens: 60,
         sp_allocated_to_edge_abilities: 60,
-        edge_abilities: ["Accurate"],
+        edge_abilities: ["Marksman"],
         skill_level: 3,
         edge_tokens: 2,
         sp_available: 100
@@ -23,7 +23,7 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
       assert allocation.baseline_skill == 400
       assert allocation.baseline_tokens == 60
       assert allocation.baseline_abilities == 60
-      assert allocation.baseline_edge_abilities == ["Accurate"]
+      assert allocation.baseline_edge_abilities == ["Marksman"]
       assert allocation.add_skill == 0
       assert allocation.add_tokens == 0
       assert allocation.add_abilities == 0
@@ -60,7 +60,7 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
         sp_allocated_to_skill: 500,
         sp_allocated_to_edge_tokens: 120,
         sp_allocated_to_edge_abilities: 0,
-        edge_abilities: ["Accurate", "Dodge"],
+        edge_abilities: ["Marksman", "Nimble"],
         skill_level: 3,
         edge_tokens: 3,
         sp_available: 0
@@ -70,11 +70,11 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
         "baseline_skill" => 400,
         "baseline_tokens" => 60,
         "baseline_abilities" => 0,
-        "baseline_edge_abilities" => ["Accurate"],
+        "baseline_edge_abilities" => ["Marksman"],
         "add_skill" => 100,
         "add_tokens" => 60,
         "add_abilities" => 0,
-        "new_edge_abilities" => ["Dodge"],
+        "new_edge_abilities" => ["Nimble"],
         "sp_to_spend" => 160
       }
 
@@ -83,11 +83,11 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
       assert allocation.baseline_skill == 400
       assert allocation.baseline_tokens == 60
       assert allocation.baseline_abilities == 0
-      assert allocation.baseline_edge_abilities == ["Accurate"]
+      assert allocation.baseline_edge_abilities == ["Marksman"]
       assert allocation.add_skill == 100
       assert allocation.add_tokens == 60
       assert allocation.add_abilities == 0
-      assert allocation.new_edge_abilities == ["Dodge"]
+      assert allocation.new_edge_abilities == ["Nimble"]
       assert allocation.sp_to_spend == 160
       assert allocation.sp_remaining == 0  # 160 - 100 - 60 - 0
       assert allocation.skill_level == 3  # From 500 total skill SP (400 + 100), threshold for skill 2 is 900
@@ -253,8 +253,8 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
       # Build allocation and add abilities
       allocation = PilotAllocationState.build_fresh(pilot)
       allocation = PilotAllocationState.update_allocation(allocation, "edge_abilities", 360)  # 3 abilities
-      allocation = PilotAllocationState.toggle_edge_ability(allocation, "Accurate")
-      allocation = PilotAllocationState.toggle_edge_ability(allocation, "Dodge")
+      allocation = PilotAllocationState.toggle_edge_ability(allocation, "Marksman")
+      allocation = PilotAllocationState.toggle_edge_ability(allocation, "Nimble")
 
       assert length(allocation.new_edge_abilities) == 2
 
@@ -281,7 +281,7 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
         sp_allocated_to_skill: 0,
         sp_allocated_to_edge_tokens: 0,
         sp_allocated_to_edge_abilities: 180,  # 2 abilities
-        edge_abilities: ["Accurate"],  # 1 baseline ability
+        edge_abilities: ["Marksman"],  # 1 baseline ability
         skill_level: 4,
         edge_tokens: 1,
         sp_available: 200
@@ -292,35 +292,35 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
     end
 
     test "adds new ability", %{allocation: allocation} do
-      updated = PilotAllocationState.toggle_edge_ability(allocation, "Dodge")
+      updated = PilotAllocationState.toggle_edge_ability(allocation, "Nimble")
 
-      assert "Dodge" in updated.new_edge_abilities
+      assert "Nimble" in updated.new_edge_abilities
     end
 
     test "removes new ability", %{allocation: allocation} do
-      allocation = %{allocation | new_edge_abilities: ["Dodge"]}
-      updated = PilotAllocationState.toggle_edge_ability(allocation, "Dodge")
+      allocation = %{allocation | new_edge_abilities: ["Nimble"]}
+      updated = PilotAllocationState.toggle_edge_ability(allocation, "Nimble")
 
-      refute "Dodge" in updated.new_edge_abilities
+      refute "Nimble" in updated.new_edge_abilities
     end
 
     test "cannot remove baseline ability", %{allocation: allocation} do
-      updated = PilotAllocationState.toggle_edge_ability(allocation, "Accurate")
+      updated = PilotAllocationState.toggle_edge_ability(allocation, "Marksman")
 
-      # Accurate is still in baseline, not added to new
-      assert "Accurate" in updated.baseline_edge_abilities
-      refute "Accurate" in updated.new_edge_abilities
+      # Marksman is still in baseline, not added to new
+      assert "Marksman" in updated.baseline_edge_abilities
+      refute "Marksman" in updated.new_edge_abilities
     end
 
     test "cannot add more than max abilities", %{allocation: allocation} do
       # Max is 2, baseline has 1, so we can add 1 more
-      allocation = PilotAllocationState.toggle_edge_ability(allocation, "Dodge")
+      allocation = PilotAllocationState.toggle_edge_ability(allocation, "Nimble")
       assert length(allocation.new_edge_abilities) == 1
 
       # Try to add a second - should not be added (at max)
-      updated = PilotAllocationState.toggle_edge_ability(allocation, "Evasive")
+      updated = PilotAllocationState.toggle_edge_ability(allocation, "Speed Demon")
       assert length(updated.new_edge_abilities) == 1
-      refute "Evasive" in updated.new_edge_abilities
+      refute "Speed Demon" in updated.new_edge_abilities
     end
   end
 
@@ -400,11 +400,11 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
         baseline_skill: 400,
         baseline_tokens: 60,
         baseline_abilities: 60,
-        baseline_edge_abilities: ["Accurate"],
+        baseline_edge_abilities: ["Marksman"],
         add_skill: 100,
         add_tokens: 60,
         add_abilities: 60,
-        new_edge_abilities: ["Dodge"],
+        new_edge_abilities: ["Nimble"],
         sp_to_spend: 220
       }
 
@@ -413,11 +413,11 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
       assert saved["baseline_skill"] == 400
       assert saved["baseline_tokens"] == 60
       assert saved["baseline_abilities"] == 60
-      assert saved["baseline_edge_abilities"] == ["Accurate"]
+      assert saved["baseline_edge_abilities"] == ["Marksman"]
       assert saved["add_skill"] == 100
       assert saved["add_tokens"] == 60
       assert saved["add_abilities"] == 60
-      assert saved["new_edge_abilities"] == ["Dodge"]
+      assert saved["new_edge_abilities"] == ["Nimble"]
       assert saved["sp_to_spend"] == 220
     end
   end
@@ -464,11 +464,11 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
         baseline_skill: 400,
         baseline_tokens: 60,
         baseline_abilities: 60,
-        baseline_edge_abilities: ["Accurate"],
+        baseline_edge_abilities: ["Marksman"],
         add_skill: 500,
         add_tokens: 60,
         add_abilities: 120,
-        new_edge_abilities: ["Dodge", "Evasive"]
+        new_edge_abilities: ["Nimble", "Speed Demon"]
       }
 
       changes = PilotAllocationState.to_pilot_changes(allocation)
@@ -476,7 +476,7 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
       assert changes.sp_allocated_to_skill == 900  # 400 + 500
       assert changes.sp_allocated_to_edge_tokens == 120  # 60 + 60
       assert changes.sp_allocated_to_edge_abilities == 180  # 60 + 120
-      assert changes.edge_abilities == ["Accurate", "Dodge", "Evasive"]
+      assert changes.edge_abilities == ["Marksman", "Nimble", "Speed Demon"]
       assert changes.skill_level == 2  # 900 SP = skill 2
       assert changes.edge_tokens == 3  # 120 SP = 3 tokens
       assert changes.sp_available == 0
@@ -486,8 +486,8 @@ defmodule Aces.Campaigns.PilotAllocationStateTest do
   describe "total_abilities_count/1" do
     test "returns sum of baseline and new abilities" do
       allocation = %{
-        baseline_edge_abilities: ["Accurate", "Dodge"],
-        new_edge_abilities: ["Evasive"]
+        baseline_edge_abilities: ["Marksman", "Nimble"],
+        new_edge_abilities: ["Speed Demon"]
       }
 
       assert PilotAllocationState.total_abilities_count(allocation) == 3

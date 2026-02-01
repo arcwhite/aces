@@ -227,8 +227,8 @@ defmodule Aces.Campaigns.PilotAllocationState do
 
   ## Examples
 
-      iex> toggle_edge_ability(allocation, "Accurate")
-      %{...new_edge_abilities: ["Accurate"], ...}
+      iex> toggle_edge_ability(allocation, "Marksman")
+      %{...new_edge_abilities: ["Marksman"], ...}
   """
   @spec toggle_edge_ability(t(), String.t()) :: t()
   def toggle_edge_ability(allocation, ability) do

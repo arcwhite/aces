@@ -52,25 +52,18 @@ defmodule Aces.Companies.Pilot do
 
   # Available edge abilities for pilots
   @available_edge_abilities [
-    "Accurate",
     "Assassin",
-    "Cluster Fighter",
-    "Dodge",
-    "Evasive",
-    "Fast Climb",
-    "Gunnery",
-    "Jumper",
+    "Bulwark",
+    "Cautious",
+    "Coolant Flush",
+    "Forward Observer",
+    "Jumping Jack",
     "Marksman",
-    "Multi-Target",
-    "Overrun",
-    "Predator",
-    "Recon",
-    "Sharpshooter",
-    "Steady",
-    "Sure Shot",
-    "Tactician",
-    "Tough",
-    "Weapon Specialist"
+    "Melee Specialist",
+    "Nimble",
+    "Patient",
+    "Protector",
+    "Speed Demon"
   ]
 
   schema "pilots" do

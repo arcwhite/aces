@@ -28,7 +28,7 @@ This document describes the migration from storing pilot SP allocations as a JSO
     "baseline_skill" => 40,        # SP allocated to skill BEFORE this sortie
     "baseline_tokens" => 150,      # SP allocated to tokens BEFORE this sortie
     "baseline_abilities" => 180,   # SP allocated to abilities BEFORE this sortie
-    "baseline_edge_abilities" => ["Gunnery"],  # Abilities BEFORE this sortie
+    "baseline_edge_abilities" => ["Assassin"],  # Abilities BEFORE this sortie
     "add_skill" => 70,             # SP added to skill THIS sortie
     "add_tokens" => 0,             # SP added to tokens THIS sortie
     "add_abilities" => 0,          # SP added to abilities THIS sortie

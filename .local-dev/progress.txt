@@ -11,7 +11,6 @@
 - For complex migrations (like JSON to table), write a detailed spec first (see specs/PILOT_ALLOCATIONS.md). This captures context and decisions for future implementation.
 
 # High-priority items
-- [ ] Need to update Edge Abilities to be accurate (ask your user for the actual list)
 
 # Medium-priority items
 - [ ] Figure out how to compute code coverage
@@ -20,6 +19,7 @@
 - [ ] Add functionality to let users upload images to their Sorties, for posterity.
 
 # Completed Items
+- [x] Updated Edge Abilities list to accurate Battletech: Aces abilities (Assassin, Bulwark, Cautious, Coolant Flush, Forward Observer, Jumping Jack, Marksman, Melee Specialist, Nimble, Patient, Protector, Speed Demon). Updated pilot.ex, all test files, and documentation.
 - [x] Refactor 1.1 from .local-dev/refactor.txt - Business logic separated into Aces.Campaigns.SortieCompletion module (calculate_all_costs, calculate_pilot_earnings, reverse_pilot_allocations, distribute_sp_to_pilots, etc.)
 - [x] Refactor 1.2 from .local-dev/refactor.txt - Extracted pilot SP allocation logic to Aces.Campaigns.PilotAllocation module (build_fresh, build_from_saved, update_allocation, toggle_edge_ability, validate, to_pilot_changes). Also added Ecto.Multi transaction for atomic saves and safe integer parsing.
 - [x] Refactor 3.1 investigation - Investigated embedded schema for pilot allocations. Decided on separate table with unified allocation history (initial + sortie). Full specification written in specs/PILOT_ALLOCATIONS.md.

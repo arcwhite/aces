@@ -44,6 +44,9 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       html = show_live |> element("button", "Settings") |> render_click()
       assert html =~ "Team Members"
       assert html =~ "Danger Zone"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(show_live)
     end
 
     test "redirects draft companies to draft setup page", %{conn: conn, user: user} do
@@ -77,6 +80,9 @@ defmodule AcesWeb.CompanyLive.ShowTest do
 
       assert html =~ "No units yet"
       assert html =~ "Start a campaign to purchase units"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(show_live)
     end
 
     test "displays unit roster when units exist", %{conn: conn, user: user} do
@@ -91,6 +97,9 @@ defmodule AcesWeb.CompanyLive.ShowTest do
 
       assert html =~ "Atlas AS7-D"
       assert html =~ "The Hammer"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(show_live)
     end
 
     test "has back to companies link", %{conn: conn, user: user} do

@@ -177,7 +177,7 @@ defmodule Aces.Campaigns.PilotAllocationTest do
         sp_to_skill: 0,
         sp_to_tokens: 0,
         sp_to_abilities: 60,
-        edge_abilities_gained: ["Gunnery"],
+        edge_abilities_gained: ["Assassin"],
         total_sp: 60
       }
 

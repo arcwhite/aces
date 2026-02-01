@@ -47,6 +47,9 @@ defmodule AcesWeb.CampaignLive.IndexTest do
       # Past tab should show the completed campaign
       assert html =~ "Completed Campaign"
       assert html =~ "Completed"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(index_live)
     end
 
     test "shows failed campaigns on past tab", %{conn: conn, user: user} do
@@ -62,6 +65,9 @@ defmodule AcesWeb.CampaignLive.IndexTest do
       # Past tab should show the failed campaign
       assert html =~ "Failed Campaign"
       assert html =~ "Failed"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(index_live)
     end
 
     test "shows campaign count badges", %{conn: conn, user: user} do
@@ -109,6 +115,9 @@ defmodule AcesWeb.CampaignLive.IndexTest do
       html = index_live |> element("button", "Active") |> render_click()
       assert html =~ "Active Test"
       refute html =~ "Past Test"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(index_live)
     end
 
     test "shows empty state for active campaigns", %{conn: conn, user: _user} do
@@ -129,6 +138,9 @@ defmodule AcesWeb.CampaignLive.IndexTest do
 
       assert html =~ "No Past Campaigns"
       assert html =~ "Completed and failed campaigns will appear here"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(index_live)
     end
 
     test "shows completion date for past campaigns", %{conn: conn, user: user} do
@@ -143,6 +155,9 @@ defmodule AcesWeb.CampaignLive.IndexTest do
 
       # Should show completed date
       assert html =~ "Completed:"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(index_live)
     end
 
     test "shows campaigns from multiple companies", %{conn: conn, user: user} do

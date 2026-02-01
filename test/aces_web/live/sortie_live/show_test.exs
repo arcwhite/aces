@@ -168,6 +168,9 @@ defmodule AcesWeb.SortieLive.ShowTest do
 
       assert html =~ "Confirm Sortie Failure"
       assert html =~ "What went wrong?"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(show_live)
     end
 
     test "can confirm sortie failure and redirects to campaign", %{conn: conn, company: company, campaign: campaign, pilot: pilot, company_unit: company_unit} do

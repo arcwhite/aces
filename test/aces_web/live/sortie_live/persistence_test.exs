@@ -53,6 +53,9 @@ defmodule AcesWeb.SortieLive.PersistenceTest do
       # Check persistence again
       updated_deployment2 = Aces.Repo.get!(Aces.Campaigns.Deployment, deployment.id)
       assert updated_deployment2.damage_status == "crippled"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(show_live)
     end
 
     test "pilot casualty changes are persisted to database", %{conn: conn, company: company, campaign: campaign, sortie: sortie, deployment: deployment} do
@@ -75,6 +78,9 @@ defmodule AcesWeb.SortieLive.PersistenceTest do
       # Check persistence again
       updated_deployment2 = Aces.Repo.get!(Aces.Campaigns.Deployment, deployment.id)
       assert updated_deployment2.pilot_casualty == "killed"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(show_live)
     end
 
     test "unnamed crew casualty changes are persisted to database", %{conn: conn, company: company, campaign: campaign, sortie: sortie, pilot: _pilot} do
@@ -94,6 +100,9 @@ defmodule AcesWeb.SortieLive.PersistenceTest do
       updated_deployment = Aces.Repo.get!(Aces.Campaigns.Deployment, crew_deployment.id)
       assert updated_deployment.pilot_casualty == "wounded"
       assert updated_deployment.pilot_id == nil  # Still unnamed crew
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(show_live)
     end
 
     test "changes persist after page reload", %{conn: conn, company: company, campaign: campaign, sortie: sortie, deployment: deployment} do
@@ -108,12 +117,18 @@ defmodule AcesWeb.SortieLive.PersistenceTest do
       |> element("#casualty-form-#{deployment.id}")
       |> render_change(%{"pilot_casualty_#{deployment.id}" => "wounded"})
 
+      # Wait for any PubSub-triggered reloads to complete before opening new session
+      render(show_live)
+
       # Simulate page reload by creating a new LiveView session
-      {:ok, _new_live, html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/#{sortie.id}")
+      {:ok, new_live, html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/#{sortie.id}")
 
       # Check that the changes are shown in the new page load
       assert html =~ "structure_damaged\" selected"
       assert html =~ "wounded\" selected"
+
+      # Wait for any PubSub-triggered reloads to complete
+      render(new_live)
     end
   end
 end

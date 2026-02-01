@@ -15,7 +15,7 @@ defmodule Aces.Companies.PilotTest do
     sp_available: 90,  # 150 - 0 - 0 - 60 = 90
     skill_level: 4,   # Starting skill level
     edge_tokens: 1,   # Starting edge tokens
-    edge_abilities: ["Accurate"],
+    edge_abilities: ["Marksman"],
     sp_earned: 0
   }
 
@@ -228,7 +228,7 @@ defmodule Aces.Companies.PilotTest do
       company = company_fixture()
       
       attrs = @valid_attrs
-      |> Map.put(:edge_abilities, ["Accurate", "InvalidAbility"])
+      |> Map.put(:edge_abilities, ["Marksman", "InvalidAbility"])
       |> Map.put(:company_id, company.id)
       changeset = Pilot.changeset(%Pilot{}, attrs)
       refute changeset.valid?
@@ -241,7 +241,7 @@ defmodule Aces.Companies.PilotTest do
       # 60 SP only allows 1 edge ability
       attrs = @valid_attrs
       |> Map.put(:sp_allocated_to_edge_abilities, 60)
-      |> Map.put(:edge_abilities, ["Accurate", "Dodge"])  # 2 abilities, but only 1 allowed
+      |> Map.put(:edge_abilities, ["Marksman", "Nimble"])  # 2 abilities, but only 1 allowed
       |> Map.put(:company_id, company.id)
       changeset = Pilot.changeset(%Pilot{}, attrs)
       refute changeset.valid?
@@ -252,11 +252,11 @@ defmodule Aces.Companies.PilotTest do
       company = company_fixture()
       
       attrs = @valid_attrs
-      |> Map.put(:edge_abilities, Jason.encode!(["Accurate"]))
+      |> Map.put(:edge_abilities, Jason.encode!(["Marksman"]))
       |> Map.put(:company_id, company.id)
       changeset = Pilot.changeset(%Pilot{}, attrs)
       assert changeset.valid?
-      assert get_field(changeset, :edge_abilities) == ["Accurate"]
+      assert get_field(changeset, :edge_abilities) == ["Marksman"]
     end
   end
 
@@ -295,8 +295,8 @@ defmodule Aces.Companies.PilotTest do
       abilities = Pilot.available_edge_abilities()
       assert is_list(abilities)
       assert length(abilities) > 0
-      assert "Accurate" in abilities
-      assert "Dodge" in abilities
+      assert "Marksman" in abilities
+      assert "Nimble" in abilities
     end
   end
 
