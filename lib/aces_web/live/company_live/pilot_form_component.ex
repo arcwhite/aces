@@ -165,28 +165,35 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
   end
 
   def handle_event("save", %{"pilot" => pilot_params}, socket) do
-    # Check for validation errors before saving
-    cond do
-      socket.assigns.sp_allocation_error ->
-        {:noreply, put_flash(socket, :error, "Cannot save: Please fix SP allocation errors first")}
+    action = socket.assigns.action
 
-      socket.assigns.pilot.sp_available > 0 ->
-        {:noreply, put_flash(socket, :error, "Cannot save: You must allocate all SP before saving. You have #{socket.assigns.pilot.sp_available} SP remaining.")}
+    # For edit mode, just save the basic info without SP validation
+    if action == :edit do
+      save_pilot(socket, :edit, pilot_params)
+    else
+      # Check for validation errors before saving (new/hire modes)
+      cond do
+        socket.assigns.sp_allocation_error ->
+          {:noreply, put_flash(socket, :error, "Cannot save: Please fix SP allocation errors first")}
 
-      true ->
-        # Merge form params with current pilot state to include edge abilities
-        current_pilot = socket.assigns.pilot
-        merged_params = Map.merge(pilot_params, %{
-          "edge_abilities" => current_pilot.edge_abilities || [],
-          "sp_allocated_to_skill" => current_pilot.sp_allocated_to_skill,
-          "sp_allocated_to_edge_tokens" => current_pilot.sp_allocated_to_edge_tokens,
-          "sp_allocated_to_edge_abilities" => current_pilot.sp_allocated_to_edge_abilities,
-          "sp_available" => current_pilot.sp_available,
-          "skill_level" => current_pilot.skill_level,
-          "edge_tokens" => current_pilot.edge_tokens
-        })
+        socket.assigns.pilot.sp_available > 0 ->
+          {:noreply, put_flash(socket, :error, "Cannot save: You must allocate all SP before saving. You have #{socket.assigns.pilot.sp_available} SP remaining.")}
 
-        save_pilot(socket, socket.assigns.action, merged_params)
+        true ->
+          # Merge form params with current pilot state to include edge abilities
+          current_pilot = socket.assigns.pilot
+          merged_params = Map.merge(pilot_params, %{
+            "edge_abilities" => current_pilot.edge_abilities || [],
+            "sp_allocated_to_skill" => current_pilot.sp_allocated_to_skill,
+            "sp_allocated_to_edge_tokens" => current_pilot.sp_allocated_to_edge_tokens,
+            "sp_allocated_to_edge_abilities" => current_pilot.sp_allocated_to_edge_abilities,
+            "sp_available" => current_pilot.sp_available,
+            "skill_level" => current_pilot.skill_level,
+            "edge_tokens" => current_pilot.edge_tokens
+          })
+
+          save_pilot(socket, action, merged_params)
+      end
     end
   end
 
@@ -265,10 +272,13 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
       <div class="mb-6">
         <h3 class="text-lg font-bold"><%= @title %></h3>
         <p class="text-sm opacity-70">
-          <%= if @action == :hire do %>
-            Hire a new pilot for 150 SP and allocate their starting skills
-          <% else %>
-            Create a skilled pilot and allocate their starting 150 SP
+          <%= case @action do %>
+            <% :hire -> %>
+              Hire a new pilot for 150 SP and allocate their starting skills
+            <% :edit -> %>
+              Update pilot information
+            <% _ -> %>
+              Create a skilled pilot and allocate their starting 150 SP
           <% end %>
         </p>
       </div>
@@ -314,7 +324,8 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
           </div>
         </div>
 
-        <!-- SP Allocation -->
+        <!-- SP Allocation (only for new/hire, not edit) -->
+        <%= if @action != :edit do %>
         <div class="card bg-base-200">
           <div class="card-body">
             <h4 class="card-title">
@@ -498,8 +509,10 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
             </div>
           </div>
         <% end %>
+        <% end %><!-- end if @action != :edit -->
 
         <!-- Current Stats Summary -->
+        <%= if @action != :edit do %>
         <div class="card bg-base-200">
           <div class="card-body">
             <h4 class="card-title">Current Stats</h4>
@@ -523,18 +536,21 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
             </div>
           </div>
         </div>
-
-        <!-- Validation Alerts -->
-        <%= if @sp_allocation_error do %>
-          <div class="alert alert-error">
-            <span>⚠️ SP allocation is invalid. Please correct the highlighted fields before saving.</span>
-          </div>
         <% end %>
 
-        <%= if @pilot.sp_available > 0 and not @sp_allocation_error do %>
-          <div class="alert alert-warning">
-            <span>You must allocate all <%= 150 + (@pilot.sp_earned || 0) %> SP before saving. You have <%= @pilot.sp_available %> SP remaining.</span>
-          </div>
+        <!-- Validation Alerts (only for new/hire) -->
+        <%= if @action != :edit do %>
+          <%= if @sp_allocation_error do %>
+            <div class="alert alert-error">
+              <span>SP allocation is invalid. Please correct the highlighted fields before saving.</span>
+            </div>
+          <% end %>
+
+          <%= if @pilot.sp_available > 0 and not @sp_allocation_error do %>
+            <div class="alert alert-warning">
+              <span>You must allocate all <%= 150 + (@pilot.sp_earned || 0) %> SP before saving. You have <%= @pilot.sp_available %> SP remaining.</span>
+            </div>
+          <% end %>
         <% end %>
 
         <!-- Hidden fields for derived values and edge abilities -->
@@ -548,12 +564,15 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
             type="submit"
             class="btn btn-primary"
             phx-disable-with={if @action == :hire, do: "Hiring...", else: "Saving..."}
-            disabled={@sp_allocation_error or @pilot.sp_available > 0 or length(@pilot.edge_abilities || []) > @max_allowed_abilities}
+            disabled={@action != :edit and (@sp_allocation_error or @pilot.sp_available > 0 or length(@pilot.edge_abilities || []) > @max_allowed_abilities)}
           >
-            <%= if @action == :hire do %>
-              Hire Pilot for 150 SP
-            <% else %>
-              Save Pilot
+            <%= case @action do %>
+              <% :hire -> %>
+                Hire Pilot for 150 SP
+              <% :edit -> %>
+                Update Pilot
+              <% _ -> %>
+                Save Pilot
             <% end %>
           </button>
         </div>

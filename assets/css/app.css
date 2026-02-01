@@ -225,6 +225,16 @@
   box-shadow: inset 0 0 12px oklch(78% 0.17 70 / 0.1);
 }
 
+/* Links inside warning alerts need better contrast */
+.alert-warning a {
+  color: oklch(25% 0.08 30);
+  text-decoration: underline;
+}
+
+.alert-warning a:hover {
+  color: oklch(18% 0.06 30);
+}
+
 [data-theme="dark"] .alert-error {
   box-shadow: inset 0 0 12px oklch(65% 0.22 25 / 0.1);
 }

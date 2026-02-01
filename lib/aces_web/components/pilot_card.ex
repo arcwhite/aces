@@ -114,7 +114,13 @@ defmodule AcesWeb.Components.PilotCard do
         <!-- Actions -->
         <%= if @show_actions do %>
           <div class="card-actions justify-end">
-            <button class="btn btn-ghost btn-sm md:btn-xs">Edit</button>
+            <button
+              class="btn btn-ghost btn-sm md:btn-xs"
+              phx-click="edit_pilot"
+              phx-value-pilot_id={@pilot.id}
+            >
+              Edit
+            </button>
           </div>
         <% end %>
       </div>

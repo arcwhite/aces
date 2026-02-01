@@ -46,7 +46,9 @@ defmodule AcesWeb.CompanyLive.Show do
          |> assign(:members, members)
          |> assign(:current_user_id, user.id)
          |> assign(:can_manage_members, can_manage)
-         |> assign(:editing_unit, nil)}
+         |> assign(:editing_unit, nil)
+         |> assign(:editing_pilot, nil)
+         |> assign(:show_pilot_edit, false)}
       end
     end
   end
@@ -111,6 +113,29 @@ defmodule AcesWeb.CompanyLive.Show do
      socket
      |> assign(:show_unit_edit, false)
      |> assign(:editing_unit, nil)}
+  end
+
+  def handle_event("edit_pilot", %{"pilot_id" => pilot_id_str}, socket) do
+    pilot_id = String.to_integer(pilot_id_str)
+    company = socket.assigns.company
+
+    case Enum.find(company.pilots, &(&1.id == pilot_id)) do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Pilot not found")}
+
+      pilot ->
+        {:noreply,
+         socket
+         |> assign(:show_pilot_edit, true)
+         |> assign(:editing_pilot, pilot)}
+    end
+  end
+
+  def handle_event("close_pilot_edit", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_pilot_edit, false)
+     |> assign(:editing_pilot, nil)}
   end
 
   def handle_event("invite_member", _params, socket) do
@@ -210,6 +235,16 @@ defmodule AcesWeb.CompanyLive.Show do
      |> assign(:company, updated_company)
      |> assign(:show_unit_edit, false)
      |> assign(:editing_unit, nil)}
+  end
+
+  def handle_info({AcesWeb.CompanyLive.PilotFormComponent, {:saved, _pilot}}, socket) do
+    updated_company = Companies.get_company_with_stats!(socket.assigns.company.id)
+
+    {:noreply,
+     socket
+     |> assign(:company, updated_company)
+     |> assign(:show_pilot_edit, false)
+     |> assign(:editing_pilot, nil)}
   end
 
   def handle_info({AcesWeb.Components.UnitSearchModal, :close_modal}, socket) do
@@ -342,6 +377,22 @@ defmodule AcesWeb.CompanyLive.Show do
             action={:edit_unit}
             unit={@editing_unit}
             company={@company}
+            patch={~p"/companies/#{@company}"}
+          />
+        <% end %>
+      </.modal>
+
+      <!-- Pilot Edit Modal -->
+      <.modal show={@show_pilot_edit && @editing_pilot != nil} on_close="close_pilot_edit" max_width="4xl">
+        <:title>Edit Pilot</:title>
+        <%= if @editing_pilot do %>
+          <.live_component
+            module={AcesWeb.CompanyLive.PilotFormComponent}
+            id={:edit_pilot}
+            action={:edit}
+            pilot={@editing_pilot}
+            company={@company}
+            title="Edit Pilot"
             patch={~p"/companies/#{@company}"}
           />
         <% end %>
