@@ -1824,4 +1824,271 @@ defmodule Aces.CampaignsTest do
       assert updated_company.warchest_balance == 850
     end
   end
+
+  describe "can_reset_sortie?/1" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+      %{campaign: campaign}
+    end
+
+    test "returns true for sortie in setup status", %{campaign: campaign} do
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "Test Mission",
+        "pv_limit" => 200
+      })
+
+      assert sortie.status == "setup"
+      assert Campaigns.can_reset_sortie?(sortie) == true
+    end
+
+    test "returns true for sortie in in_progress status", %{campaign: campaign} do
+      sortie = create_started_sortie(campaign)
+      assert sortie.status == "in_progress"
+      assert Campaigns.can_reset_sortie?(sortie) == true
+    end
+
+    test "returns true for sortie in finalizing status", %{campaign: campaign} do
+      sortie = create_started_sortie(campaign)
+      {:ok, finalizing_sortie} = Campaigns.begin_sortie_finalization(sortie)
+      assert finalizing_sortie.status == "finalizing"
+      assert Campaigns.can_reset_sortie?(finalizing_sortie) == true
+    end
+
+    test "returns false for completed sortie", _ctx do
+      completed_sortie = %Sortie{status: "completed"}
+      assert Campaigns.can_reset_sortie?(completed_sortie) == false
+    end
+
+    test "returns false for failed sortie", _ctx do
+      failed_sortie = %Sortie{status: "failed"}
+      assert Campaigns.can_reset_sortie?(failed_sortie) == false
+    end
+  end
+
+  describe "reset_sortie/1" do
+    setup do
+      user = user_fixture()
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+      pilot = pilot_fixture(company: company)
+      master_unit = units_master_unit_fixture()
+      company_unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      %{
+        user: user,
+        company: company,
+        campaign: campaign,
+        pilot: pilot,
+        master_unit: master_unit,
+        company_unit: company_unit
+      }
+    end
+
+    test "resets sortie from setup status", %{campaign: campaign, pilot: pilot, company_unit: company_unit} do
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "Test Mission",
+        "pv_limit" => 200
+      })
+
+      # Add a deployment
+      {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+        company_unit_id: company_unit.id,
+        pilot_id: pilot.id
+      })
+
+      sortie = Campaigns.get_sortie!(sortie.id)
+      assert length(sortie.deployments) == 1
+
+      {:ok, reset_sortie} = Campaigns.reset_sortie(sortie)
+
+      assert reset_sortie.status == "setup"
+      assert reset_sortie.started_at == nil
+      assert reset_sortie.force_commander_id == nil
+      # Deployment should be preserved
+      assert length(reset_sortie.deployments) == 1
+    end
+
+    test "resets sortie from in_progress status and clears damage", %{
+      campaign: campaign,
+      pilot: pilot,
+      company_unit: company_unit
+    } do
+      sortie = create_started_sortie_with_unit(campaign, pilot, company_unit)
+
+      # Simulate some damage
+      deployment = hd(sortie.deployments)
+      {:ok, _} = Campaigns.update_deployment_damage_status(deployment, "crippled")
+      {:ok, _} = Campaigns.update_deployment_casualty(deployment, "wounded")
+
+      sortie = Campaigns.get_sortie!(sortie.id)
+      deployment = hd(sortie.deployments)
+      assert deployment.damage_status == "crippled"
+      assert deployment.pilot_casualty == "wounded"
+
+      {:ok, reset_sortie} = Campaigns.reset_sortie(sortie)
+
+      assert reset_sortie.status == "setup"
+      assert reset_sortie.started_at == nil
+      assert reset_sortie.force_commander_id == nil
+
+      # Deployment should be reset to operational
+      reset_deployment = hd(reset_sortie.deployments)
+      assert reset_deployment.damage_status == "operational"
+      assert reset_deployment.pilot_casualty == "none"
+    end
+
+    test "resets sortie from finalizing status", %{campaign: campaign, pilot: pilot, company_unit: company_unit} do
+      sortie = create_started_sortie_with_unit(campaign, pilot, company_unit)
+
+      # Begin finalization
+      {:ok, finalizing_sortie} = Campaigns.begin_sortie_finalization(sortie)
+      assert finalizing_sortie.status == "finalizing"
+      assert finalizing_sortie.finalization_step == "outcome"
+
+      {:ok, reset_sortie} = Campaigns.reset_sortie(finalizing_sortie)
+
+      assert reset_sortie.status == "setup"
+      assert reset_sortie.finalization_step == nil
+    end
+
+    test "clears finalization fields on reset", %{campaign: campaign, pilot: pilot, company_unit: company_unit} do
+      sortie = create_started_sortie_with_unit(campaign, pilot, company_unit)
+
+      # Begin finalization and update some fields
+      {:ok, finalizing_sortie} = Campaigns.begin_sortie_finalization(sortie)
+      {:ok, updated_sortie} = Aces.Repo.update(
+        Sortie.finalization_step_changeset(finalizing_sortie, "damage", %{
+          primary_objective_income: 100,
+          secondary_objectives_income: 50,
+          keywords_gained: ["Veteran"]
+        })
+      )
+
+      assert updated_sortie.primary_objective_income == 100
+      assert updated_sortie.secondary_objectives_income == 50
+      assert updated_sortie.keywords_gained == ["Veteran"]
+
+      {:ok, reset_sortie} = Campaigns.reset_sortie(updated_sortie)
+
+      assert reset_sortie.status == "setup"
+      assert reset_sortie.primary_objective_income == 0
+      assert reset_sortie.secondary_objectives_income == 0
+      assert reset_sortie.waypoints_income == 0
+      assert reset_sortie.total_income == 0
+      assert reset_sortie.total_expenses == 0
+      assert reset_sortie.net_earnings == 0
+      assert reset_sortie.keywords_gained == []
+      assert reset_sortie.was_successful == nil
+      assert reset_sortie.mvp_pilot_id == nil
+    end
+
+    test "preserves sortie metadata on reset", %{campaign: campaign, pilot: pilot, company_unit: company_unit} do
+      {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+        "mission_number" => "1",
+        "name" => "Important Mission",
+        "description" => "A test mission",
+        "pv_limit" => 250,
+        "recon_notes" => "Scouting report"
+      })
+
+      {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+        company_unit_id: company_unit.id,
+        pilot_id: pilot.id
+      })
+
+      sortie = Campaigns.get_sortie!(sortie.id)
+      {:ok, started_sortie} = Campaigns.start_sortie(sortie, pilot.id)
+      {:ok, reset_sortie} = Campaigns.reset_sortie(started_sortie)
+
+      # These should be preserved
+      assert reset_sortie.mission_number == "1"
+      assert reset_sortie.name == "Important Mission"
+      assert reset_sortie.description == "A test mission"
+      assert reset_sortie.pv_limit == 250
+      assert reset_sortie.recon_notes == "Scouting report"
+    end
+
+    test "returns error for completed sortie", %{campaign: campaign} do
+      completed_sortie = %Sortie{
+        id: 999,
+        status: "completed",
+        campaign_id: campaign.id
+      }
+
+      assert {:error, "Cannot reset a completed or failed sortie"} =
+               Campaigns.reset_sortie(completed_sortie)
+    end
+
+    test "returns error for failed sortie", %{campaign: campaign} do
+      failed_sortie = %Sortie{
+        id: 999,
+        status: "failed",
+        campaign_id: campaign.id
+      }
+
+      assert {:error, "Cannot reset a completed or failed sortie"} =
+               Campaigns.reset_sortie(failed_sortie)
+    end
+
+    test "deletes pilot allocations on reset", %{campaign: campaign, pilot: pilot, company_unit: company_unit} do
+      sortie = create_started_sortie_with_unit(campaign, pilot, company_unit)
+
+      # Begin finalization
+      {:ok, finalizing_sortie} = Campaigns.begin_sortie_finalization(sortie)
+
+      # Create a pilot allocation
+      {:ok, _} = Campaigns.save_sortie_pilot_allocations(finalizing_sortie.id, %{
+        pilot.id => %{
+          add_skill: 10,
+          add_tokens: 0,
+          add_abilities: 0,
+          new_edge_abilities: [],
+          sp_to_spend: 10
+        }
+      })
+
+      # Verify allocation exists
+      allocations = Campaigns.get_sortie_pilot_allocations(finalizing_sortie.id)
+      assert length(allocations) == 1
+
+      # Reset the sortie
+      {:ok, _reset_sortie} = Campaigns.reset_sortie(finalizing_sortie)
+
+      # Verify allocations were deleted
+      allocations_after = Campaigns.get_sortie_pilot_allocations(finalizing_sortie.id)
+      assert allocations_after == []
+    end
+  end
+
+  # Helper function to create a started sortie with deployments
+  defp create_started_sortie(campaign) do
+    _user = user_fixture()
+    company = Aces.Companies.get_company!(campaign.company_id)
+    pilot = pilot_fixture(company: company)
+    master_unit = units_master_unit_fixture()
+    company_unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+    create_started_sortie_with_unit(campaign, pilot, company_unit)
+  end
+
+  defp create_started_sortie_with_unit(campaign, pilot, company_unit) do
+    {:ok, sortie} = Campaigns.create_sortie(campaign, %{
+      "mission_number" => "#{System.unique_integer([:positive])}",
+      "name" => "Test Mission",
+      "pv_limit" => 200
+    })
+
+    {:ok, _deployment} = Campaigns.create_deployment(sortie, %{
+      company_unit_id: company_unit.id,
+      pilot_id: pilot.id
+    })
+
+    sortie = Campaigns.get_sortie!(sortie.id)
+    {:ok, started_sortie} = Campaigns.start_sortie(sortie, pilot.id)
+    Campaigns.get_sortie!(started_sortie.id)
+  end
 end

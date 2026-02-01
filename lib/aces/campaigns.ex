@@ -479,6 +479,84 @@ defmodule Aces.Campaigns do
     end
   end
 
+  @doc """
+  Checks if a sortie can be reset.
+  Returns true for sorties in setup, in_progress, or finalizing status.
+  """
+  def can_reset_sortie?(%Sortie{status: status}) do
+    status in ["setup", "in_progress", "finalizing"]
+  end
+
+  @doc """
+  Resets a sortie back to setup status, clearing all battle/finalization data.
+
+  This function:
+  1. Validates the sortie can be reset (not completed or failed)
+  2. Resets the sortie to setup status, clearing battle results
+  3. Resets all deployments to operational state
+  4. Deletes any pilot allocations for this sortie
+  5. Records a campaign event for the cancellation
+
+  Deployments are preserved (unit/pilot assignments), as are OMNI variant refits
+  (no warchest refund is given for configuration changes).
+
+  Options:
+  - `:user` - The user performing the action (for event tracking)
+
+  Returns {:ok, updated_sortie} or {:error, reason}.
+  """
+  def reset_sortie(%Sortie{} = sortie, opts \\ []) do
+    user = Keyword.get(opts, :user)
+
+    if sortie.status in ["completed", "failed"] do
+      {:error, "Cannot reset a completed or failed sortie"}
+    else
+      previous_status = sortie.status
+
+      multi =
+        Ecto.Multi.new()
+        |> Ecto.Multi.update(:sortie, Sortie.reset_changeset(sortie))
+        |> Ecto.Multi.run(:reset_deployments, fn repo, _changes ->
+          {count, _} =
+            Deployment
+            |> where(sortie_id: ^sortie.id)
+            |> repo.update_all(set: [
+              damage_status: "operational",
+              pilot_casualty: "none",
+              repair_cost_sp: 0,
+              casualty_cost_sp: 0,
+              was_salvaged: false
+            ])
+          {:ok, count}
+        end)
+        |> Ecto.Multi.run(:delete_allocations, fn _repo, _changes ->
+          delete_sortie_pilot_allocations(sortie.id)
+        end)
+        |> Ecto.Multi.insert(:reset_event, fn %{sortie: updated_sortie} ->
+          CampaignEvent.creation_changeset(%CampaignEvent{}, %{
+            campaign_id: updated_sortie.campaign_id,
+            user_id: user && user.id,
+            event_type: "sortie_cancelled",
+            description: "Cancelled Sortie #{sortie.mission_number}: #{sortie.name || "Unnamed"} (was #{previous_status})"
+          })
+        end)
+
+      case Repo.transaction(multi) do
+        {:ok, %{sortie: updated_sortie}} ->
+          Broadcasts.broadcast_sortie_and_campaign_update(
+            sortie.id,
+            sortie.campaign_id,
+            :sortie_reset,
+            %{}
+          )
+          {:ok, get_sortie!(updated_sortie.id)}
+
+        {:error, _step, reason, _changes} ->
+          {:error, reason}
+      end
+    end
+  end
+
   ## Helper Functions
 
   defp validate_unit_not_already_deployed(changeset, %Sortie{deployments: deployments}) do

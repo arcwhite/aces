@@ -159,6 +159,32 @@ defmodule Aces.Campaigns.Sortie do
   end
 
   @doc """
+  Changeset for resetting a sortie back to setup status.
+  Clears all battle/finalization data while preserving core sortie configuration.
+  """
+  def reset_changeset(sortie) do
+    sortie
+    |> change()
+    |> put_change(:status, "setup")
+    |> put_change(:started_at, nil)
+    |> put_change(:force_commander_id, nil)
+    |> put_change(:mvp_pilot_id, nil)
+    |> put_change(:finalization_step, nil)
+    |> put_change(:was_successful, nil)
+    |> put_change(:primary_objective_income, 0)
+    |> put_change(:secondary_objectives_income, 0)
+    |> put_change(:waypoints_income, 0)
+    |> put_change(:rearming_cost, 0)
+    |> put_change(:total_income, 0)
+    |> put_change(:total_expenses, 0)
+    |> put_change(:net_earnings, 0)
+    |> put_change(:pilot_sp_cost, 0)
+    |> put_change(:sp_per_participating_pilot, 0)
+    |> put_change(:keywords_gained, [])
+    |> put_change(:completed_at, nil)
+  end
+
+  @doc """
   Changeset for marking a sortie as failed.
   Used when the player clicks "Sortie Failed" - no outcomes are applied.
   """

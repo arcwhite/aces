@@ -13,7 +13,7 @@ defmodule Aces.Campaigns.CampaignEvent do
 
   @event_types ~w(
     campaign_started campaign_completed campaign_failed
-    sortie_started sortie_completed sortie_failed
+    sortie_started sortie_completed sortie_failed sortie_cancelled
     pilot_hired pilot_wounded pilot_killed pilot_recovered
     unit_purchased unit_sold unit_destroyed unit_repaired unit_refitted
     keyword_gained sp_awarded mvp_awarded

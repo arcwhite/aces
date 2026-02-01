@@ -51,7 +51,9 @@ defmodule AcesWeb.CampaignLive.Show do
          |> assign(:show_unit_search, false)
          |> assign(:show_sell_modal, false)
          |> assign(:show_pilot_form, false)
+         |> assign(:show_reset_modal, false)
          |> assign(:selling_unit, nil)
+         |> assign(:resetting_sortie, nil)
          |> assign(:unit_add_error, nil)}
       end
     end
@@ -96,6 +98,27 @@ defmodule AcesWeb.CampaignLive.Show do
     end
   end
 
+  defp apply_modal_state(socket, %{"modal" => "reset_sortie", "sortie_id" => sortie_id_str}) do
+    case find_sortie(socket, sortie_id_str) do
+      nil ->
+        socket
+        |> close_all_modals()
+        |> put_flash(:error, "Sortie not found")
+
+      sortie ->
+        if Campaigns.can_reset_sortie?(sortie) do
+          socket
+          |> close_all_modals()
+          |> assign(:show_reset_modal, true)
+          |> assign(:resetting_sortie, sortie)
+        else
+          socket
+          |> close_all_modals()
+          |> put_flash(:error, "Cannot cancel: sortie is already completed or failed")
+        end
+    end
+  end
+
   # Default case: close all modals
   defp apply_modal_state(socket, _params) do
     close_all_modals(socket)
@@ -106,7 +129,9 @@ defmodule AcesWeb.CampaignLive.Show do
     |> assign(:show_unit_search, false)
     |> assign(:show_pilot_form, false)
     |> assign(:show_sell_modal, false)
+    |> assign(:show_reset_modal, false)
     |> assign(:selling_unit, nil)
+    |> assign(:resetting_sortie, nil)
     |> assign(:unit_add_error, nil)
   end
 
@@ -114,6 +139,16 @@ defmodule AcesWeb.CampaignLive.Show do
     case Integer.parse(unit_id_str) do
       {unit_id, ""} ->
         Enum.find(socket.assigns.company.company_units, &(&1.id == unit_id))
+
+      _ ->
+        nil
+    end
+  end
+
+  defp find_sortie(socket, sortie_id_str) do
+    case Integer.parse(sortie_id_str) do
+      {sortie_id, ""} ->
+        Enum.find(socket.assigns.campaign.sorties, &(&1.id == sortie_id))
 
       _ ->
         nil
@@ -220,6 +255,83 @@ defmodule AcesWeb.CampaignLive.Show do
      push_patch(socket,
        to: ~p"/companies/#{socket.assigns.company}/campaigns/#{socket.assigns.campaign}"
      )}
+  end
+
+  # Sortie reset handlers
+  def handle_event("reset_sortie", %{"sortie_id" => sortie_id_str}, socket) do
+    sortie_id = String.to_integer(sortie_id_str)
+    campaign = socket.assigns.campaign
+
+    case Enum.find(campaign.sorties, &(&1.id == sortie_id)) do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Sortie not found")}
+
+      sortie ->
+        if Campaigns.can_reset_sortie?(sortie) do
+          {:noreply,
+           push_patch(socket,
+             to: ~p"/companies/#{socket.assigns.company}/campaigns/#{campaign}?modal=reset_sortie&sortie_id=#{sortie_id}"
+           )}
+        else
+          {:noreply, put_flash(socket, :error, "Cannot cancel: sortie is already completed or failed")}
+        end
+    end
+  end
+
+  def handle_event("close_reset_modal", _params, socket) do
+    {:noreply,
+     push_patch(socket,
+       to: ~p"/companies/#{socket.assigns.company}/campaigns/#{socket.assigns.campaign}"
+     )}
+  end
+
+  def handle_event("confirm_reset_sortie", _params, socket) do
+    resetting_sortie = socket.assigns.resetting_sortie
+    company = socket.assigns.company
+    campaign = socket.assigns.campaign
+    user = socket.assigns.current_scope.user
+
+    if Authorization.can?(:edit_company, user, company) do
+      # Fetch full sortie with associations for reset
+      sortie = Campaigns.get_sortie!(resetting_sortie.id)
+
+      case Campaigns.reset_sortie(sortie, user: user) do
+        {:ok, _updated_sortie} ->
+          updated_campaign = Campaigns.get_campaign!(campaign.id)
+          updated_company = Companies.get_company!(company.id)
+          overview = Campaigns.calculate_campaign_overview(updated_campaign)
+
+          {:noreply,
+           socket
+           |> assign(:company, updated_company)
+           |> assign(:campaign, updated_campaign)
+           |> assign(:overview, overview)
+           |> assign(:can_purchase_units, Campaigns.can_purchase_units?(updated_campaign))
+           |> assign(:can_hire_pilots, Campaigns.can_hire_pilots?(updated_campaign))
+           |> put_flash(:info, "Sortie #{resetting_sortie.mission_number} has been cancelled and reset to setup")
+           |> push_patch(
+             to: ~p"/companies/#{company}/campaigns/#{campaign}"
+           )}
+
+        {:error, message} when is_binary(message) ->
+          {:noreply,
+           socket
+           |> put_flash(:error, message)
+           |> push_patch(
+             to: ~p"/companies/#{company}/campaigns/#{campaign}"
+           )}
+
+        {:error, error} ->
+          {:noreply,
+           socket
+           |> put_flash(:error, "Failed to reset sortie: #{inspect(error)}")
+           |> push_patch(
+             to: ~p"/companies/#{company}/campaigns/#{campaign}"
+           )}
+      end
+    else
+      {:noreply, put_flash(socket, :error, "You don't have permission to reset sorties")}
+    end
   end
 
   def handle_event("confirm_sell_unit", _params, socket) do
@@ -485,6 +597,12 @@ defmodule AcesWeb.CampaignLive.Show do
       <.sell_modal
         show={@show_sell_modal}
         selling_unit={@selling_unit}
+      />
+
+      <!-- Reset Sortie Confirmation Modal -->
+      <.reset_modal
+        show={@show_reset_modal}
+        resetting_sortie={@resetting_sortie}
       />
 
       <!-- Pilot Hire Modal -->
@@ -784,6 +902,15 @@ defmodule AcesWeb.CampaignLive.Show do
                           Edit
                         </.link>
                       <% end %>
+                      <%= if sortie.status in ["setup", "in_progress", "finalizing"] and @can_edit do %>
+                        <button
+                          class="btn btn-ghost btn-sm md:btn-xs text-warning"
+                          phx-click="reset_sortie"
+                          phx-value-sortie_id={sortie.id}
+                        >
+                          Cancel
+                        </button>
+                      <% end %>
                     </div>
                   </td>
                 </tr>
@@ -1057,6 +1184,7 @@ defmodule AcesWeb.CampaignLive.Show do
       "sortie_started" -> "badge-warning"
       "sortie_completed" -> "badge-success"
       "sortie_failed" -> "badge-error"
+      "sortie_cancelled" -> "badge-neutral"
       "pilot_hired" -> "badge-info"
       "pilot_wounded" -> "badge-warning"
       "pilot_killed" -> "badge-error"
@@ -1135,6 +1263,84 @@ defmodule AcesWeb.CampaignLive.Show do
           class="btn btn-error"
         >
           Sell Unit
+        </button>
+      </:actions>
+    </.modal>
+    """
+  end
+
+  # Reset sortie modal component
+  defp reset_modal(%{show: false} = assigns), do: ~H""
+  defp reset_modal(%{resetting_sortie: nil} = assigns), do: ~H""
+  defp reset_modal(assigns) do
+    ~H"""
+    <.modal show={true} on_close="close_reset_modal" max_width="lg">
+      <:title>Cancel Sortie</:title>
+
+      <div class="py-4">
+        <p class="mb-4">
+          Are you sure you want to cancel this sortie? This will reset it back to setup status.
+        </p>
+
+        <div class="card bg-base-200 p-4 mb-4">
+          <div class="font-mono text-sm opacity-70">Sortie #{@resetting_sortie.mission_number}</div>
+          <div class="font-semibold text-lg">{@resetting_sortie.name || "Unnamed"}</div>
+          <div class="flex gap-2 mt-2">
+            <div class={[
+              "badge",
+              @resetting_sortie.status == "setup" && "badge-neutral",
+              @resetting_sortie.status == "in_progress" && "badge-warning",
+              @resetting_sortie.status == "finalizing" && "badge-info"
+            ]}>
+              {String.capitalize(@resetting_sortie.status)}
+            </div>
+            <div class="badge badge-outline">{@resetting_sortie.pv_limit || 0} PV</div>
+          </div>
+        </div>
+
+        <div class="alert alert-warning">
+          <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <div>
+            <p class="font-semibold">The following will be cleared:</p>
+            <ul class="list-disc list-inside text-sm mt-1">
+              <li>All battle results and damage status</li>
+              <li>Finalization progress and pilot SP allocations</li>
+              <li>Force commander and MVP selections</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="alert alert-info mt-4">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <div>
+            <p class="font-semibold">The following will be preserved:</p>
+            <ul class="list-disc list-inside text-sm mt-1">
+              <li>Unit and pilot deployments</li>
+              <li>OMNI variant refits (no warchest refund)</li>
+              <li>Sortie name, description, and PV limit</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <:actions>
+        <button
+          type="button"
+          phx-click="close_reset_modal"
+          class="btn"
+        >
+          Keep Sortie
+        </button>
+        <button
+          type="button"
+          phx-click="confirm_reset_sortie"
+          class="btn btn-warning"
+        >
+          Cancel Sortie
         </button>
       </:actions>
     </.modal>
