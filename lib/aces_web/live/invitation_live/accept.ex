@@ -11,6 +11,9 @@ defmodule AcesWeb.InvitationLive.Accept do
 
   alias Aces.{Accounts, Companies}
 
+  # Allow both authenticated and unauthenticated users to view this page
+  on_mount {AcesWeb.UserAuthLive, :allow_unauthenticated}
+
   @impl true
   def mount(%{"token" => token}, _session, socket) do
     case Companies.get_invitation_by_token(token) do

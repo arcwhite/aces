@@ -10,71 +10,73 @@ defmodule AcesWeb.CompanyLive.InviteModal do
   @impl true
   def render(assigns) do
     ~H"""
-    <.modal show={true} on_close="close" max_width="2xl" phx-target={@myself}>
-      <:title>Invite Member</:title>
+    <div>
+      <.modal :if={@show} show={true} on_close="close" max_width="2xl" phx-target={@myself}>
+        <:title>Invite Member</:title>
 
-      <.form for={@form} phx-submit="send_invite" phx-target={@myself} class="space-y-4">
-        <div class="form-control">
-          <label class="label">
-            <span class="label-text">Email Address</span>
-          </label>
-          <input
-            type="email"
-            name="email"
-            value={@form[:email].value}
-            placeholder="user@example.com"
-            class="input input-bordered w-full"
-            required
-          />
-          <%= if @form[:email].errors != [] do %>
+        <.form for={@form} phx-submit="send_invite" phx-target={@myself} class="space-y-4">
+          <div class="form-control">
             <label class="label">
-              <span class="label-text-alt text-error">
-                {Enum.map(@form[:email].errors, fn {msg, _} -> msg end) |> Enum.join(", ")}
-              </span>
+              <span class="label-text">Email Address</span>
             </label>
-          <% end %>
-        </div>
-
-        <div class="form-control">
-          <label class="label">
-            <span class="label-text">Role</span>
-          </label>
-          <select name="role" class="select select-bordered w-full">
-            <option value="viewer">Viewer - Can view company and campaigns</option>
-            <option value="editor">Editor - Can edit company, add units and pilots</option>
-            <option value="owner">Owner - Full access including member management</option>
-          </select>
-        </div>
-
-        <%= if @error do %>
-          <div class="alert alert-error">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              class="stroke-current shrink-0 h-6 w-6"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-            <span>{@error}</span>
+            <input
+              type="email"
+              name="email"
+              value={@form[:email].value}
+              placeholder="user@example.com"
+              class="input input-bordered w-full"
+              required
+            />
+            <%= if @form[:email].errors != [] do %>
+              <label class="label">
+                <span class="label-text-alt text-error">
+                  {Enum.map(@form[:email].errors, fn {msg, _} -> msg end) |> Enum.join(", ")}
+                </span>
+              </label>
+            <% end %>
           </div>
-        <% end %>
 
-        <div class="flex justify-end gap-2 pt-4">
-          <button type="button" phx-click="close" phx-target={@myself} class="btn btn-ghost">
-            Cancel
-          </button>
-          <button type="submit" class="btn btn-primary">
-            Send Invitation
-          </button>
-        </div>
-      </.form>
-    </.modal>
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">Role</span>
+            </label>
+            <select name="role" class="select select-bordered w-full">
+              <option value="viewer">Viewer - Can view company and campaigns</option>
+              <option value="editor">Editor - Can edit company, add units and pilots</option>
+              <option value="owner">Owner - Full access including member management</option>
+            </select>
+          </div>
+
+          <%= if @error do %>
+            <div class="alert alert-error">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                class="stroke-current shrink-0 h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <span>{@error}</span>
+            </div>
+          <% end %>
+
+          <div class="flex justify-end gap-2 pt-4">
+            <button type="button" phx-click="close" phx-target={@myself} class="btn btn-ghost">
+              Cancel
+            </button>
+            <button type="submit" class="btn btn-primary">
+              Send Invitation
+            </button>
+          </div>
+        </.form>
+      </.modal>
+    </div>
     """
   end
 

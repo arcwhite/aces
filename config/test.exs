@@ -23,8 +23,9 @@ config :aces, AcesWeb.Endpoint,
   secret_key_base: "aB09HHlOy2hDGQGVGA8Y2u0Po97XScJKp8vrZ9C0ngwbjIOGFKqQjPBztuUmGnND",
   server: false
 
-# In test we don't send emails
-config :aces, Aces.Mailer, adapter: Swoosh.Adapters.Test
+# In test we use Local adapter which stores emails in memory without sending messages
+# to the calling process (unlike Swoosh.Adapters.Test which sends {:email, _} messages)
+config :aces, Aces.Mailer, adapter: Swoosh.Adapters.Local
 
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false

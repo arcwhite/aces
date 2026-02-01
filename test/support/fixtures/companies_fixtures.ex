@@ -128,6 +128,22 @@ defmodule Aces.CompaniesFixtures do
     pilot
   end
 
+  def invitation_fixture(attrs \\ %{}) do
+    attrs = Enum.into(attrs, %{})
+    company = Map.get(attrs, :company) || company_fixture(status: "active")
+    invited_by = Map.get(attrs, :invited_by) || AccountsFixtures.user_fixture()
+    invited_email = Map.get(attrs, :invited_email, "invited_#{System.unique_integer()}@example.com")
+    role = Map.get(attrs, :role, "viewer")
+
+    # Ensure invited_by is a member of the company (owner)
+    unless Companies.get_membership(company, invited_by) do
+      {:ok, _} = Companies.add_member(company, invited_by, "owner")
+    end
+
+    {:ok, {token, invitation}} = Companies.create_invitation(company, invited_by, invited_email, role)
+    {token, invitation}
+  end
+
   def unique_campaign_name, do: "Campaign #{System.unique_integer()}"
 
   def valid_campaign_attributes(attrs \\ %{}) do

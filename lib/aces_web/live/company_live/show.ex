@@ -399,14 +399,13 @@ defmodule AcesWeb.CompanyLive.Show do
       </.modal>
 
       <!-- Invite Member Modal -->
-      <%= if @show_invite_modal do %>
-        <.live_component
-          module={AcesWeb.CompanyLive.InviteModal}
-          id="invite-modal"
-          company={@company}
-          current_user={@current_scope.user}
-        />
-      <% end %>
+      <.live_component
+        module={AcesWeb.CompanyLive.InviteModal}
+        id="invite-modal"
+        show={@show_invite_modal}
+        company={@company}
+        current_user={@current_scope.user}
+      />
     </div>
     """
   end

@@ -3,7 +3,14 @@ defmodule AcesWeb.UserRegistrationController do
 
   alias Aces.Accounts
 
-  def new(conn, _params) do
+  def new(conn, params) do
+    # Store redirect_to in session so login after registration will redirect back
+    conn =
+      case params["redirect_to"] do
+        nil -> conn
+        redirect_to -> put_session(conn, :user_return_to, redirect_to)
+      end
+
     changeset = Accounts.change_user_registration()
     render(conn, :new, changeset: changeset)
   end

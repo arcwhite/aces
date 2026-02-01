@@ -162,6 +162,133 @@ defmodule AcesWeb.CompanyLive.ShowTest do
     end
   end
 
+  describe "Invite Member Modal" do
+    test "owner can open invite modal from Settings tab", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company.id}")
+
+      # Navigate to Settings tab
+      html = view |> element("button", "Settings") |> render_click()
+      assert html =~ "Invite Member"
+
+      # Click invite button
+      html = view |> element("button", "Invite Member") |> render_click()
+      assert html =~ "Email Address"
+      assert html =~ "Send Invitation"
+    end
+
+    test "modal persists across tab changes (bug fix validation)", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company.id}")
+
+      # Navigate to Settings tab and open modal
+      view |> element("button", "Settings") |> render_click()
+      view |> element("button", "Invite Member") |> render_click()
+
+      # Verify modal is open
+      html = render(view)
+      assert html =~ "Send Invitation"
+
+      # Switch to Overview tab - modal should stay open
+      html = view |> element("button", "Overview") |> render_click()
+      assert html =~ "Send Invitation"
+
+      # Switch to Units tab - modal should still be open
+      html = view |> element("button", "Units") |> render_click()
+      assert html =~ "Send Invitation"
+
+      # Switch back to Settings tab - modal should still be open
+      html = view |> element("button", "Settings") |> render_click()
+      assert html =~ "Send Invitation"
+    end
+
+    test "can send invitation through modal", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company.id}")
+
+      # Navigate to Settings tab and open modal
+      view |> element("button", "Settings") |> render_click()
+      view |> element("button", "Invite Member") |> render_click()
+
+      # Fill out and submit form
+      view
+      |> form("form", %{"email" => "newmember@example.com", "role" => "editor"})
+      |> render_submit()
+
+      # Render the view to get updated state after form submission
+      html = render(view)
+
+      # Modal should be closed (no modal-open class)
+      refute html =~ "modal-open"
+
+      # Verify invitation appears in pending list
+      assert html =~ "newmember@example.com"
+      assert html =~ "Pending Invitations"
+
+      # Verify the invitation was actually created in the database
+      invitations = Aces.Companies.list_pending_invitations(company)
+      assert length(invitations) == 1
+      assert hd(invitations).invited_email == "newmember@example.com"
+      assert hd(invitations).role == "editor"
+    end
+
+    test "viewer cannot see invite button", %{conn: conn, user: user} do
+      owner = user_fixture()
+      company = company_fixture(user: owner, status: "active")
+      {:ok, _} = Aces.Companies.add_member(company, user, "viewer")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company.id}")
+
+      # Navigate to Settings tab
+      html = view |> element("button", "Settings") |> render_click()
+
+      # Viewer should see team members but not invite button (button element)
+      assert html =~ "Team Members"
+      refute html =~ ~r/<button[^>]*>.*Invite Member.*<\/button>/s
+    end
+
+    test "editor cannot see invite button", %{conn: conn, user: user} do
+      owner = user_fixture()
+      company = company_fixture(user: owner, status: "active")
+      {:ok, _} = Aces.Companies.add_member(company, user, "editor")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company.id}")
+
+      # Navigate to Settings tab
+      html = view |> element("button", "Settings") |> render_click()
+
+      # Editor should see team members but not invite button (button element)
+      assert html =~ "Team Members"
+      refute html =~ ~r/<button[^>]*>.*Invite Member.*<\/button>/s
+    end
+
+    test "modal can be closed", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company.id}")
+
+      # Navigate to Settings tab and open modal
+      view |> element("button", "Settings") |> render_click()
+      view |> element("button", "Invite Member") |> render_click()
+
+      # Verify modal is open
+      html = render(view)
+      assert html =~ "Send Invitation"
+
+      # Close the modal using the Cancel button (inside the component)
+      view |> element("button.btn-ghost", "Cancel") |> render_click()
+
+      # Render the view to get the updated state
+      html = render(view)
+
+      # Modal content should no longer be visible (modal hides via :if={@show})
+      refute html =~ "modal-open"
+    end
+  end
+
   defp log_out_user(conn) do
     Plug.Conn.delete_session(conn, :user_token)
   end
