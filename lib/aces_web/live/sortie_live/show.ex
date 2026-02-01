@@ -223,6 +223,45 @@ defmodule AcesWeb.SortieLive.Show do
     end
   end
 
+  @impl true
+  def handle_event("change_variant", params, socket) do
+    deployment_id_str = params["deployment_id"]
+    new_variant_id_str = params["new_variant_id"]
+
+    unless deployment_id_str && new_variant_id_str do
+      {:noreply, put_flash(socket, :error, "Missing parameters for variant change")}
+    else
+      with :ok <- require_can_edit(socket),
+           :ok <- require_sortie_status(socket, "setup") do
+        deployment_id = String.to_integer(deployment_id_str)
+        new_variant_id = String.to_integer(new_variant_id_str)
+
+        deployment = Enum.find(socket.assigns.sortie.deployments, &(&1.id == deployment_id))
+
+        if deployment do
+          current_variant_id = deployment.company_unit.master_unit_id
+
+          # Track pending change in socket assigns (not committed until Start Sortie)
+          # If selecting back to original variant, remove from pending changes
+          pending_changes = socket.assigns.pending_variant_changes
+
+          updated_pending =
+            if new_variant_id == current_variant_id do
+              Map.delete(pending_changes, deployment_id)
+            else
+              Map.put(pending_changes, deployment_id, new_variant_id)
+            end
+
+          {:noreply, assign(socket, :pending_variant_changes, updated_pending)}
+        else
+          {:noreply, put_flash(socket, :error, "Deployment not found")}
+        end
+      else
+        {:error, message} -> {:noreply, put_flash(socket, :error, message)}
+      end
+    end
+  end
+
   # Handle PubSub sortie updates for real-time sync across tabs/users
   @impl true
   def handle_info({:sortie_updated, %{event: _event, payload: _payload}}, socket) do
@@ -265,45 +304,6 @@ defmodule AcesWeb.SortieLive.Show do
      |> assign(:omni_variants, omni_variants)
      |> assign(:pilot_allocations, pilot_allocations)
      |> assign(:all_pilots, all_pilots)}
-  end
-
-  @impl true
-  def handle_event("change_variant", params, socket) do
-    deployment_id_str = params["deployment_id"]
-    new_variant_id_str = params["new_variant_id"]
-
-    unless deployment_id_str && new_variant_id_str do
-      {:noreply, put_flash(socket, :error, "Missing parameters for variant change")}
-    else
-      with :ok <- require_can_edit(socket),
-           :ok <- require_sortie_status(socket, "setup") do
-        deployment_id = String.to_integer(deployment_id_str)
-        new_variant_id = String.to_integer(new_variant_id_str)
-
-        deployment = Enum.find(socket.assigns.sortie.deployments, &(&1.id == deployment_id))
-
-        if deployment do
-          current_variant_id = deployment.company_unit.master_unit_id
-
-          # Track pending change in socket assigns (not committed until Start Sortie)
-          # If selecting back to original variant, remove from pending changes
-          pending_changes = socket.assigns.pending_variant_changes
-
-          updated_pending =
-            if new_variant_id == current_variant_id do
-              Map.delete(pending_changes, deployment_id)
-            else
-              Map.put(pending_changes, deployment_id, new_variant_id)
-            end
-
-          {:noreply, assign(socket, :pending_variant_changes, updated_pending)}
-        else
-          {:noreply, put_flash(socket, :error, "Deployment not found")}
-        end
-      else
-        {:error, message} -> {:noreply, put_flash(socket, :error, message)}
-      end
-    end
   end
 
   # Load available variants for all OMNI units in the deployment list
