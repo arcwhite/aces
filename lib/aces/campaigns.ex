@@ -278,6 +278,9 @@ defmodule Aces.Campaigns do
     |> Ecto.Multi.run(:record_events, fn _repo, %{calculate_expenses: final_sortie} ->
       record_sortie_completion_events(final_sortie, user)
     end)
+    |> Ecto.Multi.run(:apply_battle_results, fn _repo, %{calculate_expenses: final_sortie} ->
+      apply_battle_results_to_roster(final_sortie)
+    end)
     |> Ecto.Multi.update(:finalize, fn %{calculate_expenses: final_sortie} ->
       Sortie.finalize_changeset(final_sortie)
     end)
@@ -711,6 +714,48 @@ defmodule Aces.Campaigns do
       description: CampaignEvent.generate_description(event_type, CampaignEvent.sortie_completed_data(sortie))
     })
     |> Repo.insert()
+  end
+
+  # Apply battle results to company roster (destroyed units, pilot casualties)
+  defp apply_battle_results_to_roster(%Sortie{} = sortie) do
+    # Get fresh deployments with preloaded associations
+    deployments =
+      Deployment
+      |> where(sortie_id: ^sortie.id)
+      |> preload([:company_unit, :pilot])
+      |> Repo.all()
+
+    # Update destroyed units (not salvaged)
+    destroyed_units =
+      deployments
+      |> Enum.filter(fn d ->
+        d.damage_status == "destroyed" and not d.was_salvaged and d.company_unit_id != nil
+      end)
+      |> Enum.map(& &1.company_unit)
+      |> Enum.reject(&is_nil/1)
+
+    for unit <- destroyed_units do
+      unit
+      |> CompanyUnit.changeset(%{status: "destroyed"})
+      |> Repo.update!()
+    end
+
+    # Update pilot casualties
+    pilot_casualties =
+      deployments
+      |> Enum.filter(fn d -> d.pilot_casualty in ["wounded", "killed"] and d.pilot_id != nil end)
+
+    for deployment <- pilot_casualties do
+      pilot = deployment.pilot
+      if pilot do
+        new_status = if deployment.pilot_casualty == "killed", do: "deceased", else: "wounded"
+        pilot
+        |> Pilot.changeset(%{status: new_status})
+        |> Repo.update!()
+      end
+    end
+
+    {:ok, :applied}
   end
 
   ## Campaign Business Logic

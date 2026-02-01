@@ -1434,6 +1434,100 @@ defmodule Aces.CampaignsTest do
       unchanged_sortie = Campaigns.get_sortie!(sortie.id)
       assert unchanged_sortie.status == "in_progress"
     end
+
+    test "marks destroyed units as destroyed on company roster", %{
+      sortie: sortie,
+      deployment: deployment,
+      company_unit: company_unit
+    } do
+      # Verify unit is initially operational
+      assert company_unit.status == "operational"
+
+      completion_attrs = %{
+        was_successful: true,
+        sp_per_participating_pilot: 100,
+        primary_objective_income: 500
+      }
+
+      deployment_results = [
+        {deployment.id, %{damage_status: "destroyed", pilot_casualty: "none", was_salvaged: false}}
+      ]
+
+      assert {:ok, _completed_sortie} = Campaigns.complete_sortie(sortie, completion_attrs, deployment_results)
+
+      # Reload the company unit and verify it's now destroyed
+      updated_unit = Aces.Repo.get!(Aces.Companies.CompanyUnit, company_unit.id)
+      assert updated_unit.status == "destroyed"
+    end
+
+    test "does not mark salvaged units as destroyed", %{
+      sortie: sortie,
+      deployment: deployment,
+      company_unit: company_unit
+    } do
+      completion_attrs = %{
+        was_successful: true,
+        sp_per_participating_pilot: 100,
+        primary_objective_income: 500
+      }
+
+      deployment_results = [
+        {deployment.id, %{damage_status: "destroyed", pilot_casualty: "none", was_salvaged: true}}
+      ]
+
+      assert {:ok, _completed_sortie} = Campaigns.complete_sortie(sortie, completion_attrs, deployment_results)
+
+      # Reload the company unit - should still be operational since it was salvaged
+      updated_unit = Aces.Repo.get!(Aces.Companies.CompanyUnit, company_unit.id)
+      assert updated_unit.status == "operational"
+    end
+
+    test "marks killed pilots as deceased", %{
+      sortie: sortie,
+      deployment: deployment,
+      pilot: pilot
+    } do
+      # Verify pilot is initially active
+      assert pilot.status == "active"
+
+      completion_attrs = %{
+        was_successful: true,
+        sp_per_participating_pilot: 100,
+        primary_objective_income: 500
+      }
+
+      deployment_results = [
+        {deployment.id, %{damage_status: "destroyed", pilot_casualty: "killed", was_salvaged: false}}
+      ]
+
+      assert {:ok, _completed_sortie} = Campaigns.complete_sortie(sortie, completion_attrs, deployment_results)
+
+      # Reload the pilot and verify they're now deceased
+      updated_pilot = Aces.Repo.get!(Aces.Companies.Pilot, pilot.id)
+      assert updated_pilot.status == "deceased"
+    end
+
+    test "marks wounded pilots as wounded", %{
+      sortie: sortie,
+      deployment: deployment,
+      pilot: pilot
+    } do
+      completion_attrs = %{
+        was_successful: true,
+        sp_per_participating_pilot: 100,
+        primary_objective_income: 500
+      }
+
+      deployment_results = [
+        {deployment.id, %{damage_status: "crippled", pilot_casualty: "wounded", was_salvaged: false}}
+      ]
+
+      assert {:ok, _completed_sortie} = Campaigns.complete_sortie(sortie, completion_attrs, deployment_results)
+
+      # Reload the pilot and verify they're now wounded
+      updated_pilot = Aces.Repo.get!(Aces.Companies.Pilot, pilot.id)
+      assert updated_pilot.status == "wounded"
+    end
   end
 
   describe "can_hire_pilots?/1" do
