@@ -12,7 +12,6 @@
 
 # High-priority items
 - [ ] Need to update Edge Abilities to be accurate (ask your user for the actual list)
-- [ ] Add PubSub support so multiple users can see changes to their Company, Campaign, and Sorties in real-time. Especially useful for the "live" Sortie show view, where users are tracking things happening as the game is happening.
 
 # Medium-priority items
 - [ ] Figure out how to compute code coverage
@@ -50,3 +49,4 @@
 - [x] Campaign completion syncs warchest to company - Updated complete_campaign/3 to sync the campaign's final warchest_balance back to the company's warchest_balance. This ensures SP earned or lost during campaigns (via unit purchases, sales, pilot hiring, sorties) persists to the company. Uses Ecto.Multi for atomic transaction. Added 5 comprehensive tests covering unit purchases, sales, pilot hiring, and successful/failed campaign completions.
 - [x] Campaign navigation breadcrumb fix - Fixed CampaignLive.Show to navigate "Back to Campaigns" (/campaigns) instead of "Back to Company". Since Campaigns is a top-level navigation element, the campaign show page should go back to the campaigns list, not to the company page.
 - [x] Company view tabbed interface - Refactored Company show page to use a tabbed interface with four tabs: Overview (company stats, active campaign summary), Pilots (pilot roster), Units (unit roster), Settings (team members, danger zone). Added prominent messaging on the Overview tab explaining that unit purchases and pilot hiring require being on an active campaign. This addresses the user confusion about when these actions are available. Updated tests to verify tab navigation works correctly.
+- [x] PubSub real-time updates - Added Phoenix PubSub support for real-time synchronization across Company, Campaign, and Sortie views. Created Aces.PubSub.Broadcasts module with centralized topic naming and broadcast helpers. Added broadcasts to Companies context (member/invitation changes) and Campaigns context (sortie lifecycle, deployments, damage/casualty updates, unit purchases/sales, pilot hiring, OMNI refits). All three show LiveViews subscribe to relevant topics and reload data on updates. Company view re-verifies authorization when members change. Also fixed deployment ordering (stable sort by PV ascending) and added keywords_gained to campaign overview from completed sorties.
