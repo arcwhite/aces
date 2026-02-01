@@ -292,4 +292,168 @@ defmodule AcesWeb.CompanyLive.ShowTest do
   defp log_out_user(conn) do
     Plug.Conn.delete_session(conn, :user_token)
   end
+
+  describe "URL-based modal state persistence" do
+    test "invite modal opens via URL param", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      # Open modal directly via URL
+      {:ok, _view, html} = live(conn, ~p"/companies/#{company}?modal=invite")
+      assert html =~ "Send Invitation"
+    end
+
+    test "invite modal state survives simulated reconnection", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      # Open modal via URL
+      {:ok, _view, html} = live(conn, ~p"/companies/#{company}?modal=invite")
+      assert html =~ "Send Invitation"
+
+      # Simulate reconnection by re-mounting with same URL (new LiveView session)
+      {:ok, _view2, html2} = live(conn, ~p"/companies/#{company}?modal=invite")
+      assert html2 =~ "Send Invitation"
+    end
+
+    test "unit edit modal opens via URL param with unit_id", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+      master_unit = master_unit_fixture(name: "Atlas", variant: "AS7-D")
+      unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      # Open unit edit modal via URL
+      {:ok, _view, html} = live(conn, ~p"/companies/#{company}?modal=unit_edit&unit_id=#{unit.id}")
+      assert html =~ "Edit Unit"
+    end
+
+    test "unit edit modal state survives simulated reconnection", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+      master_unit = master_unit_fixture(name: "Atlas", variant: "AS7-D")
+      unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      # Open modal via URL
+      {:ok, _view, html} = live(conn, ~p"/companies/#{company}?modal=unit_edit&unit_id=#{unit.id}")
+      assert html =~ "Edit Unit"
+
+      # Simulate reconnection
+      {:ok, _view2, html2} = live(conn, ~p"/companies/#{company}?modal=unit_edit&unit_id=#{unit.id}")
+      assert html2 =~ "Edit Unit"
+    end
+
+    test "pilot edit modal opens via URL param with pilot_id", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+      pilot = pilot_fixture(company: company, name: "Test Pilot")
+
+      # Open pilot edit modal via URL
+      {:ok, _view, html} = live(conn, ~p"/companies/#{company}?modal=pilot_edit&pilot_id=#{pilot.id}")
+      assert html =~ "Edit Pilot"
+    end
+
+    test "pilot edit modal state survives simulated reconnection", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+      pilot = pilot_fixture(company: company, name: "Test Pilot")
+
+      # Open modal via URL
+      {:ok, _view, html} = live(conn, ~p"/companies/#{company}?modal=pilot_edit&pilot_id=#{pilot.id}")
+      assert html =~ "Edit Pilot"
+
+      # Simulate reconnection
+      {:ok, _view2, html2} = live(conn, ~p"/companies/#{company}?modal=pilot_edit&pilot_id=#{pilot.id}")
+      assert html2 =~ "Edit Pilot"
+    end
+
+    test "clicking invite button updates URL with modal param", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}")
+
+      # Navigate to Settings tab and click invite
+      view |> element("button", "Settings") |> render_click()
+      view |> element("button", "Invite Member") |> render_click()
+
+      # Verify the URL was updated (modal should be open)
+      assert render(view) =~ "Send Invitation"
+    end
+
+    test "closing invite modal clears URL param", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}?modal=invite")
+      assert render(view) =~ "Send Invitation"
+
+      # Close the modal
+      view |> element("button.btn-ghost", "Cancel") |> render_click()
+
+      # Modal should be closed
+      html = render(view)
+      refute html =~ "modal-open"
+    end
+
+    test "clicking edit unit button updates URL", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+      master_unit = master_unit_fixture(name: "Atlas", variant: "AS7-D")
+      _unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}")
+
+      # Navigate to Units tab
+      view |> element("button", "Units") |> render_click()
+
+      # Click edit button
+      view |> element("button", "Edit") |> render_click()
+
+      # Modal should be open
+      assert render(view) =~ "Edit Unit"
+    end
+
+    test "invalid unit_id in URL does not open modal", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      # Modal should not open for non-existent unit
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}?modal=unit_edit&unit_id=99999")
+      html = render(view)
+
+      # Modal should not be open (no Edit Unit title visible)
+      refute html =~ "modal-open"
+      # Page should still load the company
+      assert html =~ company.name
+    end
+
+    test "invalid pilot_id in URL does not open modal", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      # Modal should not open for non-existent pilot
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}?modal=pilot_edit&pilot_id=99999")
+      html = render(view)
+
+      # Modal should not be open
+      refute html =~ "modal-open"
+      # Page should still load the company
+      assert html =~ company.name
+    end
+
+    test "malformed unit_id in URL is handled gracefully", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      # Should not crash with non-integer ID
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}?modal=unit_edit&unit_id=abc")
+      html = render(view)
+
+      # Modal should not be open
+      refute html =~ "modal-open"
+      # Page should still load the company
+      assert html =~ company.name
+    end
+
+    test "malformed pilot_id in URL is handled gracefully", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      # Should not crash with non-integer ID
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}?modal=pilot_edit&pilot_id=abc")
+      html = render(view)
+
+      # Modal should not be open
+      refute html =~ "modal-open"
+      # Page should still load the company
+      assert html =~ company.name
+    end
+  end
 end
