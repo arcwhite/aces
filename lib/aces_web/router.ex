@@ -23,10 +23,12 @@ defmodule AcesWeb.Router do
     get "/", PageController, :home
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", AcesWeb do
-  #   pipe_through :api
-  # end
+  # Health check endpoint for Fly.io and other monitoring
+  scope "/", AcesWeb do
+    pipe_through :api
+
+    get "/health", HealthController, :check
+  end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:aces, :dev_routes) do
