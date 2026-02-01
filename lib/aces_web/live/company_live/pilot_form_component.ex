@@ -26,23 +26,30 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
 
   @impl true
   def update(%{pilot: pilot} = assigns, socket) do
-    changeset = Pilots.change_pilot(pilot)
     available_abilities = Pilot.available_edge_abilities()
-    max_abilities = Pilot.calculate_edge_abilities_from_sp(pilot.sp_allocated_to_edge_abilities)
 
+    # Use assign_new to preserve form state across parent re-renders
+    # This ensures form data isn't lost when the parent LiveView updates
     {:ok,
      socket
      |> assign(assigns)
-     |> assign(:form, to_form(changeset))
      |> assign(:available_edge_abilities, available_abilities)
-     |> assign(:max_allowed_abilities, max_abilities)
-     |> assign(:sp_allocation_error, false)
      |> assign_new(:campaign, fn -> nil end)
-     |> assign(:sp_costs, %{
-       skill: Pilot.skill_sp_required(pilot.skill_level - 1),
-       edge_tokens: Pilot.edge_tokens_sp_required((pilot.edge_tokens || 1) + 1),
-       edge_abilities: Pilot.edge_abilities_sp_required(length(pilot.edge_abilities || []) + 1)
-     })}
+     |> assign_new(:pilot, fn -> pilot end)
+     |> assign_new(:form, fn ->
+       to_form(Pilots.change_pilot(pilot))
+     end)
+     |> assign_new(:max_allowed_abilities, fn ->
+       Pilot.calculate_edge_abilities_from_sp(pilot.sp_allocated_to_edge_abilities)
+     end)
+     |> assign_new(:sp_allocation_error, fn -> false end)
+     |> assign_new(:sp_costs, fn ->
+       %{
+         skill: Pilot.skill_sp_required(pilot.skill_level - 1),
+         edge_tokens: Pilot.edge_tokens_sp_required((pilot.edge_tokens || 1) + 1),
+         edge_abilities: Pilot.edge_abilities_sp_required(length(pilot.edge_abilities || []) + 1)
+       }
+     end)}
   end
 
   defp handle_sp_allocation_update(pilot_params, socket) do

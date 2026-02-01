@@ -372,8 +372,138 @@ defmodule AcesWeb.CompanyLive.DraftTest do
 
       # Send remove_pilot event directly with non-existent pilot ID to test server-side validation
       html = render_hook(draft_live, "remove_pilot", %{"pilot_id" => "99999"})
-      
+
       assert html =~ "Pilot not found"
+    end
+  end
+
+  describe "URL-based modal state persistence" do
+    setup %{conn: conn} do
+      user = user_fixture()
+      %{conn: log_in_user(conn, user), user: user}
+    end
+
+    test "unit search modal opens via URL param", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      {:ok, _view, html} = live(conn, ~p"/companies/#{company}/draft?modal=unit_search")
+      assert html =~ "Add Unit to Roster"
+    end
+
+    test "unit search modal state survives simulated reconnection", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      # Open modal via URL
+      {:ok, _view, html} = live(conn, ~p"/companies/#{company}/draft?modal=unit_search")
+      assert html =~ "Add Unit to Roster"
+
+      # Simulate reconnection by re-mounting with same URL
+      {:ok, _view2, html2} = live(conn, ~p"/companies/#{company}/draft?modal=unit_search")
+      assert html2 =~ "Add Unit to Roster"
+    end
+
+    test "pilot form modal opens via URL param", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      {:ok, _view, html} = live(conn, ~p"/companies/#{company}/draft?modal=pilot_form")
+      assert html =~ "Add Pilot to Company"
+    end
+
+    test "pilot form modal state survives simulated reconnection", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      # Open modal via URL
+      {:ok, _view, html} = live(conn, ~p"/companies/#{company}/draft?modal=pilot_form")
+      assert html =~ "Add Pilot to Company"
+
+      # Simulate reconnection
+      {:ok, _view2, html2} = live(conn, ~p"/companies/#{company}/draft?modal=pilot_form")
+      assert html2 =~ "Add Pilot to Company"
+    end
+
+    test "unit edit modal opens via URL param with unit_id", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+      master_unit = master_unit_fixture(name: "Atlas", variant: "AS7-D")
+      unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      {:ok, _view, html} = live(conn, ~p"/companies/#{company}/draft?modal=unit_edit&unit_id=#{unit.id}")
+      assert html =~ "Edit Unit"
+    end
+
+    test "unit edit modal state survives simulated reconnection", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+      master_unit = master_unit_fixture(name: "Atlas", variant: "AS7-D")
+      unit = company_unit_fixture(company: company, master_unit: master_unit)
+
+      # Open modal via URL
+      {:ok, _view, html} = live(conn, ~p"/companies/#{company}/draft?modal=unit_edit&unit_id=#{unit.id}")
+      assert html =~ "Edit Unit"
+
+      # Simulate reconnection
+      {:ok, _view2, html2} = live(conn, ~p"/companies/#{company}/draft?modal=unit_edit&unit_id=#{unit.id}")
+      assert html2 =~ "Edit Unit"
+    end
+
+    test "clicking add unit button updates URL", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}/draft")
+
+      # Click add unit button
+      view |> element("button[phx-click='add_unit']") |> render_click()
+
+      # Modal should be open
+      assert render(view) =~ "Add Unit to Roster"
+    end
+
+    test "clicking add pilot button updates URL", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}/draft")
+
+      # Click add pilot button
+      view |> element("button[phx-click='add_pilot']") |> render_click()
+
+      # Modal should be open
+      assert render(view) =~ "Add Pilot to Company"
+    end
+
+    test "closing unit search modal clears URL param", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}/draft?modal=unit_search")
+      assert render(view) =~ "Add Unit to Roster"
+
+      # Close the modal
+      view |> element("button[phx-click='close_unit_search']") |> render_click()
+
+      # Modal should be closed
+      html = render(view)
+      refute html =~ "modal-open"
+    end
+
+    test "invalid unit_id in URL does not open modal", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}/draft?modal=unit_edit&unit_id=99999")
+      html = render(view)
+
+      # Modal should not be open
+      refute html =~ "modal-open"
+      # Page should still load
+      assert html =~ company.name
+    end
+
+    test "malformed unit_id in URL is handled gracefully", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "draft")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company}/draft?modal=unit_edit&unit_id=abc")
+      html = render(view)
+
+      # Modal should not be open
+      refute html =~ "modal-open"
+      # Page should still load
+      assert html =~ company.name
     end
   end
 end

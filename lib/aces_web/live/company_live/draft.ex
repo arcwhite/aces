@@ -48,29 +48,78 @@ defmodule AcesWeb.CompanyLive.Draft do
   end
 
   @impl true
-  def handle_params(_params, _uri, socket) do
-    {:noreply, socket}
+  def handle_params(params, _uri, socket) do
+    {:noreply, apply_modal_state(socket, params)}
+  end
+
+  # Apply modal state from URL params - enables modal state to survive reconnection
+  defp apply_modal_state(socket, %{"modal" => "unit_search"}) do
+    socket
+    |> close_all_modals()
+    |> assign(:show_unit_search, true)
+    |> assign(:unit_add_error, nil)
+  end
+
+  defp apply_modal_state(socket, %{"modal" => "pilot_form"}) do
+    socket
+    |> close_all_modals()
+    |> assign(:show_pilot_form, true)
+  end
+
+  defp apply_modal_state(socket, %{"modal" => "unit_edit", "unit_id" => unit_id_str}) do
+    case find_unit(socket, unit_id_str) do
+      nil ->
+        socket
+        |> close_all_modals()
+        |> put_flash(:error, "Unit not found")
+
+      unit ->
+        socket
+        |> close_all_modals()
+        |> assign(:show_unit_edit, true)
+        |> assign(:editing_unit, unit)
+    end
+  end
+
+  # Default case: close all modals
+  defp apply_modal_state(socket, _params) do
+    close_all_modals(socket)
+  end
+
+  defp close_all_modals(socket) do
+    socket
+    |> assign(:show_unit_search, false)
+    |> assign(:show_pilot_form, false)
+    |> assign(:show_unit_edit, false)
+    |> assign(:editing_unit, nil)
+  end
+
+  defp find_unit(socket, unit_id_str) do
+    case Integer.parse(unit_id_str) do
+      {unit_id, ""} ->
+        Enum.find(socket.assigns.company.company_units, &(&1.id == unit_id))
+
+      _ ->
+        nil
+    end
   end
 
   @impl true
   def handle_event("add_unit", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_unit_search, true)
-     |> assign(:unit_add_error, nil)
-     |> assign(:search_filter_eras, ["ilclan", "dark_age"])
-     |> assign(:search_filter_faction, "mercenary")
-     |> assign(:search_filter_type, nil)}
+    company = socket.assigns.company
+    {:noreply, push_patch(socket, to: ~p"/companies/#{company}/draft?modal=unit_search")}
   end
 
   def handle_event("close_unit_search", _params, socket) do
+    company = socket.assigns.company
+
     {:noreply,
      socket
-     |> assign(:show_unit_search, false)
      |> assign(:unit_search_term, "")
      |> assign(:search_results, [])
      |> assign(:search_loading, false)
-     |> assign(:unit_add_error, nil)}
+     |> assign(:unit_add_error, nil)
+     |> push_patch(to: ~p"/companies/#{company}/draft")}
   end
 
   def handle_event("toggle_era_filter", %{"era" => era}, socket) do
@@ -142,8 +191,8 @@ defmodule AcesWeb.CompanyLive.Draft do
            socket
            |> assign(:company, updated_company)
            |> put_flash(:info, "Unit successfully added to roster!")
-           |> assign(:show_unit_search, false)
-           |> assign(:unit_add_error, nil)}
+           |> assign(:unit_add_error, nil)
+           |> push_patch(to: ~p"/companies/#{company}/draft")}
 
         {:error, %Ecto.Changeset{} = changeset} ->
           error_message = ChangesetHelpers.format_errors(changeset)
@@ -157,34 +206,23 @@ defmodule AcesWeb.CompanyLive.Draft do
   end
 
   def handle_event("add_pilot", _params, socket) do
-    {:noreply, assign(socket, :show_pilot_form, true)}
+    company = socket.assigns.company
+    {:noreply, push_patch(socket, to: ~p"/companies/#{company}/draft?modal=pilot_form")}
   end
 
   def handle_event("close_pilot_form", _params, socket) do
-    {:noreply, assign(socket, :show_pilot_form, false)}
+    company = socket.assigns.company
+    {:noreply, push_patch(socket, to: ~p"/companies/#{company}/draft")}
   end
 
   def handle_event("edit_unit", %{"unit_id" => unit_id_str}, socket) do
-    unit_id = String.to_integer(unit_id_str)
     company = socket.assigns.company
-    
-    case Enum.find(company.company_units, &(&1.id == unit_id)) do
-      nil ->
-        {:noreply, put_flash(socket, :error, "Unit not found")}
-      
-      unit ->
-        {:noreply, 
-         socket
-         |> assign(:show_unit_edit, true)
-         |> assign(:editing_unit, unit)}
-    end
+    {:noreply, push_patch(socket, to: ~p"/companies/#{company}/draft?modal=unit_edit&unit_id=#{unit_id_str}")}
   end
 
   def handle_event("close_unit_edit", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_unit_edit, false)
-     |> assign(:editing_unit, nil)}
+    company = socket.assigns.company
+    {:noreply, push_patch(socket, to: ~p"/companies/#{company}/draft")}
   end
 
   def handle_event("remove_unit", %{"unit_id" => unit_id_str}, socket) do
@@ -285,21 +323,20 @@ defmodule AcesWeb.CompanyLive.Draft do
   @impl true
   def handle_info({AcesWeb.CompanyLive.PilotFormComponent, {:saved, _pilot}}, socket) do
     updated_company = Companies.get_company_with_stats!(socket.assigns.company.id)
-    
+
     {:noreply,
      socket
      |> assign(:company, updated_company)
-     |> assign(:show_pilot_form, false)}
+     |> push_patch(to: ~p"/companies/#{socket.assigns.company}/draft")}
   end
 
   def handle_info({AcesWeb.CompanyLive.UnitEditComponent, {:saved, _unit}}, socket) do
     updated_company = Companies.get_company_with_stats!(socket.assigns.company.id)
-    
+
     {:noreply,
      socket
      |> assign(:company, updated_company)
-     |> assign(:show_unit_edit, false)
-     |> assign(:editing_unit, nil)}
+     |> push_patch(to: ~p"/companies/#{socket.assigns.company}/draft")}
   end
 
   def handle_info({:perform_search, search_term}, socket) do
