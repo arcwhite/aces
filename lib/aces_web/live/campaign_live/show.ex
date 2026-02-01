@@ -58,6 +58,69 @@ defmodule AcesWeb.CampaignLive.Show do
   end
 
   @impl true
+  def handle_params(params, _uri, socket) do
+    {:noreply, apply_modal_state(socket, params)}
+  end
+
+  # Apply modal state from URL params - enables modal state to survive reconnection
+  defp apply_modal_state(socket, %{"modal" => "unit_search"}) do
+    socket
+    |> close_all_modals()
+    |> assign(:show_unit_search, true)
+  end
+
+  defp apply_modal_state(socket, %{"modal" => "pilot_form"}) do
+    socket
+    |> close_all_modals()
+    |> assign(:show_pilot_form, true)
+  end
+
+  defp apply_modal_state(socket, %{"modal" => "sell_unit", "unit_id" => unit_id_str}) do
+    case find_unit(socket, unit_id_str) do
+      nil ->
+        socket
+        |> close_all_modals()
+        |> put_flash(:error, "Unit not found")
+
+      unit ->
+        if Campaigns.can_sell_unit?(unit) do
+          socket
+          |> close_all_modals()
+          |> assign(:show_sell_modal, true)
+          |> assign(:selling_unit, unit)
+        else
+          socket
+          |> close_all_modals()
+          |> put_flash(:error, "Cannot sell: unit is deployed in an active sortie")
+        end
+    end
+  end
+
+  # Default case: close all modals
+  defp apply_modal_state(socket, _params) do
+    close_all_modals(socket)
+  end
+
+  defp close_all_modals(socket) do
+    socket
+    |> assign(:show_unit_search, false)
+    |> assign(:show_pilot_form, false)
+    |> assign(:show_sell_modal, false)
+    |> assign(:selling_unit, nil)
+    |> assign(:unit_add_error, nil)
+  end
+
+  defp find_unit(socket, unit_id_str) do
+    case Integer.parse(unit_id_str) do
+      {unit_id, ""} ->
+        Enum.find(socket.assigns.company.company_units, &(&1.id == unit_id))
+
+      _ ->
+        nil
+    end
+  end
+
+  @impl true
   def handle_event("complete_campaign", %{"outcome" => outcome}, socket) do
     campaign = socket.assigns.campaign
     user = socket.assigns.current_scope.user
@@ -99,18 +162,24 @@ defmodule AcesWeb.CampaignLive.Show do
   # Unit search modal handlers
   def handle_event("open_unit_search", _params, socket) do
     {:noreply,
-     socket
-     |> assign(:show_unit_search, true)
-     |> assign(:unit_add_error, nil)}
+     push_patch(socket,
+       to: ~p"/companies/#{socket.assigns.company}/campaigns/#{socket.assigns.campaign}?modal=unit_search"
+     )}
   end
 
   # Pilot hire modal handlers
   def handle_event("hire_pilot", _params, socket) do
-    {:noreply, assign(socket, :show_pilot_form, true)}
+    {:noreply,
+     push_patch(socket,
+       to: ~p"/companies/#{socket.assigns.company}/campaigns/#{socket.assigns.campaign}?modal=pilot_form"
+     )}
   end
 
   def handle_event("close_pilot_form", _params, socket) do
-    {:noreply, assign(socket, :show_pilot_form, false)}
+    {:noreply,
+     push_patch(socket,
+       to: ~p"/companies/#{socket.assigns.company}/campaigns/#{socket.assigns.campaign}"
+     )}
   end
 
   # Unit selling handlers
@@ -130,9 +199,9 @@ defmodule AcesWeb.CampaignLive.Show do
         unit ->
           if Campaigns.can_sell_unit?(unit) do
             {:noreply,
-             socket
-             |> assign(:show_sell_modal, true)
-             |> assign(:selling_unit, unit)}
+             push_patch(socket,
+               to: ~p"/companies/#{company}/campaigns/#{campaign}?modal=sell_unit&unit_id=#{unit_id}"
+             )}
           else
             case Campaigns.get_unit_active_sortie(unit) do
               %{name: name, mission_number: number} ->
@@ -148,9 +217,9 @@ defmodule AcesWeb.CampaignLive.Show do
 
   def handle_event("close_sell_modal", _params, socket) do
     {:noreply,
-     socket
-     |> assign(:show_sell_modal, false)
-     |> assign(:selling_unit, nil)}
+     push_patch(socket,
+       to: ~p"/companies/#{socket.assigns.company}/campaigns/#{socket.assigns.campaign}"
+     )}
   end
 
   def handle_event("confirm_sell_unit", _params, socket) do
@@ -172,23 +241,26 @@ defmodule AcesWeb.CampaignLive.Show do
            |> assign(:company, updated_company)
            |> assign(:campaign, updated_campaign)
            |> assign(:can_purchase_units, Campaigns.can_purchase_units?(updated_campaign))
-           |> assign(:show_sell_modal, false)
-           |> assign(:selling_unit, nil)
-           |> put_flash(:info, "Sold #{unit_name} for #{sell_price} SP")}
+           |> put_flash(:info, "Sold #{unit_name} for #{sell_price} SP")
+           |> push_patch(
+             to: ~p"/companies/#{company}/campaigns/#{campaign}"
+           )}
 
         {:error, message} when is_binary(message) ->
           {:noreply,
            socket
-           |> assign(:show_sell_modal, false)
-           |> assign(:selling_unit, nil)
-           |> put_flash(:error, message)}
+           |> put_flash(:error, message)
+           |> push_patch(
+             to: ~p"/companies/#{company}/campaigns/#{campaign}"
+           )}
 
         {:error, error} ->
           {:noreply,
            socket
-           |> assign(:show_sell_modal, false)
-           |> assign(:selling_unit, nil)
-           |> put_flash(:error, "Failed to sell unit: #{inspect(error)}")}
+           |> put_flash(:error, "Failed to sell unit: #{inspect(error)}")
+           |> push_patch(
+             to: ~p"/companies/#{company}/campaigns/#{campaign}"
+           )}
       end
     else
       {:noreply, put_flash(socket, :error, "You don't have permission to sell units")}
@@ -198,9 +270,9 @@ defmodule AcesWeb.CampaignLive.Show do
   @impl true
   def handle_info({AcesWeb.Components.UnitSearchModal, :close_modal}, socket) do
     {:noreply,
-     socket
-     |> assign(:show_unit_search, false)
-     |> assign(:unit_add_error, nil)}
+     push_patch(socket,
+       to: ~p"/companies/#{socket.assigns.company}/campaigns/#{socket.assigns.campaign}"
+     )}
   end
 
   def handle_info({AcesWeb.Components.UnitSearchModal, {:unit_selected, mul_id}}, socket) do
@@ -219,7 +291,9 @@ defmodule AcesWeb.CampaignLive.Show do
            |> assign(:company, updated_company)
            |> assign(:can_purchase_units, Campaigns.can_purchase_units?(updated_campaign))
            |> put_flash(:info, "Unit purchased successfully!")
-           |> assign(:show_unit_search, false)}
+           |> push_patch(
+             to: ~p"/companies/#{socket.assigns.company}/campaigns/#{campaign}"
+           )}
 
         {:error, %Ecto.Changeset{} = changeset} ->
           error_message = ChangesetHelpers.format_errors(changeset)
@@ -245,7 +319,9 @@ defmodule AcesWeb.CampaignLive.Show do
      |> assign(:campaign, updated_campaign)
      |> assign(:can_purchase_units, Campaigns.can_purchase_units?(updated_campaign))
      |> assign(:can_hire_pilots, Campaigns.can_hire_pilots?(updated_campaign))
-     |> assign(:show_pilot_form, false)}
+     |> push_patch(
+       to: ~p"/companies/#{socket.assigns.company}/campaigns/#{socket.assigns.campaign}"
+     )}
   end
 
   # Handle PubSub campaign updates for real-time sync across tabs/users
