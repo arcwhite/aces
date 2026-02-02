@@ -2,7 +2,7 @@ defmodule AcesWeb.SortieLive.Edit do
   use AcesWeb, :live_view
 
   alias Aces.{Companies, Campaigns}
-  alias Aces.Companies.Authorization
+  alias Aces.Companies.{Authorization, Pilot}
   alias Aces.Campaigns.Sortie
 
   on_mount {AcesWeb.UserAuthLive, :default}
@@ -205,16 +205,20 @@ defmodule AcesWeb.SortieLive.Edit do
     |> Enum.sort_by(& &1.callsign)
   end
 
-  defp get_assignable_pilots(available_pilots, selected_deployments, current_unit_id) do
+  defp get_assignable_pilots(available_pilots, selected_deployments, current_unit_id, unit_type) do
     # Get IDs of pilots already assigned to OTHER units (not the current one)
     assigned_pilot_ids =
       selected_deployments
       |> Enum.filter(&(&1.pilot_id && &1.company_unit_id != current_unit_id))
       |> Enum.map(& &1.pilot_id)
 
-    # Filter out pilots that are already assigned to other units
+    # Filter out pilots that:
+    # 1. Are already assigned to other units
+    # 2. Are not qualified for this unit type
+    # Note: conventional_infantry cannot have assigned pilots at all
     available_pilots
     |> Enum.reject(&(&1.id in assigned_pilot_ids))
+    |> Enum.filter(&(&1.unit_type == unit_type))
   end
 
   defp convert_deployments_to_form(deployments, available_units) do
@@ -419,19 +423,31 @@ defmodule AcesWeb.SortieLive.Edit do
 
                           <%= if is_deployed do %>
                             <div class="mt-4">
-                              <select
-                                class="select select-sm select-bordered w-full"
-                                phx-blur="assign_pilot"
-                                phx-value-unit_id={unit.id}
-                                value={current_pilot_id || ""}
-                              >
-                                <option value="">Unnamed Crew (Skill 4)</option>
-                                <%= for pilot <- get_assignable_pilots(@available_pilots, @selected_deployments, unit.id) do %>
-                                  <option value={pilot.id} selected={pilot.id == current_pilot_id}>
-                                    {pilot.callsign} (Skill {pilot.skill_level})
-                                  </option>
+                              <%= if unit.master_unit.unit_type == "conventional_infantry" do %>
+                                <div class="text-xs opacity-70 italic">
+                                  Infantry units cannot have assigned pilots
+                                </div>
+                              <% else %>
+                                <% assignable_pilots = get_assignable_pilots(@available_pilots, @selected_deployments, unit.id, unit.master_unit.unit_type) %>
+                                <select
+                                  class="select select-sm select-bordered w-full"
+                                  phx-blur="assign_pilot"
+                                  phx-value-unit_id={unit.id}
+                                  value={current_pilot_id || ""}
+                                >
+                                  <option value="">Unnamed Crew (Skill 4)</option>
+                                  <%= for pilot <- assignable_pilots do %>
+                                    <option value={pilot.id} selected={pilot.id == current_pilot_id}>
+                                      {pilot.callsign || pilot.name} (Skill {pilot.skill_level})
+                                    </option>
+                                  <% end %>
+                                </select>
+                                <%= if assignable_pilots == [] and current_pilot_id == nil do %>
+                                  <div class="text-xs text-warning mt-1">
+                                    No pilots qualified for <%= Pilot.unit_type_display_name(unit.master_unit.unit_type) %>
+                                  </div>
                                 <% end %>
-                              </select>
+                              <% end %>
                             </div>
                           <% end %>
                         </div>

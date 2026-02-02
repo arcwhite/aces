@@ -300,6 +300,70 @@ defmodule Aces.Companies.PilotTest do
     end
   end
 
+  describe "unit type validations" do
+    test "valid unit types are accepted" do
+      company = company_fixture()
+
+      for unit_type <- ["battlemech", "combat_vehicle", "battle_armor"] do
+        attrs = @valid_attrs
+        |> Map.put(:unit_type, unit_type)
+        |> Map.put(:company_id, company.id)
+        changeset = Pilot.changeset(%Pilot{}, attrs)
+        assert changeset.valid?, "Unit type #{unit_type} should be valid"
+      end
+    end
+
+    test "conventional_infantry is not allowed as pilot unit type" do
+      company = company_fixture()
+
+      attrs = @valid_attrs
+      |> Map.put(:unit_type, "conventional_infantry")
+      |> Map.put(:company_id, company.id)
+      changeset = Pilot.changeset(%Pilot{}, attrs)
+      refute changeset.valid?
+      assert "is invalid" in errors_on(changeset).unit_type
+    end
+
+    test "invalid unit types are rejected" do
+      company = company_fixture()
+
+      for unit_type <- ["protomech", "other", "spaceship", "invalid"] do
+        attrs = @valid_attrs
+        |> Map.put(:unit_type, unit_type)
+        |> Map.put(:company_id, company.id)
+        changeset = Pilot.changeset(%Pilot{}, attrs)
+        refute changeset.valid?, "Unit type #{unit_type} should be invalid"
+      end
+    end
+
+    test "default unit type is battlemech" do
+      company = company_fixture()
+
+      attrs = @valid_attrs
+      |> Map.delete(:unit_type)
+      |> Map.put(:company_id, company.id)
+      changeset = Pilot.changeset(%Pilot{}, attrs)
+      assert changeset.valid?
+      # Default is applied at schema level
+    end
+
+    test "valid_pilot_unit_types/0 returns correct list" do
+      types = Pilot.valid_pilot_unit_types()
+      assert is_list(types)
+      assert "battlemech" in types
+      assert "combat_vehicle" in types
+      assert "battle_armor" in types
+      refute "conventional_infantry" in types
+    end
+
+    test "unit_type_display_name/1 returns human-readable names" do
+      assert Pilot.unit_type_display_name("battlemech") == "BattleMech"
+      assert Pilot.unit_type_display_name("combat_vehicle") == "Combat Vehicle"
+      assert Pilot.unit_type_display_name("battle_armor") == "Battle Armor"
+      assert Pilot.unit_type_display_name("unknown") == "Unknown"
+    end
+  end
+
   describe "security edge cases" do
     test "extremely large SP values are rejected" do
       company = company_fixture()

@@ -15,6 +15,11 @@ defmodule Aces.Companies.Pilot do
   @min_skill_level 0
   @default_skill_level 4
 
+  # Valid unit types that pilots can be qualified for
+  # Note: conventional_infantry cannot have assigned pilots
+  @valid_pilot_unit_types ~w(battlemech combat_vehicle battle_armor)
+  @default_pilot_unit_type "battlemech"
+
   # Skill progression costs based on Battletech: Aces rules (cumulative SP required to reach level)
   @skill_progression_costs %{
     4 => 0,     # Starting skill level
@@ -86,6 +91,9 @@ defmodule Aces.Companies.Pilot do
     field :sp_allocated_to_edge_abilities, :integer, default: 0
     field :sp_available, :integer, default: 150  # 150 starting SP
 
+    # Unit type qualification - determines which unit types this pilot can operate
+    field :unit_type, :string, default: "battlemech"
+
     belongs_to :company, Company
     has_one :assigned_unit, CompanyUnit
     has_many :allocations, PilotAllocation, foreign_key: :pilot_id
@@ -96,17 +104,18 @@ defmodule Aces.Companies.Pilot do
   @doc false
   def changeset(pilot, attrs) do
     pilot
-    |> cast(attrs, [:name, :callsign, :description, :portrait_url, :skill_level, 
-                    :edge_tokens, :status, :wounds, :sp_earned, 
+    |> cast(attrs, [:name, :callsign, :description, :portrait_url, :skill_level,
+                    :edge_tokens, :status, :wounds, :sp_earned,
                     :mvp_awards, :sorties_participated, :company_id,
-                    :sp_allocated_to_skill, :sp_allocated_to_edge_tokens, 
-                    :sp_allocated_to_edge_abilities, :sp_available])
+                    :sp_allocated_to_skill, :sp_allocated_to_edge_tokens,
+                    :sp_allocated_to_edge_abilities, :sp_available, :unit_type])
     |> cast_edge_abilities_manually(attrs)
     |> validate_required([:name, :company_id])
     |> update_change(:name, &String.trim/1)
     |> update_change(:callsign, fn val -> if val, do: String.trim(val), else: val end)
     |> update_change(:description, fn val -> if val && String.trim(val) == "", do: nil, else: val end)
     |> validate_inclusion(:status, @status_values)
+    |> validate_inclusion(:unit_type, @valid_pilot_unit_types)
     |> validate_number(:skill_level, greater_than_or_equal_to: @min_skill_level, less_than_or_equal_to: @max_skill_level)
     |> validate_number(:edge_tokens, greater_than_or_equal_to: 1)
     |> validate_number(:wounds, greater_than_or_equal_to: 0)
@@ -130,10 +139,11 @@ defmodule Aces.Companies.Pilot do
   """
   def creation_changeset(pilot, attrs) do
     pilot
-    |> cast(attrs, [:name, :callsign, :description, :portrait_url])
+    |> cast(attrs, [:name, :callsign, :description, :portrait_url, :unit_type])
     |> validate_required([:name])
     |> validate_length(:name, min: 1, max: 100)
     |> validate_length(:callsign, max: 50)
+    |> validate_inclusion(:unit_type, @valid_pilot_unit_types)
     |> put_change(:skill_level, @default_skill_level)
     |> put_change(:edge_tokens, 1)
     |> put_change(:status, "active")
@@ -208,6 +218,28 @@ defmodule Aces.Companies.Pilot do
   def available_edge_abilities do
     @available_edge_abilities
   end
+
+  @doc """
+  Get list of valid unit types for pilots
+  """
+  def valid_pilot_unit_types do
+    @valid_pilot_unit_types
+  end
+
+  @doc """
+  Get the default pilot unit type
+  """
+  def default_pilot_unit_type do
+    @default_pilot_unit_type
+  end
+
+  @doc """
+  Get a human-readable display name for a pilot unit type
+  """
+  def unit_type_display_name("battlemech"), do: "BattleMech"
+  def unit_type_display_name("combat_vehicle"), do: "Combat Vehicle"
+  def unit_type_display_name("battle_armor"), do: "Battle Armor"
+  def unit_type_display_name(_), do: "Unknown"
 
   @doc """
   Apply wounds to a pilot

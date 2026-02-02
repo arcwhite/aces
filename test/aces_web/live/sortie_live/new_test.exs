@@ -229,5 +229,91 @@ defmodule AcesWeb.SortieLive.NewTest do
       assert html =~ "Back to Campaign"
       assert html =~ ~p"/companies/#{company.id}/campaigns/#{campaign.id}"
     end
+
+    test "only shows pilots qualified for the unit type", %{conn: conn, user: user} do
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+
+      # Create pilots for different unit types
+      mech_pilot = pilot_fixture(company: company, callsign: "MechPilot", unit_type: "battlemech")
+      tank_pilot = pilot_fixture(company: company, callsign: "TankPilot", unit_type: "combat_vehicle")
+      ba_pilot = pilot_fixture(company: company, callsign: "BAPilot", unit_type: "battle_armor")
+
+      # Create units of different types
+      mech_master = master_unit_fixture(unit_type: "battlemech", name: "Atlas", variant: "AS7-D")
+      tank_master = master_unit_fixture(unit_type: "combat_vehicle", name: "Demolisher", variant: "II")
+
+      mech_unit = company_unit_fixture(company: company, master_unit: mech_master, custom_name: "TestMech")
+      tank_unit = company_unit_fixture(company: company, master_unit: tank_master, custom_name: "TestTank")
+
+      {:ok, new_live, _html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/new")
+
+      # Deploy the BattleMech unit
+      new_live
+      |> element("input[type=checkbox][phx-value-unit_id='#{mech_unit.id}']")
+      |> render_click()
+
+      html = render(new_live)
+      # Only battlemech pilot should be visible for the mech
+      assert html =~ mech_pilot.callsign
+      refute html =~ tank_pilot.callsign
+      refute html =~ ba_pilot.callsign
+
+      # Deploy the tank unit as well
+      new_live
+      |> element("input[type=checkbox][phx-value-unit_id='#{tank_unit.id}']")
+      |> render_click()
+
+      html = render(new_live)
+      # Now tank pilot should be visible (for the tank unit)
+      assert html =~ tank_pilot.callsign
+    end
+
+    test "shows warning when no pilots are qualified for unit type", %{conn: conn, user: user} do
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+
+      # Create only a tank pilot
+      _tank_pilot = pilot_fixture(company: company, callsign: "TankPilot", unit_type: "combat_vehicle")
+
+      # Create a battlemech unit
+      mech_master = master_unit_fixture(unit_type: "battlemech", name: "Atlas", variant: "AS7-D")
+      mech_unit = company_unit_fixture(company: company, master_unit: mech_master, custom_name: "TestMech")
+
+      {:ok, new_live, _html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/new")
+
+      # Deploy the BattleMech unit
+      new_live
+      |> element("input[type=checkbox][phx-value-unit_id='#{mech_unit.id}']")
+      |> render_click()
+
+      html = render(new_live)
+      assert html =~ "No pilots qualified for BattleMech"
+    end
+
+    test "does not show pilot dropdown for conventional infantry", %{conn: conn, user: user} do
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+
+      # Create a pilot
+      _pilot = pilot_fixture(company: company)
+
+      # Create a conventional infantry unit
+      infantry_master = master_unit_fixture(unit_type: "conventional_infantry", name: "Foot Platoon", variant: "Standard")
+      infantry_unit = company_unit_fixture(company: company, master_unit: infantry_master, custom_name: "TestInfantry")
+
+      {:ok, new_live, _html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/new")
+
+      # Deploy the infantry unit
+      new_live
+      |> element("input[type=checkbox][phx-value-unit_id='#{infantry_unit.id}']")
+      |> render_click()
+
+      html = render(new_live)
+      # Should show message that infantry cannot have pilots
+      assert html =~ "Infantry units cannot have assigned pilots"
+      # Should not show pilot select for infantry
+      refute html =~ "select[phx-value-unit_id='#{infantry_unit.id}']"
+    end
   end
 end

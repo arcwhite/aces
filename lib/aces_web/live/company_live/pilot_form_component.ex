@@ -27,6 +27,7 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
   @impl true
   def update(%{pilot: pilot} = assigns, socket) do
     available_abilities = Pilot.available_edge_abilities()
+    valid_unit_types = Pilot.valid_pilot_unit_types()
 
     # Use assign_new to preserve form state across parent re-renders
     # This ensures form data isn't lost when the parent LiveView updates
@@ -34,6 +35,7 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
      socket
      |> assign(assigns)
      |> assign(:available_edge_abilities, available_abilities)
+     |> assign(:valid_unit_types, valid_unit_types)
      |> assign_new(:campaign, fn -> nil end)
      |> assign_new(:pilot, fn -> pilot end)
      |> assign_new(:form, fn ->
@@ -327,6 +329,27 @@ defmodule AcesWeb.CompanyLive.PilotFormComponent do
                 label="Portrait URL (Optional)"
                 placeholder="https://example.com/pilot-image.jpg"
               />
+              <div class="form-control w-full">
+                <label class="label">
+                  <span class="label-text">Unit Type Qualification</span>
+                </label>
+                <select
+                  name="pilot[unit_type]"
+                  class="select select-bordered w-full"
+                >
+                  <%= for unit_type <- @valid_unit_types do %>
+                    <option
+                      value={unit_type}
+                      selected={(@form[:unit_type].value || @pilot.unit_type || "battlemech") == unit_type}
+                    >
+                      <%= Pilot.unit_type_display_name(unit_type) %>
+                    </option>
+                  <% end %>
+                </select>
+                <label class="label">
+                  <span class="label-text-alt opacity-70">Determines which unit types this pilot can operate</span>
+                </label>
+              </div>
             </div>
           </div>
         </div>

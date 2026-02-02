@@ -111,7 +111,8 @@ defmodule Aces.CompaniesFixtures do
       sp_allocated_to_skill: 0,
       sp_allocated_to_edge_tokens: sp_for_tokens,
       sp_allocated_to_edge_abilities: 0,
-      sp_available: 150 - sp_for_tokens
+      sp_available: 150 - sp_for_tokens,
+      unit_type: "battlemech"  # default to battlemech
     })
   end
 
