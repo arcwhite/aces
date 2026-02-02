@@ -9,6 +9,12 @@ defmodule AcesWeb.CampaignLive.Index do
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
+  # Tab definitions - hoisted here for discoverability
+  @tabs [
+    {"Active", :active},
+    {"Past", :past}
+  ]
+
   @impl true
   def mount(_params, _session, socket) do
     user = socket.assigns.current_scope.user
@@ -23,6 +29,7 @@ defmodule AcesWeb.CampaignLive.Index do
      socket
      |> assign(:active_campaigns, active_campaigns)
      |> assign(:past_campaigns, past_campaigns)
+     |> assign(:tabs, @tabs)
      |> assign(:selected_tab, :active)
      |> assign(:page_title, "My Campaigns")}
   end
@@ -46,30 +53,13 @@ defmodule AcesWeb.CampaignLive.Index do
         </div>
       </div>
 
-      <div role="tablist" class="tabs tabs-bordered mb-6">
-        <button
-          role="tab"
-          class={"tab " <> if(@selected_tab == :active, do: "tab-active", else: "")}
-          phx-click="select_tab"
-          phx-value-tab="active"
-        >
-          Active
-          <%= if @active_campaigns != [] do %>
-            <span class="badge badge-sm badge-primary ml-2">{length(@active_campaigns)}</span>
-          <% end %>
-        </button>
-        <button
-          role="tab"
-          class={"tab " <> if(@selected_tab == :past, do: "tab-active", else: "")}
-          phx-click="select_tab"
-          phx-value-tab="past"
-        >
-          Past
-          <%= if @past_campaigns != [] do %>
-            <span class="badge badge-sm badge-ghost ml-2">{length(@past_campaigns)}</span>
-          <% end %>
-        </button>
-      </div>
+      <.tab_navigation
+        tabs={@tabs}
+        active_tab={@selected_tab}
+        on_change="select_tab"
+        show_counts={tab_counts(@active_campaigns, @past_campaigns)}
+        class="tabs tabs-bordered mb-6"
+      />
 
       <%= if @selected_tab == :active do %>
         {render_campaigns_grid(assigns, @active_campaigns, :active)}
@@ -175,6 +165,13 @@ defmodule AcesWeb.CampaignLive.Index do
 
     Campaigns.list_campaigns_by_company_ids(company_ids)
     |> Enum.sort_by(& &1.updated_at, {:desc, DateTime})
+  end
+
+  defp tab_counts(active_campaigns, past_campaigns) do
+    counts = %{}
+    counts = if active_campaigns != [], do: Map.put(counts, :active, length(active_campaigns)), else: counts
+    counts = if past_campaigns != [], do: Map.put(counts, :past, length(past_campaigns)), else: counts
+    counts
   end
 
   defp format_date(datetime) do

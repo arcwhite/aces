@@ -505,6 +505,48 @@ defmodule AcesWeb.CoreComponents do
     """
   end
 
+  @doc """
+  Renders a tabbed navigation interface.
+
+  ## Examples
+
+      <.tab_navigation
+        tabs={[{"Overview", :overview}, {"Units", :units}]}
+        active_tab={@active_tab}
+      />
+
+      <.tab_navigation
+        tabs={[{"Active", :active}, {"Past", :past}]}
+        active_tab={@selected_tab}
+        on_change="select_tab"
+        show_counts={%{active: 3, past: 5}}
+      />
+  """
+  attr :tabs, :list, required: true, doc: "List of {label, value} tuples"
+  attr :active_tab, :atom, required: true, doc: "The currently active tab"
+  attr :on_change, :string, default: "set_tab", doc: "The event to send when tab changes"
+  attr :show_counts, :map, default: %{}, doc: "Map of tab keys to counts to display as badges"
+  attr :class, :string, default: "tabs tabs-boxed mb-6", doc: "CSS classes for the container"
+
+  def tab_navigation(assigns) do
+    ~H"""
+    <div role="tablist" class={@class}>
+      <button
+        :for={{label, tab} <- @tabs}
+        role="tab"
+        class={["tab", @active_tab == tab && "tab-active"]}
+        phx-click={@on_change}
+        phx-value-tab={tab}
+      >
+        {label}
+        <span :if={Map.has_key?(@show_counts, tab)} class="badge badge-sm ml-2">
+          {Map.get(@show_counts, tab)}
+        </span>
+      </button>
+    </div>
+    """
+  end
+
   ## JS Commands
 
   def show(js \\ %JS{}, selector) do

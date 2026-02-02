@@ -86,9 +86,10 @@ defmodule AcesWeb.CampaignLive.IndexTest do
 
       {:ok, _index_live, html} = live(conn, ~p"/campaigns")
 
-      # Should show count badges in tabs
-      assert html =~ "<span class=\"badge badge-sm badge-primary ml-2\">2</span>"
-      assert html =~ "<span class=\"badge badge-sm badge-ghost ml-2\">1</span>"
+      # Should show count badges in tabs (using shared tab_navigation component)
+      # The badges show campaign counts
+      assert html =~ ~r/badge badge-sm ml-2[^>]*>\s*2\s*</
+      assert html =~ ~r/badge badge-sm ml-2[^>]*>\s*1\s*</
     end
 
     test "switches between tabs correctly", %{conn: conn, user: user} do

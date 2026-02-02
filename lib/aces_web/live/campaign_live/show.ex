@@ -7,6 +7,15 @@ defmodule AcesWeb.CampaignLive.Show do
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
+  # Tab definitions - hoisted here for discoverability
+  @tabs [
+    {"Overview", :overview},
+    {"Sorties", :sorties},
+    {"Units", :units},
+    {"Pilots", :pilots},
+    {"Timeline", :timeline}
+  ]
+
   @impl true
   def mount(%{"company_id" => company_id, "id" => campaign_id}, _session, socket) do
     company = Companies.get_company!(company_id)
@@ -43,6 +52,7 @@ defmodule AcesWeb.CampaignLive.Show do
          |> assign(:pilot_performance, pilot_performance)
          |> assign(:overview, overview)
          |> assign(:wounded_pilots, wounded_pilots)
+         |> assign(:tabs, @tabs)
          |> assign(:active_tab, :overview)
          |> assign(:page_title, campaign.name)
          |> assign(:can_edit, Authorization.can?(:edit_company, user, company))
@@ -554,7 +564,7 @@ defmodule AcesWeb.CampaignLive.Show do
       </div>
 
       <!-- Tab Navigation -->
-      <.tab_navigation active_tab={@active_tab} />
+      <.tab_navigation tabs={@tabs} active_tab={@active_tab} />
 
       <!-- Tab Content -->
       <.tab_content
@@ -624,30 +634,16 @@ defmodule AcesWeb.CampaignLive.Show do
     """
   end
 
-  # Tab navigation component
-  defp tab_navigation(assigns) do
-    ~H"""
-    <div role="tablist" class="tabs tabs-boxed mb-6">
-      <button
-        :for={{label, tab} <- [{"Overview", :overview}, {"Sorties", :sorties},
-                               {"Units", :units}, {"Pilots", :pilots}, {"Timeline", :timeline}]}
-        role="tab"
-        class={["tab", @active_tab == tab && "tab-active"]}
-        phx-click="set_tab"
-        phx-value-tab={tab}
-      >
-        {label}
-      </button>
-    </div>
-    """
+  # Tab content router - tabs defined in @tabs module attribute at top of file
+  defp tab_content(assigns) do
+    case assigns.active_tab do
+      :overview -> overview_tab(assigns)
+      :sorties -> sorties_tab(assigns)
+      :units -> units_tab(assigns)
+      :pilots -> pilots_tab(assigns)
+      :timeline -> timeline_tab(assigns)
+    end
   end
-
-  # Tab content router
-  defp tab_content(%{active_tab: :overview} = assigns), do: overview_tab(assigns)
-  defp tab_content(%{active_tab: :sorties} = assigns), do: sorties_tab(assigns)
-  defp tab_content(%{active_tab: :units} = assigns), do: units_tab(assigns)
-  defp tab_content(%{active_tab: :pilots} = assigns), do: pilots_tab(assigns)
-  defp tab_content(%{active_tab: :timeline} = assigns), do: timeline_tab(assigns)
 
   # Overview Tab
   defp overview_tab(assigns) do

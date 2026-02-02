@@ -8,6 +8,14 @@ defmodule AcesWeb.CompanyLive.Show do
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
+  # Tab definitions - hoisted here for discoverability
+  @tabs [
+    {"Overview", :overview},
+    {"Pilots", :pilots},
+    {"Units", :units},
+    {"Settings", :settings}
+  ]
+
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     company = Companies.get_company_with_stats!(id)
@@ -38,6 +46,7 @@ defmodule AcesWeb.CompanyLive.Show do
          |> assign(:company, company)
          |> assign(:active_campaign, active_campaign)
          |> assign(:page_title, company.name)
+         |> assign(:tabs, @tabs)
          |> assign(:active_tab, :overview)
          |> assign(:show_unit_search, false)
          |> assign(:show_unit_edit, false)
@@ -392,10 +401,11 @@ defmodule AcesWeb.CompanyLive.Show do
       </div>
 
       <!-- Tab Navigation -->
-      <.tab_navigation active_tab={@active_tab} />
+      <.tab_navigation tabs={@tabs} active_tab={@active_tab} />
 
       <!-- Tab Content -->
       <.tab_content
+        tabs={@tabs}
         active_tab={@active_tab}
         company={@company}
         active_campaign={@active_campaign}
@@ -458,29 +468,15 @@ defmodule AcesWeb.CompanyLive.Show do
     """
   end
 
-  # Tab navigation component
-  defp tab_navigation(assigns) do
-    ~H"""
-    <div role="tablist" class="tabs tabs-boxed mb-6">
-      <button
-        :for={{label, tab} <- [{"Overview", :overview}, {"Pilots", :pilots},
-                               {"Units", :units}, {"Settings", :settings}]}
-        role="tab"
-        class={["tab", @active_tab == tab && "tab-active"]}
-        phx-click="set_tab"
-        phx-value-tab={tab}
-      >
-        {label}
-      </button>
-    </div>
-    """
+  # Tab content router - tabs defined in @tabs module attribute at top of file
+  defp tab_content(assigns) do
+    case assigns.active_tab do
+      :overview -> overview_tab(assigns)
+      :pilots -> pilots_tab(assigns)
+      :units -> units_tab(assigns)
+      :settings -> settings_tab(assigns)
+    end
   end
-
-  # Tab content router
-  defp tab_content(%{active_tab: :overview} = assigns), do: overview_tab(assigns)
-  defp tab_content(%{active_tab: :pilots} = assigns), do: pilots_tab(assigns)
-  defp tab_content(%{active_tab: :units} = assigns), do: units_tab(assigns)
-  defp tab_content(%{active_tab: :settings} = assigns), do: settings_tab(assigns)
 
   # Overview Tab - company stats and active campaign
   defp overview_tab(assigns) do
