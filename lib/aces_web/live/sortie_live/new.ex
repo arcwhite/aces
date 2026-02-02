@@ -251,6 +251,17 @@ defmodule AcesWeb.SortieLive.New do
     pv_limit != nil and calculate_total_pv(deployments, available_units) > pv_limit
   end
 
+  defp unit_would_exceed_limit?(unit, deployments, available_units, pv_limit) do
+    if pv_limit do
+      unit_pv = unit.master_unit.point_value || 0
+      current_total_pv = calculate_total_pv(deployments, available_units)
+      current_total_pv + unit_pv > pv_limit
+    else
+      false
+    end
+  end
+
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -331,16 +342,21 @@ defmodule AcesWeb.SortieLive.New do
                       <% deployment = Enum.find(@selected_deployments, fn d -> d.company_unit_id == unit.id end) %>
                       <% is_deployed = !is_nil(deployment) %>
                       <% current_pilot_id = if deployment, do: deployment.pilot_id, else: nil %>
-                      
-                      <div class={"card border-2 transition-colors #{if is_deployed, do: "border-primary bg-primary/5", else: "border-base-300"}"}>
+                      <% would_exceed = !is_deployed && unit_would_exceed_limit?(unit, @selected_deployments, @available_units, @pv_limit) %>
+
+                      <div class={"card border-2 transition-colors #{cond do
+                        is_deployed -> "border-primary bg-primary/5"
+                        would_exceed -> "border-base-300 bg-base-200"
+                        true -> "border-base-300"
+                      end}"}>
                         <div class="card-body p-4">
                           <div class="flex items-start justify-between">
                             <div class="flex-1">
-                              <h3 class="font-semibold">{unit.custom_name || unit.master_unit.name}</h3>
-                              <p class="text-sm opacity-70">
+                              <h3 class={"font-semibold #{if would_exceed, do: "text-base-content/50"}"}>{unit.custom_name || unit.master_unit.name}</h3>
+                              <p class={"text-sm #{if would_exceed, do: "text-base-content/40", else: "opacity-70"}"}>
                                 {unit.master_unit.name} ({unit.master_unit.point_value} PV)
                               </p>
-                              <div class="flex gap-2 mt-2">
+                              <div class="flex flex-wrap gap-2 mt-2">
                                 <div class={"badge badge-sm #{if unit.status == "operational", do: "badge-success", else: "badge-warning"}"}>
                                   {unit.status}
                                 </div>
@@ -350,13 +366,17 @@ defmodule AcesWeb.SortieLive.New do
                                     <div class="badge badge-sm badge-info">{pilot.callsign}</div>
                                   <% end %>
                                 <% end %>
+                                <%= if would_exceed do %>
+                                  <div class="badge badge-sm badge-error">Exceeds PV</div>
+                                <% end %>
                               </div>
                             </div>
-                            
-                            <input 
-                              type="checkbox" 
-                              class="checkbox checkbox-primary" 
+
+                            <input
+                              type="checkbox"
+                              class="checkbox checkbox-primary"
                               checked={is_deployed}
+                              disabled={would_exceed}
                               phx-click="toggle_unit_deployment"
                               phx-value-unit_id={unit.id}
                             />

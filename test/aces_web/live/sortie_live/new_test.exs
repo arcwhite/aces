@@ -315,5 +315,168 @@ defmodule AcesWeb.SortieLive.NewTest do
       # Should not show pilot select for infantry
       refute html =~ "select[phx-value-unit_id='#{infantry_unit.id}']"
     end
+
+    test "disables checkbox for units that would exceed PV limit", %{conn: conn, user: user} do
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+
+      # Create a small unit (20 PV) and a large unit (50 PV)
+      small_master = master_unit_fixture(name: "Small Mech", variant: "SM-1", point_value: 20)
+      large_master = master_unit_fixture(name: "Large Mech", variant: "LG-1", point_value: 50)
+
+      small_unit = company_unit_fixture(company: company, master_unit: small_master, custom_name: "SmallUnit")
+      large_unit = company_unit_fixture(company: company, master_unit: large_master, custom_name: "LargeUnit")
+
+      {:ok, new_live, _html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/new")
+
+      # Set a low PV limit of 40
+      new_live
+      |> form("#sortie-form", %{"sortie" => %{"pv_limit" => "40", "mission_number" => "1", "name" => "Test"}})
+      |> render_change()
+
+      html = render(new_live)
+
+      # Large unit checkbox should be disabled (50 PV > 40 limit)
+      assert html =~ "disabled" <> ~s( phx-click="toggle_unit_deployment" phx-value-unit_id="#{large_unit.id}") or
+             html =~ ~s(phx-value-unit_id="#{large_unit.id}") && html =~ "Exceeds PV"
+
+      # Small unit should be enabled (20 PV <= 40 limit)
+      small_checkbox_html = Regex.run(~r/<input[^>]*phx-value-unit_id="#{small_unit.id}"[^>]*>/, html)
+      assert small_checkbox_html != nil
+      refute Enum.any?(small_checkbox_html, &String.contains?(&1, "disabled"))
+    end
+
+    test "shows 'Exceeds PV' badge on units that would exceed limit", %{conn: conn, user: user} do
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+
+      # Create a unit that's larger than our PV limit
+      large_master = master_unit_fixture(name: "Huge Mech", variant: "HG-1", point_value: 100)
+      _large_unit = company_unit_fixture(company: company, master_unit: large_master, custom_name: "HugeUnit")
+
+      {:ok, new_live, _html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/new")
+
+      # Set PV limit lower than the unit's PV
+      new_live
+      |> form("#sortie-form", %{"sortie" => %{"pv_limit" => "50", "mission_number" => "1", "name" => "Test"}})
+      |> render_change()
+
+      html = render(new_live)
+
+      # Should show "Exceeds PV" badge for the large unit
+      assert html =~ "Exceeds PV"
+
+      # The card should have muted text styling (bg-base-200 background)
+      assert html =~ "bg-base-200"
+    end
+
+    test "dynamically disables units as more units are deployed", %{conn: conn, user: user} do
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+
+      # Create three units of 30 PV each
+      master1 = master_unit_fixture(name: "Unit A", variant: "A-1", point_value: 30)
+      master2 = master_unit_fixture(name: "Unit B", variant: "B-1", point_value: 30)
+      master3 = master_unit_fixture(name: "Unit C", variant: "C-1", point_value: 30)
+
+      unit1 = company_unit_fixture(company: company, master_unit: master1, custom_name: "UnitA")
+      unit2 = company_unit_fixture(company: company, master_unit: master2, custom_name: "UnitB")
+      _unit3 = company_unit_fixture(company: company, master_unit: master3, custom_name: "UnitC")
+
+      {:ok, new_live, _html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/new")
+
+      # Set PV limit to 60 (can fit 2 units of 30 PV each)
+      new_live
+      |> form("#sortie-form", %{"sortie" => %{"pv_limit" => "60", "mission_number" => "1", "name" => "Test"}})
+      |> render_change()
+
+      # Initially all units should be selectable (none deployed, each fits within 60)
+      html = render(new_live)
+      refute html =~ "Exceeds PV"
+
+      # Deploy first unit (30 PV used, 30 remaining)
+      new_live
+      |> element("input[type=checkbox][phx-value-unit_id='#{unit1.id}']")
+      |> render_click()
+
+      # Still no units should exceed (30 PV remaining, each unit is 30)
+      html = render(new_live)
+      refute html =~ "Exceeds PV"
+
+      # Deploy second unit (60 PV used, 0 remaining)
+      new_live
+      |> element("input[type=checkbox][phx-value-unit_id='#{unit2.id}']")
+      |> render_click()
+
+      # Now third unit should show "Exceeds PV" (0 PV remaining)
+      html = render(new_live)
+      assert html =~ "Exceeds PV"
+    end
+
+    test "re-enables units when PV limit is increased", %{conn: conn, user: user} do
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+
+      # Create a unit
+      master = master_unit_fixture(name: "Medium Mech", variant: "MM-1", point_value: 40)
+      _unit = company_unit_fixture(company: company, master_unit: master, custom_name: "MediumUnit")
+
+      {:ok, new_live, _html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/new")
+
+      # Set low PV limit first
+      new_live
+      |> form("#sortie-form", %{"sortie" => %{"pv_limit" => "30", "mission_number" => "1", "name" => "Test"}})
+      |> render_change()
+
+      # Unit should be disabled (40 PV > 30 limit)
+      html = render(new_live)
+      assert html =~ "Exceeds PV"
+
+      # Increase PV limit
+      new_live
+      |> form("#sortie-form", %{"sortie" => %{"pv_limit" => "50", "mission_number" => "1", "name" => "Test"}})
+      |> render_change()
+
+      # Unit should now be enabled (40 PV <= 50 limit)
+      html = render(new_live)
+      refute html =~ "Exceeds PV"
+    end
+
+    test "re-enables units when deployed units are removed", %{conn: conn, user: user} do
+      company = company_fixture(user: user)
+      campaign = campaign_fixture(company)
+
+      # Create two units of 25 PV each
+      master1 = master_unit_fixture(name: "Unit X", variant: "X-1", point_value: 25)
+      master2 = master_unit_fixture(name: "Unit Y", variant: "Y-1", point_value: 25)
+
+      unit1 = company_unit_fixture(company: company, master_unit: master1, custom_name: "UnitX")
+      _unit2 = company_unit_fixture(company: company, master_unit: master2, custom_name: "UnitY")
+
+      {:ok, new_live, _html} = live(conn, ~p"/companies/#{company.id}/campaigns/#{campaign.id}/sorties/new")
+
+      # Set PV limit to 25 (only one unit can be deployed)
+      new_live
+      |> form("#sortie-form", %{"sortie" => %{"pv_limit" => "25", "mission_number" => "1", "name" => "Test"}})
+      |> render_change()
+
+      # Deploy first unit
+      new_live
+      |> element("input[type=checkbox][phx-value-unit_id='#{unit1.id}']")
+      |> render_click()
+
+      # Second unit should be disabled
+      html = render(new_live)
+      assert html =~ "Exceeds PV"
+
+      # Remove first unit
+      new_live
+      |> element("input[type=checkbox][phx-value-unit_id='#{unit1.id}']")
+      |> render_click()
+
+      # Second unit should now be enabled
+      html = render(new_live)
+      refute html =~ "Exceeds PV"
+    end
   end
 end
