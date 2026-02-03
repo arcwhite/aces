@@ -219,6 +219,35 @@ defmodule AcesWeb.CompanyLive.Show do
     end
   end
 
+  def handle_event("resend_invitation", %{"id" => id}, socket) do
+    invitation = Companies.get_invitation!(id)
+
+    case Companies.resend_invitation(invitation) do
+      {:ok, {encoded_token, updated_invitation}} ->
+        # Send the invitation email with new token
+        url = AcesWeb.Endpoint.url() <> ~p"/invitations/#{encoded_token}"
+        Aces.Accounts.UserNotifier.deliver_company_invitation(
+          updated_invitation.invited_email,
+          updated_invitation,
+          url
+        )
+
+        company = socket.assigns.company
+        pending_invitations = Companies.list_pending_invitations(company)
+
+        {:noreply,
+         socket
+         |> put_flash(:info, "Invitation resent to #{updated_invitation.invited_email}.")
+         |> assign(:pending_invitations, pending_invitations)}
+
+      {:error, :not_pending} ->
+        {:noreply, put_flash(socket, :error, "Can only resend pending invitations.")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to resend invitation.")}
+    end
+  end
+
   def handle_event("change_member_role", %{"membership_id" => id, "role" => role}, socket) do
     user = socket.assigns.current_scope.user
     company = socket.assigns.company
@@ -938,15 +967,25 @@ defmodule AcesWeb.CompanyLive.Show do
                         <td class="text-sm">{Calendar.strftime(invitation.inserted_at, "%b %d")}</td>
                         <td class="text-sm">{Calendar.strftime(invitation.expires_at, "%b %d")}</td>
                         <td>
-                          <button
-                            type="button"
-                            phx-click="cancel_invitation"
-                            phx-value-id={invitation.id}
-                            data-confirm="Cancel this invitation?"
-                            class="btn btn-ghost btn-xs"
-                          >
-                            Cancel
-                          </button>
+                          <div class="flex gap-1">
+                            <button
+                              type="button"
+                              phx-click="resend_invitation"
+                              phx-value-id={invitation.id}
+                              class="btn btn-ghost btn-xs"
+                            >
+                              Resend
+                            </button>
+                            <button
+                              type="button"
+                              phx-click="cancel_invitation"
+                              phx-value-id={invitation.id}
+                              data-confirm="Cancel this invitation?"
+                              class="btn btn-ghost btn-xs"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     <% end %>

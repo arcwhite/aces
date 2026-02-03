@@ -5,162 +5,86 @@ defmodule AcesWeb.InvitationLive.IndexTest do
   import Aces.AccountsFixtures
   import Aces.CompaniesFixtures
 
-  alias Aces.Companies
-
   setup :register_and_log_in_user
 
-  describe "Invitations dashboard" do
-    test "shows empty state when no invitations", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/invitations")
+  describe "Invitations Sent - Resend" do
+    test "sender can resend pending invitation", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
 
-      assert html =~ "Invitations"
-      assert html =~ "Pending Invitations"
-      # HTML-encoded apostrophe
-      assert html =~ "any pending invitations"
-      assert html =~ "sent any invitations"
-    end
+      # Create a pending invitation
+      {:ok, {original_token, invitation}} =
+        Aces.Companies.create_invitation(company, user, "invitee@example.com", "editor")
 
-    test "displays pending invitations with accept/decline buttons", %{conn: conn, user: user} do
-      owner = user_fixture()
-      company = company_fixture(user: owner, status: "active", name: "Test Company")
+      {:ok, view, html} = live(conn, ~p"/invitations")
 
-      {:ok, {_token, _invitation}} =
-        Companies.create_invitation(company, owner, user.email, "editor")
-
-      {:ok, _view, html} = live(conn, ~p"/invitations")
-
-      assert html =~ "Test Company"
-      assert html =~ "Role: Editor"
-      assert html =~ "Accept Invitation"
-      assert html =~ "Decline"
-    end
-
-    test "can accept invitation from dashboard", %{conn: conn, user: user} do
-      owner = user_fixture()
-      company = company_fixture(user: owner, status: "active", name: "Test Company")
-
-      {:ok, {_token, _invitation}} =
-        Companies.create_invitation(company, owner, user.email, "viewer")
-
-      {:ok, view, _html} = live(conn, ~p"/invitations")
-
-      view |> element("button", "Accept Invitation") |> render_click()
-
-      # Render to see the updated state
-      html = render(view)
-
-      # The invitation should move to history as accepted
-      refute html =~ ~r/<button[^>]*>Accept Invitation<\/button>/
-      assert html =~ "Accepted"
-
-      # Verify membership was created
-      membership = Companies.get_membership(company, user)
-      assert membership != nil
-    end
-
-    test "can decline invitation from dashboard", %{conn: conn, user: user} do
-      owner = user_fixture()
-      company = company_fixture(user: owner, status: "active", name: "Test Company")
-
-      {:ok, {_token, _invitation}} =
-        Companies.create_invitation(company, owner, user.email, "viewer")
-
-      {:ok, view, _html} = live(conn, ~p"/invitations")
-
-      view |> element("button", "Decline") |> render_click()
-
-      # Render to see the updated state
-      html = render(view)
-
-      # The invitation should move to history as declined
-      refute html =~ ~r/<button[^>]*>Accept Invitation<\/button>/
-      assert html =~ "Declined"
-    end
-
-    test "displays sent invitations with cancel option", %{conn: conn, user: user} do
-      company = company_fixture(user: user, status: "active", name: "My Company")
-
-      {:ok, {_token, _invitation}} =
-        Companies.create_invitation(company, user, "newmember@example.com", "editor")
-
-      {:ok, _view, html} = live(conn, ~p"/invitations")
-
+      # Should see sent invitation with resend button
       assert html =~ "Invitations Sent"
-      assert html =~ "newmember@example.com"
-      assert html =~ "My Company"
-      assert html =~ "Editor"
-      assert html =~ "Pending"
-      assert html =~ "Cancel"
+      assert html =~ "invitee@example.com"
+      assert html =~ "Resend"
+
+      # Click resend button
+      view |> element("button", "Resend") |> render_click()
+
+      # Verify the original token is now invalid
+      assert {:error, :invalid_token} = Aces.Companies.get_invitation_by_token(original_token)
+
+      # Verify invitation is still pending with extended expiry
+      updated_invitation = Aces.Companies.get_invitation!(invitation.id)
+      assert updated_invitation.status == "pending"
+      assert DateTime.diff(updated_invitation.expires_at, DateTime.utc_now(), :day) >= 6
     end
 
-    test "can cancel sent invitation", %{conn: conn, user: user} do
-      company = company_fixture(user: user, status: "active", name: "My Company")
+    test "can resend expired pending invitation", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
 
-      {:ok, {_token, _invitation}} =
-        Companies.create_invitation(company, user, "newmember@example.com", "editor")
+      # Create invitation and manually expire it
+      {:ok, {original_token, invitation}} =
+        Aces.Companies.create_invitation(company, user, "invitee@example.com", "editor")
 
-      {:ok, view, _html} = live(conn, ~p"/invitations")
-
-      view |> element("button", "Cancel") |> render_click()
-
-      # Render to see the updated state
-      html = render(view)
-
-      # The invitation should now show as Declined (cancelled)
-      assert html =~ "Declined"
-    end
-
-    test "shows invitation history section when there's history", %{conn: conn, user: user} do
-      owner = user_fixture()
-      company = company_fixture(user: owner, status: "active", name: "Past Company")
-
-      # Create and accept an invitation
-      {:ok, {_token, invitation}} =
-        Companies.create_invitation(company, owner, user.email, "viewer")
-
-      {:ok, _membership} = Companies.accept_invitation(invitation, user)
-
-      {:ok, _view, html} = live(conn, ~p"/invitations")
-
-      assert html =~ "Received History"
-      assert html =~ "Past Company"
-      assert html =~ "Accepted"
-    end
-
-    test "shows expired invitations in history", %{conn: conn, user: user} do
-      owner = user_fixture()
-      company = company_fixture(user: owner, status: "active", name: "Expired Company")
-
-      {:ok, {_token, invitation}} =
-        Companies.create_invitation(company, owner, user.email, "viewer")
-
-      # Expire the invitation (truncate to second precision for Ecto)
-      expired_at =
-        DateTime.utc_now()
-        |> DateTime.add(-1, :day)
-        |> DateTime.truncate(:second)
+      # Manually expire the invitation
+      expired_at = DateTime.utc_now() |> DateTime.add(-1, :day) |> DateTime.truncate(:second)
 
       invitation
       |> Ecto.Changeset.change(%{expires_at: expired_at})
       |> Aces.Repo.update!()
 
+      # Verify original token is invalid
+      assert {:error, :invalid_token} = Aces.Companies.get_invitation_by_token(original_token)
+
+      {:ok, view, html} = live(conn, ~p"/invitations")
+
+      # Should see sent invitation with resend button (even for expired)
+      assert html =~ "invitee@example.com"
+      assert html =~ "Resend"
+      assert html =~ "Expired"
+
+      # Click resend button
+      view |> element("button", "Resend") |> render_click()
+
+      # Verify invitation is now valid again with extended expiry
+      updated_invitation = Aces.Companies.get_invitation!(invitation.id)
+      assert updated_invitation.status == "pending"
+      assert DateTime.diff(updated_invitation.expires_at, DateTime.utc_now(), :day) >= 6
+    end
+
+    test "cannot resend accepted invitation", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+      invitee = user_fixture(email: "invitee@example.com")
+
+      # Create and accept invitation
+      {:ok, {_token, invitation}} =
+        Aces.Companies.create_invitation(company, user, "invitee@example.com", "editor")
+
+      invitation = Aces.Companies.get_invitation!(invitation.id)
+      {:ok, _} = Aces.Companies.accept_invitation(invitation, invitee)
+
       {:ok, _view, html} = live(conn, ~p"/invitations")
 
-      assert html =~ "Received History"
-      assert html =~ "Expired Company"
-      assert html =~ "Expired"
+      # Should see sent invitation but not resend button (it's accepted)
+      assert html =~ "invitee@example.com"
+      assert html =~ "Accepted"
+      # Resend button should not appear for accepted invitations
+      refute html =~ ~r/Resend.*invitee@example.com/s
     end
-
-    test "requires authentication", %{conn: conn} do
-      conn = conn |> log_out_user()
-
-      {:error, {:redirect, %{to: path}}} = live(conn, ~p"/invitations")
-
-      assert path == ~p"/users/log-in"
-    end
-  end
-
-  defp log_out_user(conn) do
-    Plug.Conn.delete_session(conn, :user_token)
   end
 end

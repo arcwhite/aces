@@ -468,6 +468,36 @@ defmodule Aces.Companies do
   end
 
   @doc """
+  Resends an invitation by generating a new token and extending the expiry.
+
+  Returns `{:ok, {encoded_token, invitation}}` on success, where the
+  `encoded_token` should be sent to the invitee via email.
+
+  Returns `{:error, :not_pending}` if the invitation is not in pending status.
+  """
+  def resend_invitation(%CompanyInvitation{} = invitation) do
+    if invitation.status != "pending" do
+      {:error, :not_pending}
+    else
+      {encoded_token, changeset} = CompanyInvitation.build_resend_changeset(invitation)
+
+      case Repo.update(changeset) do
+        {:ok, updated_invitation} ->
+          Broadcasts.broadcast_company_update(
+            invitation.company_id,
+            :invitation_resent,
+            %{invited_email: invitation.invited_email}
+          )
+
+          {:ok, {encoded_token, updated_invitation}}
+
+        {:error, changeset} ->
+          {:error, changeset}
+      end
+    end
+  end
+
+  @doc """
   Lists all pending invitations for a company.
   """
   def list_pending_invitations(%Company{} = company) do

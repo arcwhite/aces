@@ -118,6 +118,26 @@ defmodule Aces.Companies.CompanyInvitation do
   end
 
   @doc """
+  Builds a changeset for resending an invitation with a fresh token.
+
+  Returns `{encoded_token, changeset}` where the encoded_token should be
+  sent to the invitee via email, and the changeset updates the invitation
+  with a new hashed token and extended expiry.
+  """
+  def build_resend_changeset(invitation) do
+    token = :crypto.strong_rand_bytes(@rand_size)
+    hashed_token = :crypto.hash(@hash_algorithm, token)
+    expires_at = DateTime.utc_now() |> DateTime.add(@invitation_validity_in_days, :day) |> DateTime.truncate(:second)
+
+    changeset = change(invitation, %{
+      token: hashed_token,
+      expires_at: expires_at
+    })
+
+    {Base.url_encode64(token, padding: false), changeset}
+  end
+
+  @doc """
   Verifies a token and returns a query to find the invitation.
 
   Returns `{:ok, query}` if token decodes correctly, `:error` otherwise.

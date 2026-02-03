@@ -456,4 +456,59 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       assert html =~ company.name
     end
   end
+
+  describe "Resend Invitation" do
+    test "owner can resend pending invitation from Settings tab", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      # Create a pending invitation and get the original token
+      {:ok, {original_token, invitation}} =
+        Aces.Companies.create_invitation(company, user, "invitee@example.com", "editor")
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company.id}")
+
+      # Navigate to Settings tab
+      html = view |> element("button", "Settings") |> render_click()
+
+      # Should see pending invitation with resend button
+      assert html =~ "Pending Invitations"
+      assert html =~ "invitee@example.com"
+      assert html =~ "Resend"
+
+      # Click resend button
+      view |> element("button", "Resend") |> render_click()
+
+      # Verify the original token is now invalid (token was refreshed)
+      assert {:error, :invalid_token} = Aces.Companies.get_invitation_by_token(original_token)
+
+      # Verify invitation is still pending with extended expiry
+      updated_invitation = Aces.Companies.get_invitation!(invitation.id)
+      assert updated_invitation.status == "pending"
+      assert DateTime.diff(updated_invitation.expires_at, DateTime.utc_now(), :day) >= 6
+    end
+
+    test "resend invitation generates new token", %{conn: conn, user: user} do
+      company = company_fixture(user: user, status: "active")
+
+      # Create invitation and get the original token
+      {:ok, {original_token, invitation}} =
+        Aces.Companies.create_invitation(company, user, "invitee@example.com", "editor")
+
+      # Verify original token is valid
+      assert {:ok, _} = Aces.Companies.get_invitation_by_token(original_token)
+
+      {:ok, view, _html} = live(conn, ~p"/companies/#{company.id}")
+
+      # Navigate to Settings tab and click resend
+      view |> element("button", "Settings") |> render_click()
+      view |> element("button", "Resend") |> render_click()
+
+      # Original token should now be invalid
+      assert {:error, :invalid_token} = Aces.Companies.get_invitation_by_token(original_token)
+
+      # Invitation should still be pending
+      updated_invitation = Aces.Companies.get_invitation!(invitation.id)
+      assert updated_invitation.status == "pending"
+    end
+  end
 end

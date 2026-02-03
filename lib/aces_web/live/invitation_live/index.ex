@@ -97,6 +97,33 @@ defmodule AcesWeb.InvitationLive.Index do
     end
   end
 
+  def handle_event("resend_invitation", %{"id" => id}, socket) do
+    user = socket.assigns.current_scope.user
+    invitation = Companies.get_invitation!(id)
+
+    case Companies.resend_invitation(invitation) do
+      {:ok, {encoded_token, updated_invitation}} ->
+        # Send the invitation email with new token
+        url = AcesWeb.Endpoint.url() <> ~p"/invitations/#{encoded_token}"
+        Aces.Accounts.UserNotifier.deliver_company_invitation(
+          updated_invitation.invited_email,
+          updated_invitation,
+          url
+        )
+
+        {:noreply,
+         socket
+         |> put_flash(:info, "Invitation resent to #{updated_invitation.invited_email}.")
+         |> load_invitations(user)}
+
+      {:error, :not_pending} ->
+        {:noreply, put_flash(socket, :error, "Can only resend pending invitations.")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to resend invitation.")}
+    end
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -215,16 +242,28 @@ defmodule AcesWeb.InvitationLive.Index do
                       <.status_badge invitation={invitation} />
                     </td>
                     <td>
-                      <%= if invitation.status == "pending" && DateTime.compare(invitation.expires_at, DateTime.utc_now()) == :gt do %>
-                        <button
-                          type="button"
-                          phx-click="cancel_sent"
-                          phx-value-id={invitation.id}
-                          data-confirm="Cancel this invitation?"
-                          class="btn btn-ghost btn-xs"
-                        >
-                          Cancel
-                        </button>
+                      <%= if invitation.status == "pending" do %>
+                        <div class="flex gap-1">
+                          <button
+                            type="button"
+                            phx-click="resend_invitation"
+                            phx-value-id={invitation.id}
+                            class="btn btn-ghost btn-xs"
+                          >
+                            Resend
+                          </button>
+                          <%= if DateTime.compare(invitation.expires_at, DateTime.utc_now()) == :gt do %>
+                            <button
+                              type="button"
+                              phx-click="cancel_sent"
+                              phx-value-id={invitation.id}
+                              data-confirm="Cancel this invitation?"
+                              class="btn btn-ghost btn-xs"
+                            >
+                              Cancel
+                            </button>
+                          <% end %>
+                        </div>
                       <% end %>
                     </td>
                   </tr>

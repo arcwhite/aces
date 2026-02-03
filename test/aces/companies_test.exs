@@ -873,5 +873,103 @@ defmodule Aces.CompaniesTest do
       # invitee1 should see no sent invitations
       assert Companies.list_user_sent_invitations(invitee1) == []
     end
+
+    test "resend_invitation/1 generates new token and extends expiry" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+
+      {:ok, {original_token, invitation}} =
+        Companies.create_invitation(company, owner, "invitee@example.com")
+
+      invitation = Companies.get_invitation!(invitation.id)
+
+      # Manually set expires_at to a past date to verify resend extends it
+      old_expires_at = DateTime.utc_now() |> DateTime.add(-1, :day) |> DateTime.truncate(:second)
+
+      invitation
+      |> Ecto.Changeset.change(%{expires_at: old_expires_at})
+      |> Aces.Repo.update!()
+
+      # Reload with updated expires_at
+      invitation = Companies.get_invitation!(invitation.id)
+
+      assert {:ok, {new_token, updated_invitation}} = Companies.resend_invitation(invitation)
+
+      # Token should be different
+      refute new_token == original_token
+
+      # Expiry should be extended to 7 days from now (at least 6 days in the future)
+      assert DateTime.diff(updated_invitation.expires_at, DateTime.utc_now(), :day) >= 6
+
+      # Status should remain pending
+      assert updated_invitation.status == "pending"
+
+      # New token should be valid
+      assert {:ok, fetched} = Companies.get_invitation_by_token(new_token)
+      assert fetched.id == invitation.id
+
+      # Old token should be invalid (since token was replaced)
+      assert {:error, :invalid_token} = Companies.get_invitation_by_token(original_token)
+    end
+
+    test "resend_invitation/1 works for expired pending invitations" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+
+      {:ok, {original_token, invitation}} =
+        Companies.create_invitation(company, owner, "invitee@example.com")
+
+      # Manually expire the invitation
+      expired_at = DateTime.utc_now() |> DateTime.add(-1, :day) |> DateTime.truncate(:second)
+
+      invitation
+      |> Ecto.Changeset.change(%{expires_at: expired_at})
+      |> Aces.Repo.update!()
+
+      # Old token should be invalid
+      assert {:error, :invalid_token} = Companies.get_invitation_by_token(original_token)
+
+      # Resend should work and generate new valid token
+      expired_invitation = Companies.get_invitation!(invitation.id)
+      assert {:ok, {new_token, updated_invitation}} = Companies.resend_invitation(expired_invitation)
+
+      # New token should be valid
+      assert {:ok, fetched} = Companies.get_invitation_by_token(new_token)
+      assert fetched.id == invitation.id
+
+      # Expiry should be in the future
+      assert DateTime.compare(updated_invitation.expires_at, DateTime.utc_now()) == :gt
+    end
+
+    test "resend_invitation/1 returns error for non-pending invitation" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+      invitee = user_fixture(email: "invitee@example.com")
+
+      {:ok, {_token, invitation}} =
+        Companies.create_invitation(company, owner, "invitee@example.com")
+
+      invitation = Companies.get_invitation!(invitation.id)
+
+      # Accept the invitation first
+      {:ok, _} = Companies.accept_invitation(invitation, invitee)
+
+      # Try to resend - should fail
+      accepted_invitation = Companies.get_invitation!(invitation.id)
+      assert {:error, :not_pending} = Companies.resend_invitation(accepted_invitation)
+    end
+
+    test "resend_invitation/1 returns error for cancelled invitation" do
+      %{company: company, owner: owner} = company_with_members_fixture()
+
+      {:ok, {_token, invitation}} =
+        Companies.create_invitation(company, owner, "invitee@example.com")
+
+      invitation = Companies.get_invitation!(invitation.id)
+
+      # Cancel the invitation first
+      {:ok, _} = Companies.cancel_invitation(invitation)
+
+      # Try to resend - should fail
+      cancelled_invitation = Companies.get_invitation!(invitation.id)
+      assert {:error, :not_pending} = Companies.resend_invitation(cancelled_invitation)
+    end
   end
 end
