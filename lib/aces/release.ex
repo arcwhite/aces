@@ -18,35 +18,54 @@ defmodule Aces.Release do
     {:ok, _, _} = Ecto.Migrator.with_repo(repo, &Ecto.Migrator.run(&1, :down, to: version))
   end
 
-  def seed_master_units(era, faction) do
+  @type_mappings %{
+    "battlemech" => 18,
+    "mech" => 18,
+    "combat_vehicle" => 19,
+    "vehicle" => 19,
+    "battle_armor" => 21,
+    "infantry" => 22,
+    "conventional_infantry" => 22,
+    "protomech" => 20
+  }
+
+  def seed_master_units(era, faction, type) do
     start_app()
 
-    IO.puts("Fetching #{era} units for #{faction}...")
+    type_id = @type_mappings[type]
 
-    filters = %{era: era, factions: [faction]}
+    if is_nil(type_id) do
+      IO.puts("Unknown type: #{type}")
+      IO.puts("Valid types: battlemech, combat_vehicle, battle_armor, infantry, protomech")
+      :error
+    else
+      IO.puts("Fetching #{era} #{type} units for #{faction}...")
 
-    case Aces.MUL.Client.fetch_units(filters) do
-      {:ok, units} ->
-        total = length(units)
-        IO.puts("Found #{total} units. Importing...")
+      filters = %{era: era, factions: [faction], types: [type_id]}
 
-        {success, errors} =
-          units
-          |> Enum.with_index(1)
-          |> Enum.reduce({0, 0}, fn {unit_data, index}, {s, e} ->
-            if rem(index, 50) == 0, do: IO.puts("  #{index}/#{total}...")
+      case Aces.MUL.Client.fetch_units(filters) do
+        {:ok, units} ->
+          total = length(units)
+          IO.puts("Found #{total} units. Importing...")
 
-            case Aces.Units.create_or_update_master_unit(unit_data) do
-              {:ok, _} -> {s + 1, e}
-              {:error, _} -> {s, e + 1}
-            end
-          end)
+          {success, errors} =
+            units
+            |> Enum.with_index(1)
+            |> Enum.reduce({0, 0}, fn {unit_data, index}, {s, e} ->
+              if rem(index, 50) == 0, do: IO.puts("  #{index}/#{total}...")
 
-        IO.puts("Done! #{success} imported, #{errors} errors.")
-        IO.puts("Total cached units: #{Aces.Units.count_cached_units()}")
+              case Aces.Units.create_or_update_master_unit(unit_data) do
+                {:ok, _} -> {s + 1, e}
+                {:error, _} -> {s, e + 1}
+              end
+            end)
 
-      {:error, reason} ->
-        IO.puts("Failed to fetch units: #{reason}")
+          IO.puts("Done! #{success} imported, #{errors} errors.")
+          IO.puts("Total cached units: #{Aces.Units.count_cached_units()}")
+
+        {:error, reason} ->
+          IO.puts("Failed to fetch units: #{reason}")
+      end
     end
   end
 
