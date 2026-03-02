@@ -295,7 +295,7 @@ defmodule Aces.MUL.Client do
       name: api_data["Class"] || api_data["Name"],
       variant: api_data["Variant"],
       full_name: api_data["Name"],
-      unit_type: map_unit_type(extract_type_name(api_data["Type"])),
+      unit_type: resolve_unit_type(api_data["Type"]),
       tonnage: safe_integer(api_data["Tonnage"]),
       point_value: safe_integer(api_data["BFPointValue"]),
       battle_value: safe_integer(api_data["BattleValue"]),
@@ -321,15 +321,34 @@ defmodule Aces.MUL.Client do
     }
   end
 
-  defp map_unit_type("BattleMech"), do: "battlemech"
-  defp map_unit_type("Combat Vehicle"), do: "combat_vehicle"
-  defp map_unit_type("Battle Armor"), do: "battle_armor"
-  defp map_unit_type("Infantry"), do: "conventional_infantry"
-  defp map_unit_type("ProtoMech"), do: "protomech"
-  defp map_unit_type("Mech"), do: "battlemech"
-  defp map_unit_type("BattleMechs"), do: "battlemech"
-  defp map_unit_type("Mechs"), do: "battlemech"
-  defp map_unit_type(_), do: "other"
+  # Map MUL API type IDs to internal unit types
+  # The MUL API groups battle armor under "Infantry" by name, but distinguishes
+  # them by type ID (21 = battle armor, 22 = conventional infantry)
+  @type_id_mappings %{
+    18 => "battlemech",
+    19 => "combat_vehicle",
+    20 => "protomech",
+    21 => "battle_armor",
+    22 => "conventional_infantry"
+  }
+
+  defp resolve_unit_type(%{"Id" => id}) when is_map_key(@type_id_mappings, id) do
+    @type_id_mappings[id]
+  end
+
+  defp resolve_unit_type(%{"Name" => name}), do: map_unit_type_by_name(name)
+  defp resolve_unit_type(name) when is_binary(name), do: map_unit_type_by_name(name)
+  defp resolve_unit_type(_), do: "other"
+
+  defp map_unit_type_by_name("BattleMech"), do: "battlemech"
+  defp map_unit_type_by_name("Combat Vehicle"), do: "combat_vehicle"
+  defp map_unit_type_by_name("Battle Armor"), do: "battle_armor"
+  defp map_unit_type_by_name("Infantry"), do: "conventional_infantry"
+  defp map_unit_type_by_name("ProtoMech"), do: "protomech"
+  defp map_unit_type_by_name("Mech"), do: "battlemech"
+  defp map_unit_type_by_name("BattleMechs"), do: "battlemech"
+  defp map_unit_type_by_name("Mechs"), do: "battlemech"
+  defp map_unit_type_by_name(_), do: "other"
 
   # Parse factions data - handle various possible formats from the API
   defp parse_factions(nil), do: %{}
@@ -410,10 +429,6 @@ defmodule Aces.MUL.Client do
   defp extract_role(name) when is_binary(name), do: name
   defp extract_role(_), do: nil
 
-  # Extract type name from API response
-  defp extract_type_name(%{"Name" => name}), do: name
-  defp extract_type_name(name) when is_binary(name), do: name
-  defp extract_type_name(_), do: nil
 
   # Safely parse integer values from API responses
   # Handles nil, integers, floats, and string representations
