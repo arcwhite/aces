@@ -57,6 +57,30 @@ Hooks.ValidateSP = {
   }
 }
 
+Hooks.ClipboardCopy = {
+  mounted() {
+    this.handleEvent("copy_to_clipboard", ({text, button_id}) => {
+      navigator.clipboard.writeText(text)
+        .then(() => this.flashButton(button_id))
+        .catch((err) => console.error("Clipboard write failed:", err))
+    })
+  },
+
+  flashButton(button_id) {
+    if (!button_id) return
+    const btn = document.getElementById(button_id)
+    if (!btn) return
+
+    const original = btn.innerText
+    btn.innerText = "Copied!"
+    btn.disabled = true
+    setTimeout(() => {
+      btn.innerText = original
+      btn.disabled = false
+    }, 1500)
+  }
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
