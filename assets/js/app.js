@@ -72,7 +72,7 @@ Hooks.ClipboardCopy = {
     if (!btn) return
 
     const original = btn.innerText
-    btn.innerText = "Copied!"
+    btn.innerText = "Copied"
     btn.disabled = true
     setTimeout(() => {
       btn.innerText = original
