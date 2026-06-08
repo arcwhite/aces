@@ -249,31 +249,36 @@ defmodule AcesWeb.CompanyLive.Show do
   end
 
   def handle_event("regenerate_invite_link", %{"id" => id}, socket) do
+    user = socket.assigns.current_scope.user
     invitation = Companies.get_invitation!(id)
 
-    case Companies.resend_invitation(invitation) do
-      {:ok, {encoded_token, updated_invitation}} ->
-        url = AcesWeb.Endpoint.url() <> ~p"/invitations/#{encoded_token}"
+    if Authorization.can?(:manage_members, user, invitation.company) do
+      case Companies.resend_invitation(invitation) do
+        {:ok, {encoded_token, updated_invitation}} ->
+          url = AcesWeb.Endpoint.url() <> ~p"/invitations/#{encoded_token}"
 
-        Aces.Accounts.UserNotifier.deliver_company_invitation(
-          updated_invitation.invited_email,
-          updated_invitation,
-          url
-        )
+          Aces.Accounts.UserNotifier.deliver_company_invitation(
+            updated_invitation.invited_email,
+            updated_invitation,
+            url
+          )
 
-        company = socket.assigns.company
-        pending_invitations = Companies.list_pending_invitations(company)
+          company = socket.assigns.company
+          pending_invitations = Companies.list_pending_invitations(company)
 
-        {:noreply,
-         socket
-         |> assign(:pending_invitations, pending_invitations)
-         |> push_event("copy_to_clipboard", %{text: url, button_id: "regen-copy-#{id}"})}
+          {:noreply,
+           socket
+           |> assign(:pending_invitations, pending_invitations)
+           |> push_event("copy_to_clipboard", %{text: url, button_id: "regen-copy-#{id}"})}
 
-      {:error, :not_pending} ->
-        {:noreply, put_flash(socket, :error, "Can only resend pending invitations.")}
+        {:error, :not_pending} ->
+          {:noreply, put_flash(socket, :error, "Can only resend pending invitations.")}
 
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Failed to resend invitation.")}
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, "Failed to resend invitation.")}
+      end
+    else
+      {:noreply, put_flash(socket, :error, "You don't have permission to manage members.")}
     end
   end
 
