@@ -248,6 +248,35 @@ defmodule AcesWeb.CompanyLive.Show do
     end
   end
 
+  def handle_event("regenerate_invite_link", %{"id" => id}, socket) do
+    invitation = Companies.get_invitation!(id)
+
+    case Companies.resend_invitation(invitation) do
+      {:ok, {encoded_token, updated_invitation}} ->
+        url = AcesWeb.Endpoint.url() <> ~p"/invitations/#{encoded_token}"
+
+        Aces.Accounts.UserNotifier.deliver_company_invitation(
+          updated_invitation.invited_email,
+          updated_invitation,
+          url
+        )
+
+        company = socket.assigns.company
+        pending_invitations = Companies.list_pending_invitations(company)
+
+        {:noreply,
+         socket
+         |> assign(:pending_invitations, pending_invitations)
+         |> push_event("copy_to_clipboard", %{text: url, button_id: "regen-copy-#{id}"})}
+
+      {:error, :not_pending} ->
+        {:noreply, put_flash(socket, :error, "Can only resend pending invitations.")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to resend invitation.")}
+    end
+  end
+
   def handle_event("change_member_role", %{"membership_id" => id, "role" => role}, socket) do
     user = socket.assigns.current_scope.user
     company = socket.assigns.company
@@ -944,7 +973,7 @@ defmodule AcesWeb.CompanyLive.Show do
           <!-- Pending Invitations (Owners only) -->
           <%= if @can_manage_members && @pending_invitations != [] do %>
             <div class="divider"></div>
-            <div>
+            <div id="pending-invitations-panel" phx-hook="ClipboardCopy">
               <h4 class="font-semibold mb-2">Pending Invitations</h4>
               <div class="overflow-x-auto">
                 <table class="table table-zebra w-full">
@@ -975,6 +1004,16 @@ defmodule AcesWeb.CompanyLive.Show do
                               class="btn btn-ghost btn-xs"
                             >
                               Resend
+                            </button>
+                            <button
+                              type="button"
+                              id={"regen-copy-#{invitation.id}"}
+                              phx-click="regenerate_invite_link"
+                              phx-value-id={invitation.id}
+                              title="Sends a fresh email and copies the link. Any previous link is invalidated."
+                              class="btn btn-ghost btn-xs"
+                            >
+                              Resend &amp; Copy
                             </button>
                             <button
                               type="button"

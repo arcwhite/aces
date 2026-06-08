@@ -476,7 +476,7 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       assert html =~ "Resend"
 
       # Click resend button
-      view |> element("button", "Resend") |> render_click()
+      view |> element("button[phx-click=resend_invitation]") |> render_click()
 
       # Verify the original token is now invalid (token was refreshed)
       assert {:error, :invalid_token} = Aces.Companies.get_invitation_by_token(original_token)
@@ -501,7 +501,7 @@ defmodule AcesWeb.CompanyLive.ShowTest do
 
       # Navigate to Settings tab and click resend
       view |> element("button", "Settings") |> render_click()
-      view |> element("button", "Resend") |> render_click()
+      view |> element("button[phx-click=resend_invitation]") |> render_click()
 
       # Original token should now be invalid
       assert {:error, :invalid_token} = Aces.Companies.get_invitation_by_token(original_token)
