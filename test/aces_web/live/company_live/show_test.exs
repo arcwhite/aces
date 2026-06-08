@@ -218,7 +218,18 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       |> form("form", %{"email" => "newmember@example.com", "role" => "editor"})
       |> render_submit()
 
-      # Render the view to get updated state after form submission
+      # Modal stays open showing the success state with the invitation link
+      success_html = render(view)
+      assert success_html =~ "Invitation created for"
+      assert success_html =~ "newmember@example.com"
+      assert success_html =~ "/invitations/"
+      assert success_html =~ "Copy link"
+      assert success_html =~ "Done"
+
+      # Click Done to dismiss success state
+      view |> element("button", "Done") |> render_click()
+
+      # Render the view to get updated state after dismissal
       html = render(view)
 
       # Modal should be closed (no modal-open class)
