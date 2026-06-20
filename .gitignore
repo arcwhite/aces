@@ -37,3 +37,7 @@ npm-debug.log
 
 # Ignore log output
 log/*
+
+# bin/local-smoke worktree + runtime state
+/.smoke-worktree/
+/.local-smoke/

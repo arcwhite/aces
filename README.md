@@ -34,6 +34,34 @@ Go nuts, if you can figure out how to run a Phoenix app. I'll update these instr
 - `mix ecto.create && mix ecto.migrate`
 - `mix phx.server`
 
+## Local smoke testing
+
+`bin/local-smoke` spins up a second copy of the app — pinned to whatever
+ref you point it at — without disturbing your working tree or dev DB. It
+uses a git worktree at `.smoke-worktree/`, an isolated `aces_smoke`
+Postgres database, and (by default) port 4100, so you can browse a
+known-good build side-by-side with `mix phx.server`.
+
+```
+bin/local-smoke up                  # build & run origin/main
+bin/local-smoke up origin/some-pr   # smoke a specific branch / tag / SHA
+bin/local-smoke status              # ref, server PID, tailscale state
+bin/local-smoke logs                # tail the running server's log
+bin/local-smoke down                # stop the server, keep the worktree
+bin/local-smoke clean               # stop + remove the worktree
+```
+
+If you've got Tailscale and want to poke the running smoke server from
+another device:
+
+```
+bin/local-smoke serve     # tailscale serve port 4100 over HTTPS
+bin/local-smoke unserve   # tear the mapping down
+```
+
+Tunables (all optional): `SMOKE_PORT`, `SMOKE_DB_NAME`, `SMOKE_DIR`,
+`SMOKE_REF`.
+
 ## Contributing
 
 If you want to contribute please reach out, or heck, just fork and open a PR. I reserve the right to engage some different governance in the future, but for now it's open season.
