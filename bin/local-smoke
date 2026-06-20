@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+# Local smoke-test harness for aces.
+#
+# Spins up a git worktree pinned to a chosen ref (default origin/main),
+# brings up an isolated Phoenix server against a dedicated `aces_smoke`
+# database, and optionally publishes it on the tailnet via `tailscale serve`.
+#
+# Usage:
+#   bin/local-smoke up [ref]      Create/refresh the worktree, set up the
+#                                 DB, build assets, start the server.
+#   bin/local-smoke down          Stop the server, leave the worktree in place.
+#   bin/local-smoke clean         Stop and remove the worktree entirely.
+#   bin/local-smoke status        Report worktree ref, server PID, tailscale.
+#   bin/local-smoke logs          Tail the server log.
+#   bin/local-smoke serve         tailscale serve the running port over HTTPS.
+#   bin/local-smoke unserve       Tear down the tailscale serve mapping.
+#
+# Env overrides:
+#   SMOKE_PORT      Phoenix port              (default 4100)
+#   SMOKE_DB_NAME   Postgres database name    (default aces_smoke)
+#   SMOKE_DIR       Worktree directory        (default .smoke-worktree)
+#   SMOKE_STATE     Runtime state directory   (default .local-smoke)
+#   SMOKE_REF       Default ref for `up`      (default origin/main)
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+SMOKE_PORT="${SMOKE_PORT:-4100}"
+SMOKE_DB_NAME="${SMOKE_DB_NAME:-aces_smoke}"
+SMOKE_DIR="${SMOKE_DIR:-.smoke-worktree}"
+SMOKE_STATE="${SMOKE_STATE:-.local-smoke}"
+SMOKE_REF_DEFAULT="${SMOKE_REF:-origin/main}"
+
+WORKTREE_PATH="${REPO_ROOT}/${SMOKE_DIR}"
+STATE_DIR="${REPO_ROOT}/${SMOKE_STATE}"
+PID_FILE="${STATE_DIR}/server.pid"
+LOG_FILE="${STATE_DIR}/server.log"
+META_FILE="${STATE_DIR}/meta"
+
+mkdir -p "$STATE_DIR"
+
+log() { printf '[local-smoke] %s\n' "$*"; }
+die() { printf '[local-smoke] error: %s\n' "$*" >&2; exit 1; }
+
+require() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+server_pid() {
+  [ -f "$PID_FILE" ] || return 1
+  local pid
+  pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  printf '%s' "$pid"
+}
+
+ensure_worktree() {
+  local ref="$1"
+
+  require git
+
+  if [ -d "$WORKTREE_PATH/.git" ] || git worktree list --porcelain | grep -q "^worktree ${WORKTREE_PATH}$"; then
+    log "refreshing worktree at ${SMOKE_DIR} → ${ref}"
+    git -C "$WORKTREE_PATH" fetch --quiet origin || die "git fetch failed in worktree"
+    git -C "$WORKTREE_PATH" checkout --quiet --detach "$ref" || die "could not check out ${ref}"
+  else
+    log "creating worktree at ${SMOKE_DIR} → ${ref}"
+    git fetch --quiet origin || log "warning: git fetch origin failed (continuing with local refs)"
+    git worktree add --detach "$WORKTREE_PATH" "$ref" >/dev/null
+  fi
+
+  local resolved
+  resolved="$(git -C "$WORKTREE_PATH" rev-parse --short HEAD)"
+  log "worktree HEAD: ${resolved} (${ref})"
+  printf 'ref=%s\ncommit=%s\n' "$ref" "$resolved" > "$META_FILE"
+}
+
+setup_smoke() {
+  require mix
+
+  log "fetching deps + setting up DB '${SMOKE_DB_NAME}' + building assets"
+  (
+    cd "$WORKTREE_PATH"
+    export MIX_ENV=dev
+    export DB_NAME="$SMOKE_DB_NAME"
+    export PORT="$SMOKE_PORT"
+    mix deps.get
+    # ecto.setup is idempotent on a fresh DB; if it already exists we just migrate.
+    if ! mix ecto.create --quiet 2>/dev/null; then
+      log "database '${SMOKE_DB_NAME}' already exists; migrating"
+    fi
+    mix ecto.migrate
+    mix assets.setup
+    mix assets.build
+  )
+}
+
+start_server() {
+  if pid="$(server_pid)"; then
+    die "server already running (pid ${pid}); run 'bin/local-smoke down' first"
+  fi
+
+  log "starting Phoenix server on port ${SMOKE_PORT} (logs: ${SMOKE_STATE}/server.log)"
+  (
+    cd "$WORKTREE_PATH"
+    export MIX_ENV=dev
+    export DB_NAME="$SMOKE_DB_NAME"
+    export PORT="$SMOKE_PORT"
+    nohup mix phx.server >"$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+  )
+
+  sleep 1
+  if pid="$(server_pid)"; then
+    log "server up (pid ${pid}) → http://127.0.0.1:${SMOKE_PORT}"
+  else
+    log "server failed to start; tail of ${SMOKE_STATE}/server.log:"
+    tail -n 20 "$LOG_FILE" >&2 || true
+    exit 1
+  fi
+}
+
+stop_server() {
+  if ! pid="$(server_pid)"; then
+    log "no server running"
+    return 0
+  fi
+
+  log "stopping server (pid ${pid})"
+  kill "$pid" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.5
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    log "server did not exit cleanly, sending SIGKILL"
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$PID_FILE"
+}
+
+remove_worktree() {
+  if git worktree list --porcelain | grep -q "^worktree ${WORKTREE_PATH}$"; then
+    log "removing worktree ${SMOKE_DIR}"
+    git worktree remove --force "$WORKTREE_PATH"
+  elif [ -d "$WORKTREE_PATH" ]; then
+    log "directory ${SMOKE_DIR} exists but is not a registered worktree; leaving it alone"
+  fi
+}
+
+tailscale_serve() {
+  require tailscale
+  if ! server_pid >/dev/null; then
+    die "no server running; start it first with 'bin/local-smoke up'"
+  fi
+  log "publishing port ${SMOKE_PORT} on the tailnet via tailscale serve"
+  tailscale serve --bg --https=443 --set-path=/ "http://127.0.0.1:${SMOKE_PORT}"
+  tailscale serve status || true
+}
+
+tailscale_unserve() {
+  require tailscale
+  log "tearing down tailscale serve mapping"
+  tailscale serve --https=443 --set-path=/ off || true
+  tailscale serve status || true
+}
+
+cmd_up() {
+  local ref="${1:-$SMOKE_REF_DEFAULT}"
+  ensure_worktree "$ref"
+  setup_smoke
+  start_server
+}
+
+cmd_down() {
+  stop_server
+}
+
+cmd_clean() {
+  stop_server
+  remove_worktree
+  rm -rf "$STATE_DIR"
+  log "smoke environment removed"
+}
+
+cmd_status() {
+  if [ -f "$META_FILE" ]; then
+    log "worktree:"
+    sed 's/^/  /' "$META_FILE"
+  else
+    log "no worktree set up"
+  fi
+
+  if pid="$(server_pid)"; then
+    log "server: running (pid ${pid}) on http://127.0.0.1:${SMOKE_PORT}"
+  else
+    log "server: not running"
+  fi
+
+  if command -v tailscale >/dev/null 2>&1; then
+    log "tailscale serve:"
+    tailscale serve status 2>/dev/null | sed 's/^/  /' || log "  (none)"
+  fi
+}
+
+cmd_logs() {
+  [ -f "$LOG_FILE" ] || die "no log file at ${LOG_FILE}"
+  tail -n 100 -f "$LOG_FILE"
+}
+
+main() {
+  local cmd="${1:-}"
+  shift || true
+  case "$cmd" in
+    up)        cmd_up "$@" ;;
+    down)      cmd_down ;;
+    clean)     cmd_clean ;;
+    status)    cmd_status ;;
+    logs)      cmd_logs ;;
+    serve)     tailscale_serve ;;
+    unserve)   tailscale_unserve ;;
+    ""|help|-h|--help)
+      sed -n '2,/^set -euo pipefail$/p' "$0" | sed -n '/^#/p' | sed 's/^# \{0,1\}//'
+      ;;
+    *)
+      die "unknown subcommand: ${cmd} (try 'bin/local-smoke help')"
+      ;;
+  esac
+}
+
+main "$@"
