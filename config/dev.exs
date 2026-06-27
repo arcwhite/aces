@@ -1,11 +1,15 @@
 import Config
 
-# Configure your database
+# Configure your database.
+#
+# DB_NAME/DB_USERNAME/DB_PASSWORD/DB_HOSTNAME can be overridden via env
+# vars so a single dev install can target an isolated database (e.g. the
+# `aces_smoke` DB used by bin/local-smoke).
 config :aces, Aces.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  database: "aces_dev",
+  username: System.get_env("DB_USERNAME", "postgres"),
+  password: System.get_env("DB_PASSWORD", "postgres"),
+  hostname: System.get_env("DB_HOSTNAME", "localhost"),
+  database: System.get_env("DB_NAME", "aces_dev"),
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10
