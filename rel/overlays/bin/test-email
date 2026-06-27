@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 1 ]; then
+  echo "Usage: test-email <recipient@example.com>" >&2
+  exit 2
+fi
+
+cd -P -- "$(dirname -- "$0")"
+exec ./aces eval "Aces.MailerDiagnostics.run(\"$1\")"
