@@ -35,6 +35,7 @@ defmodule Aces.Companies.CompanyUnit do
     def max_chassis_exceeded, do: "Cannot add more than 2 Battlemechs of the same chassis"
     def duplicate_variant, do: "Cannot add duplicate Battlemech variants of the same chassis"
     def max_identical_units_exceeded, do: "Cannot add more than 2 identical units of the same type"
+    def pilot_not_allowed_on_infantry, do: "Conventional infantry cannot be assigned a pilot"
   end
 
   @valid_statuses ~w(operational damaged destroyed salvaged)
@@ -64,6 +65,26 @@ defmodule Aces.Companies.CompanyUnit do
     |> foreign_key_constraint(:company_id)
     |> foreign_key_constraint(:master_unit_id)
     |> foreign_key_constraint(:pilot_id)
+    |> validate_pilot_not_on_infantry()
+  end
+
+  # Conventional infantry cannot be crewed. This rule previously lived only in
+  # parts of the UI; enforce it at the data layer so no path (roster editor,
+  # draft/active purchase, seeds, corrected data) can assign a pilot to infantry.
+  defp validate_pilot_not_on_infantry(changeset) do
+    validate_when_valid(changeset, fn changeset ->
+      if get_field(changeset, :pilot_id) do
+        case get_master_unit(changeset) do
+          %MasterUnit{unit_type: "conventional_infantry"} ->
+            add_error(changeset, :pilot_id, ValidationErrors.pilot_not_allowed_on_infantry())
+
+          _ ->
+            changeset
+        end
+      else
+        changeset
+      end
+    end)
   end
 
   @doc """

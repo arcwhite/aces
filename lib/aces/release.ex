@@ -71,6 +71,48 @@ defmodule Aces.Release do
     end
   end
 
+  @doc """
+  Dry run of the BFType infantry correction (see `specs/BFTYPE_INFANTRY_FIX.md`).
+
+  Reports what would change without modifying anything. `scopes` is a list of
+  `%{era: era, faction: faction}` maps; omit to use the default scope.
+
+      bin/aces eval 'Aces.Release.correct_infantry_dry_run()'
+  """
+  def correct_infantry_dry_run(scopes \\ nil) do
+    start_app()
+
+    scopes
+    |> scopes_or_default()
+    |> Aces.Units.InfantryCorrection.analyze()
+    |> Aces.Units.InfantryCorrection.format_report(:dry_run)
+    |> IO.puts()
+  end
+
+  @doc """
+  Applies the BFType infantry correction (see `specs/BFTYPE_INFANTRY_FIX.md`).
+
+  Re-types mislabeled `battle_armor` rows to `conventional_infantry` and clears
+  now-invalid roster pilot assignments, in a transaction. Active sorties are
+  reported for manual review, never mutated. Run the dry run first.
+
+      bin/aces eval 'Aces.Release.correct_infantry_apply()'
+  """
+  def correct_infantry_apply(scopes \\ nil) do
+    start_app()
+
+    case scopes |> scopes_or_default() |> Aces.Units.InfantryCorrection.apply_correction() do
+      {:ok, summary} ->
+        IO.puts(Aces.Units.InfantryCorrection.format_report(summary, :applied))
+
+      {:error, reason} ->
+        IO.puts("Correction failed: #{inspect(reason)}")
+    end
+  end
+
+  defp scopes_or_default(nil), do: Aces.Units.InfantryCorrection.default_scopes()
+  defp scopes_or_default(scopes) when is_list(scopes), do: scopes
+
   defp repos do
     Application.fetch_env!(@app, :ecto_repos)
   end

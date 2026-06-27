@@ -20,14 +20,20 @@ defmodule AcesWeb.CompanyLive.UnitEditComponent do
         phx-submit="save"
       >
         <.input field={@form[:custom_name]} type="text" label="Custom Name" placeholder="Optional custom name" />
-        
-        <.input 
-          field={@form[:pilot_id]} 
-          type="select" 
-          label="Assigned Pilot" 
-          prompt="Select a pilot..."
-          options={@pilot_options}
-        />
+
+        <%= if @pilotable do %>
+          <.input
+            field={@form[:pilot_id]}
+            type="select"
+            label="Assigned Pilot"
+            prompt="Select a pilot..."
+            options={@pilot_options}
+          />
+        <% else %>
+          <p class="mt-2 text-sm text-base-content/60">
+            Conventional infantry cannot be assigned a pilot.
+          </p>
+        <% end %>
 
         <div class="mt-6 flex items-center justify-end gap-x-6">
           <.button type="submit" phx-disable-with="Saving...">Save Unit</.button>
@@ -48,7 +54,8 @@ defmodule AcesWeb.CompanyLive.UnitEditComponent do
      socket
      |> assign(assigns)
      |> assign_form(changeset)
-     |> assign(:pilot_options, pilot_options)}
+     |> assign(:pilot_options, pilot_options)
+     |> assign(:pilotable, pilotable?(unit))}
   end
 
   @impl true
@@ -85,6 +92,10 @@ defmodule AcesWeb.CompanyLive.UnitEditComponent do
   end
 
   defp notify_parent(msg), do: send(self(), {__MODULE__, msg})
+
+  # Conventional infantry cannot be crewed, so don't offer a pilot dropdown.
+  defp pilotable?(%{master_unit: %{unit_type: "conventional_infantry"}}), do: false
+  defp pilotable?(_unit), do: true
 
   # Build pilot options, including unassigned pilots and the currently assigned pilot
   defp build_pilot_options(pilots, current_pilot_id) do
