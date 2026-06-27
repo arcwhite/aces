@@ -112,7 +112,11 @@ if config_env() == :prod do
 
   config :aces,
     mailer_from_email: System.get_env("MAILER_FROM_EMAIL") || raise("MAILER_FROM_EMAIL not set"),
-    mailer_from_name: System.get_env("MAILER_FROM_NAME", "Andy's Aces Accounting")
+    mailer_from_name: System.get_env("MAILER_FROM_NAME", "Andy's Aces Accounting"),
+    # Optional Reply-To. Useful when MAILER_FROM_EMAIL is a noreply@ address on
+    # the DKIM-signed sending subdomain (e.g. noreply@aces.arcwhite.org) but you
+    # still want user replies to reach a real mailbox. nil = no Reply-To header.
+    mailer_reply_to_email: System.get_env("MAILER_REPLY_TO_EMAIL")
 
   config :aces, Aces.Mailer,
     adapter: Swoosh.Adapters.SMTP,

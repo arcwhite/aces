@@ -7,6 +7,7 @@ defmodule Aces.Accounts.UserNotifier do
   defp deliver(recipient, subject, body) do
     from_email = Application.get_env(:aces, :mailer_from_email, "noreply@example.com")
     from_name = Application.get_env(:aces, :mailer_from_name, "Aces")
+    reply_to_email = Application.get_env(:aces, :mailer_reply_to_email)
 
     email =
       new()
@@ -14,11 +15,16 @@ defmodule Aces.Accounts.UserNotifier do
       |> from({from_name, from_email})
       |> subject(subject)
       |> text_body(body)
+      |> maybe_reply_to(reply_to_email)
 
     with {:ok, _metadata} <- Mailer.deliver(email) do
       {:ok, email}
     end
   end
+
+  defp maybe_reply_to(email, nil), do: email
+  defp maybe_reply_to(email, ""), do: email
+  defp maybe_reply_to(email, address), do: reply_to(email, address)
 
   @doc """
   Deliver instructions to update a user email.
