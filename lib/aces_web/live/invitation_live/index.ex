@@ -10,6 +10,7 @@ defmodule AcesWeb.InvitationLive.Index do
   use AcesWeb, :live_view
 
   alias Aces.Companies
+  alias Aces.Companies.Authorization
 
   on_mount {AcesWeb.UserAuthLive, :default}
 
@@ -124,6 +125,37 @@ defmodule AcesWeb.InvitationLive.Index do
     end
   end
 
+  def handle_event("regenerate_invite_link", %{"id" => id}, socket) do
+    user = socket.assigns.current_scope.user
+    invitation = Companies.get_invitation!(id)
+
+    if Authorization.can?(:manage_members, user, invitation.company) do
+      case Companies.resend_invitation(invitation) do
+        {:ok, {encoded_token, updated_invitation}} ->
+          url = AcesWeb.Endpoint.url() <> ~p"/invitations/#{encoded_token}"
+
+          Aces.Accounts.UserNotifier.deliver_company_invitation(
+            updated_invitation.invited_email,
+            updated_invitation,
+            url
+          )
+
+          {:noreply,
+           socket
+           |> load_invitations(user)
+           |> push_event("copy_to_clipboard", %{text: url, button_id: "regen-copy-sent-#{id}"})}
+
+        {:error, :not_pending} ->
+          {:noreply, put_flash(socket, :error, "Can only resend pending invitations.")}
+
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, "Failed to resend invitation.")}
+      end
+    else
+      {:noreply, put_flash(socket, :error, "You don't have permission to manage members.")}
+    end
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -217,7 +249,7 @@ defmodule AcesWeb.InvitationLive.Index do
             You haven't sent any invitations yet.
           </div>
         <% else %>
-          <div class="overflow-x-auto">
+          <div id="sent-invitations-panel" phx-hook="ClipboardCopy" class="overflow-x-auto">
             <table class="table table-zebra w-full">
               <thead>
                 <tr>
@@ -251,6 +283,16 @@ defmodule AcesWeb.InvitationLive.Index do
                             class="btn btn-ghost btn-xs"
                           >
                             Resend
+                          </button>
+                          <button
+                            type="button"
+                            id={"regen-copy-sent-#{invitation.id}"}
+                            phx-click="regenerate_invite_link"
+                            phx-value-id={invitation.id}
+                            title="Sends a fresh email and copies the link. Any previous link is invalidated."
+                            class="btn btn-ghost btn-xs"
+                          >
+                            Resend &amp; Copy
                           </button>
                           <%= if DateTime.compare(invitation.expires_at, DateTime.utc_now()) == :gt do %>
                             <button

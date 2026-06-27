@@ -218,7 +218,18 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       |> form("form", %{"email" => "newmember@example.com", "role" => "editor"})
       |> render_submit()
 
-      # Render the view to get updated state after form submission
+      # Modal stays open showing the success state with the invitation link
+      success_html = render(view)
+      assert success_html =~ "Invitation created for"
+      assert success_html =~ "newmember@example.com"
+      assert success_html =~ "/invitations/"
+      assert success_html =~ "Copy link"
+      assert success_html =~ "Done"
+
+      # Click Done to dismiss success state
+      view |> element("button", "Done") |> render_click()
+
+      # Render the view to get updated state after dismissal
       html = render(view)
 
       # Modal should be closed (no modal-open class)
@@ -476,7 +487,7 @@ defmodule AcesWeb.CompanyLive.ShowTest do
       assert html =~ "Resend"
 
       # Click resend button
-      view |> element("button", "Resend") |> render_click()
+      view |> element("button[phx-click=resend_invitation]") |> render_click()
 
       # Verify the original token is now invalid (token was refreshed)
       assert {:error, :invalid_token} = Aces.Companies.get_invitation_by_token(original_token)
@@ -501,7 +512,7 @@ defmodule AcesWeb.CompanyLive.ShowTest do
 
       # Navigate to Settings tab and click resend
       view |> element("button", "Settings") |> render_click()
-      view |> element("button", "Resend") |> render_click()
+      view |> element("button[phx-click=resend_invitation]") |> render_click()
 
       # Original token should now be invalid
       assert {:error, :invalid_token} = Aces.Companies.get_invitation_by_token(original_token)

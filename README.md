@@ -34,6 +34,29 @@ Go nuts, if you can figure out how to run a Phoenix app. I'll update these instr
 - `mix ecto.create && mix ecto.migrate`
 - `mix phx.server`
 
+## Seed data for local development
+
+`mix seed_dev` spins up a complete, ready-to-play scaffold so you don't have to
+click through company creation every time you reset your dev DB. It creates:
+
+- a fixed, confirmed admin user — **`admin@aces.test`** / **`password1234`**
+- a mercenary company ("Crimson Lances") with a ~400 PV force of BattleMechs,
+  Combat Vehicles, Battle Armor and Conventional Infantry
+- a pilot for every non-infantry unit, assigned to its unit
+- the company finalized to `active`, with a campaign already started
+
+```
+mix seed_master_units --era ilclan --faction mercenary --types battlemech
+mix seed_master_units --era ilclan --faction mercenary --types combat_vehicle --force
+mix seed_dev
+```
+
+`mix seed_dev` needs BattleMech and Combat Vehicle master units cached first
+(via `mix seed_master_units`). The Battle Armor and Conventional Infantry it uses
+are real MUL data baked into the task and upserted offline, so they need no
+separate seeding. The task is **idempotent**: if `admin@aces.test` already
+exists it reports and exits without making changes.
+
 ## Local smoke testing
 
 `bin/local-smoke` spins up a second copy of the app — pinned to whatever

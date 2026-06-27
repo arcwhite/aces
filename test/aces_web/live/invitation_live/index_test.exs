@@ -23,7 +23,7 @@ defmodule AcesWeb.InvitationLive.IndexTest do
       assert html =~ "Resend"
 
       # Click resend button
-      view |> element("button", "Resend") |> render_click()
+      view |> element("button[phx-click=resend_invitation]") |> render_click()
 
       # Verify the original token is now invalid
       assert {:error, :invalid_token} = Aces.Companies.get_invitation_by_token(original_token)
@@ -59,7 +59,7 @@ defmodule AcesWeb.InvitationLive.IndexTest do
       assert html =~ "Expired"
 
       # Click resend button
-      view |> element("button", "Resend") |> render_click()
+      view |> element("button[phx-click=resend_invitation]") |> render_click()
 
       # Verify invitation is now valid again with extended expiry
       updated_invitation = Aces.Companies.get_invitation!(invitation.id)
