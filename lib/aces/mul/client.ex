@@ -285,6 +285,15 @@ defmodule Aces.MUL.Client do
 
   defp parse_response(_, _), do: []
 
+  @doc """
+  Normalizes a single raw MUL API unit map into our internal unit map.
+
+  Exposed primarily so unit-type resolution (notably the battle armor vs
+  conventional infantry split by `BFType`) can be tested without hitting the
+  network. Faction context is empty here; the full pipeline supplies it.
+  """
+  def normalize_unit(api_data), do: normalize_unit(api_data, %{})
+
   defp normalize_unit(api_data, faction_context)
 
   defp normalize_unit(nil, _faction_context), do: nil
@@ -295,7 +304,8 @@ defmodule Aces.MUL.Client do
       name: api_data["Class"] || api_data["Name"],
       variant: api_data["Variant"],
       full_name: api_data["Name"],
-      unit_type: resolve_unit_type(api_data["Type"]),
+      unit_type: resolve_unit_type(api_data["Type"], api_data["BFType"]),
+      bf_type: api_data["BFType"],
       tonnage: safe_integer(api_data["Tonnage"]),
       point_value: safe_integer(api_data["BFPointValue"]),
       battle_value: safe_integer(api_data["BattleValue"]),
@@ -321,34 +331,56 @@ defmodule Aces.MUL.Client do
     }
   end
 
-  # Map MUL API type IDs to internal unit types
-  # The MUL API groups battle armor under "Infantry" by name, but distinguishes
-  # them by type ID (21 = battle armor, 22 = conventional infantry)
+  # Map MUL API type IDs to internal unit types.
+  #
+  # The MUL groups both battle armor and conventional infantry under a single
+  # "Infantry" supertype (Type.Id 21). They share that type and are
+  # distinguished only by the BFType sub-type field ("BA" vs "CI"), so type 21
+  # is resolved via BFType (see resolve_unit_type/2) rather than this table.
   @type_id_mappings %{
     18 => "battlemech",
     19 => "combat_vehicle",
-    20 => "protomech",
-    21 => "battle_armor",
-    22 => "conventional_infantry"
+    20 => "protomech"
   }
 
-  defp resolve_unit_type(%{"Id" => id}) when is_map_key(@type_id_mappings, id) do
+  @infantry_type_id 21
+  @infantry_type_name "Infantry"
+
+  defp resolve_unit_type(%{"Id" => @infantry_type_id}, bf_type), do: infantry_subtype(bf_type)
+  defp resolve_unit_type(%{"Name" => @infantry_type_name}, bf_type), do: infantry_subtype(bf_type)
+
+  defp resolve_unit_type(%{"Id" => id}, _bf_type) when is_map_key(@type_id_mappings, id) do
     @type_id_mappings[id]
   end
 
-  defp resolve_unit_type(%{"Name" => name}), do: map_unit_type_by_name(name)
-  defp resolve_unit_type(name) when is_binary(name), do: map_unit_type_by_name(name)
-  defp resolve_unit_type(_), do: "other"
+  defp resolve_unit_type(%{"Name" => name}, bf_type), do: map_unit_type_by_name(name, bf_type)
 
-  defp map_unit_type_by_name("BattleMech"), do: "battlemech"
-  defp map_unit_type_by_name("Combat Vehicle"), do: "combat_vehicle"
-  defp map_unit_type_by_name("Battle Armor"), do: "battle_armor"
-  defp map_unit_type_by_name("Infantry"), do: "conventional_infantry"
-  defp map_unit_type_by_name("ProtoMech"), do: "protomech"
-  defp map_unit_type_by_name("Mech"), do: "battlemech"
-  defp map_unit_type_by_name("BattleMechs"), do: "battlemech"
-  defp map_unit_type_by_name("Mechs"), do: "battlemech"
-  defp map_unit_type_by_name(_), do: "other"
+  defp resolve_unit_type(name, bf_type) when is_binary(name),
+    do: map_unit_type_by_name(name, bf_type)
+
+  defp resolve_unit_type(_, _bf_type), do: "other"
+
+  # Battle armor and conventional infantry share MUL's "Infantry" supertype;
+  # BFType is the only discriminator. "CI" => conventional infantry; anything
+  # else (including "BA", "ba", or a missing value) defaults to battle armor.
+  defp infantry_subtype(bf_type) when is_binary(bf_type) do
+    case String.downcase(bf_type) do
+      "ci" -> "conventional_infantry"
+      _ -> "battle_armor"
+    end
+  end
+
+  defp infantry_subtype(_), do: "battle_armor"
+
+  defp map_unit_type_by_name("BattleMech", _bf_type), do: "battlemech"
+  defp map_unit_type_by_name("Combat Vehicle", _bf_type), do: "combat_vehicle"
+  defp map_unit_type_by_name("Battle Armor", _bf_type), do: "battle_armor"
+  defp map_unit_type_by_name("Infantry", bf_type), do: infantry_subtype(bf_type)
+  defp map_unit_type_by_name("ProtoMech", _bf_type), do: "protomech"
+  defp map_unit_type_by_name("Mech", _bf_type), do: "battlemech"
+  defp map_unit_type_by_name("BattleMechs", _bf_type), do: "battlemech"
+  defp map_unit_type_by_name("Mechs", _bf_type), do: "battlemech"
+  defp map_unit_type_by_name(_, _bf_type), do: "other"
 
   # Parse factions data - handle various possible formats from the API
   defp parse_factions(nil), do: %{}

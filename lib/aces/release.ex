@@ -18,14 +18,16 @@ defmodule Aces.Release do
     {:ok, _, _} = Ecto.Migrator.with_repo(repo, &Ecto.Migrator.run(&1, :down, to: version))
   end
 
+  # MUL has a single "Infantry" supertype (Type 21) covering both battle armor
+  # and conventional infantry; a Type-21 fetch returns both, and the importer
+  # splits them by BFType into battle_armor / conventional_infantry. There is no
+  # API type for one or the other, so "infantry" is the only infantry keyword.
   @type_mappings %{
     "battlemech" => 18,
     "mech" => 18,
     "combat_vehicle" => 19,
     "vehicle" => 19,
-    "battle_armor" => 21,
-    "infantry" => 22,
-    "conventional_infantry" => 22,
+    "infantry" => 21,
     "protomech" => 20
   }
 
@@ -36,7 +38,7 @@ defmodule Aces.Release do
 
     if is_nil(type_id) do
       IO.puts("Unknown type: #{type}")
-      IO.puts("Valid types: battlemech, combat_vehicle, battle_armor, infantry, protomech")
+      IO.puts("Valid types: battlemech, combat_vehicle, infantry, protomech")
       :error
     else
       IO.puts("Fetching #{era} #{type} units for #{faction}...")
