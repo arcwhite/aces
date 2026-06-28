@@ -61,6 +61,36 @@ defmodule Aces.Campaigns.Deployment do
     |> foreign_key_constraint(:company_unit_id)
     |> foreign_key_constraint(:pilot_id)
     |> foreign_key_constraint(:original_master_unit_id)
+    |> validate_pilot_qualification()
+  end
+
+  # A pilot may only be deployed in a unit they're qualified for: the pilot's
+  # unit_type must match the unit's. The sortie UIs already filter the dropdown,
+  # but enforce it here too so create/update_deployment and any future caller
+  # can't persist a mismatch. No pilot has unit_type "conventional_infantry",
+  # so an infantry unit with any pilot is rejected by the same check.
+  defp validate_pilot_qualification(changeset) do
+    if changeset.valid? do
+      with pilot_id when not is_nil(pilot_id) <- get_field(changeset, :pilot_id),
+           unit_id when not is_nil(unit_id) <- get_field(changeset, :company_unit_id),
+           %CompanyUnit{master_unit: %MasterUnit{unit_type: unit_type}} <-
+             load_unit_with_master(unit_id),
+           %Pilot{unit_type: pilot_type} <- Aces.Repo.get(Pilot, pilot_id),
+           true <- pilot_type != unit_type do
+        add_error(changeset, :pilot_id, "Pilot is not qualified for this unit type")
+      else
+        _ -> changeset
+      end
+    else
+      changeset
+    end
+  end
+
+  defp load_unit_with_master(unit_id) do
+    case Aces.Repo.get(CompanyUnit, unit_id) do
+      %CompanyUnit{} = unit -> Aces.Repo.preload(unit, :master_unit)
+      nil -> nil
+    end
   end
 
   def post_battle_changeset(deployment, attrs) do
