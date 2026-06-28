@@ -89,6 +89,37 @@ defmodule Aces.Companies.CompanyUnitTest do
       changeset = CompanyUnit.changeset(%CompanyUnit{}, attrs)
       assert changeset.valid?
     end
+
+    test "rejects a pilot not qualified for the unit's type" do
+      company = CompaniesFixtures.company_fixture()
+      battle_armor = CompaniesFixtures.master_unit_fixture(%{unit_type: "battle_armor"})
+      mech_pilot = CompaniesFixtures.pilot_fixture(%{company: company, unit_type: "battlemech"})
+
+      attrs = %{
+        company_id: company.id,
+        master_unit_id: battle_armor.id,
+        pilot_id: mech_pilot.id
+      }
+
+      changeset = CompanyUnit.changeset(%CompanyUnit{}, attrs)
+      refute changeset.valid?
+      assert "Pilot is not qualified for Battle Armor units" in errors_on(changeset).pilot_id
+    end
+
+    test "allows a pilot qualified for the unit's type" do
+      company = CompaniesFixtures.company_fixture()
+      vehicle = CompaniesFixtures.master_unit_fixture(%{unit_type: "combat_vehicle"})
+      vehicle_pilot = CompaniesFixtures.pilot_fixture(%{company: company, unit_type: "combat_vehicle"})
+
+      attrs = %{
+        company_id: company.id,
+        master_unit_id: vehicle.id,
+        pilot_id: vehicle_pilot.id
+      }
+
+      changeset = CompanyUnit.changeset(%CompanyUnit{}, attrs)
+      assert changeset.valid?
+    end
   end
 
   describe "draft_company_changeset/2" do

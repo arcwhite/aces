@@ -47,8 +47,9 @@ defmodule AcesWeb.CompanyLive.UnitEditComponent do
   def update(%{unit: unit, company: company} = assigns, socket) do
     changeset = Units.change_company_unit(unit)
 
-    # Build pilot options - only include unassigned pilots, plus the currently assigned pilot
-    pilot_options = build_pilot_options(company.pilots, unit.pilot_id)
+    # Build pilot options - only pilots qualified for this unit's type, that are
+    # unassigned or already on this unit
+    pilot_options = build_pilot_options(company.pilots, unit.pilot_id, unit.master_unit.unit_type)
 
     {:ok,
      socket
@@ -97,13 +98,16 @@ defmodule AcesWeb.CompanyLive.UnitEditComponent do
   defp pilotable?(%{master_unit: %{unit_type: "conventional_infantry"}}), do: false
   defp pilotable?(_unit), do: true
 
-  # Build pilot options, including unassigned pilots and the currently assigned pilot
-  defp build_pilot_options(pilots, current_pilot_id) do
-    available_pilots = 
+  # Build pilot options: only pilots qualified for this unit's type (a pilot's
+  # unit_type must match the unit), that are unassigned or already on this unit.
+  # Mirrors the qualification rule enforced in the sortie flows.
+  defp build_pilot_options(pilots, current_pilot_id, unit_type) do
+    available_pilots =
       pilots
       |> Enum.filter(fn pilot ->
-        # Include pilots that are unassigned OR the currently assigned pilot
-        is_nil(pilot.assigned_unit) or pilot.id == current_pilot_id
+        # Qualified for this unit type, AND unassigned or the currently assigned pilot
+        pilot.unit_type == unit_type and
+          (is_nil(pilot.assigned_unit) or pilot.id == current_pilot_id)
       end)
       |> Enum.map(fn pilot ->
         display_name = if pilot.callsign && String.trim(pilot.callsign) != "" do
