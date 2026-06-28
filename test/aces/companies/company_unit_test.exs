@@ -58,6 +58,37 @@ defmodule Aces.Companies.CompanyUnitTest do
       refute changeset.valid?
       assert "must be greater than or equal to 0" in errors_on(changeset).purchase_cost_sp
     end
+
+    test "rejects assigning a pilot to a conventional infantry unit" do
+      company = CompaniesFixtures.company_fixture()
+      infantry = CompaniesFixtures.master_unit_fixture(%{unit_type: "conventional_infantry"})
+      pilot = CompaniesFixtures.pilot_fixture(%{company: company})
+
+      attrs = %{
+        company_id: company.id,
+        master_unit_id: infantry.id,
+        pilot_id: pilot.id
+      }
+
+      changeset = CompanyUnit.changeset(%CompanyUnit{}, attrs)
+      refute changeset.valid?
+      assert "Conventional infantry cannot be assigned a pilot" in errors_on(changeset).pilot_id
+    end
+
+    test "allows assigning a pilot to a non-infantry unit" do
+      company = CompaniesFixtures.company_fixture()
+      battle_armor = CompaniesFixtures.master_unit_fixture(%{unit_type: "battle_armor"})
+      pilot = CompaniesFixtures.pilot_fixture(%{company: company, unit_type: "battle_armor"})
+
+      attrs = %{
+        company_id: company.id,
+        master_unit_id: battle_armor.id,
+        pilot_id: pilot.id
+      }
+
+      changeset = CompanyUnit.changeset(%CompanyUnit{}, attrs)
+      assert changeset.valid?
+    end
   end
 
   describe "draft_company_changeset/2" do

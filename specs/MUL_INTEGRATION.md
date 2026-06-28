@@ -265,7 +265,8 @@ defmodule Aces.MUL.Client do
       name: api_data["Name"],
       variant: api_data["Variant"],
       full_name: "#{api_data["Name"]} #{api_data["Variant"]}",
-      unit_type: map_unit_type(api_data["Type"]),
+      unit_type: map_unit_type(api_data["Type"], api_data["BFType"]),
+      bf_type: api_data["BFType"],
       tonnage: api_data["Tonnage"],
       point_value: api_data["BFPointValue"],
       battle_value: api_data["BattleValue"],
@@ -289,12 +290,22 @@ defmodule Aces.MUL.Client do
     }
   end
 
-  defp map_unit_type("BattleMech"), do: :battlemech
-  defp map_unit_type("Combat Vehicle"), do: :combat_vehicle
-  defp map_unit_type("Battle Armor"), do: :battle_armor
-  defp map_unit_type("Infantry"), do: :conventional_infantry
-  defp map_unit_type("ProtoMech"), do: :protomech
-  defp map_unit_type(_), do: :other
+  # Battle armor and conventional infantry share MUL's single "Infantry"
+  # supertype (Type.Id 21 / Name "Infantry"). They are distinguished ONLY by the
+  # BFType sub-type field ("BA" vs "CI"), so the "Infantry" type is resolved via
+  # BFType rather than the type name alone.
+  defp map_unit_type("BattleMech", _bf_type), do: :battlemech
+  defp map_unit_type("Combat Vehicle", _bf_type), do: :combat_vehicle
+  defp map_unit_type("ProtoMech", _bf_type), do: :protomech
+  defp map_unit_type("Battle Armor", _bf_type), do: :battle_armor
+  defp map_unit_type("Infantry", bf_type), do: infantry_subtype(bf_type)
+  defp map_unit_type(_, _bf_type), do: :other
+
+  defp infantry_subtype(bf_type) when is_binary(bf_type) do
+    if String.downcase(bf_type) == "ci", do: :conventional_infantry, else: :battle_armor
+  end
+
+  defp infantry_subtype(_), do: :battle_armor
 end
 ```
 
@@ -457,9 +468,15 @@ end
 |----|------|--------------|
 | 18 | BattleMech | ✅ Yes |
 | 19 | Combat Vehicle | ✅ Yes |
-| 21 | Battle Armor | ✅ Yes |
-| 22 | Infantry | ✅ Yes |
+| 21 | Infantry (Battle Armor **and** Conventional Infantry) | ✅ Yes |
 | 20 | ProtoMech | ⚠️ Maybe |
+
+> **Note:** Type 21 ("Infantry") is the *only* infantry type the MUL exposes. It
+> covers **both** battle armor and conventional infantry; a fetch returns both.
+> The two are distinguished solely by the per-unit **`BFType`** field
+> (`"BA"` vs `"CI"`), which `normalize_unit/1` uses to derive `unit_type`. There
+> is no Type 22 — earlier code mapped `infantry`/`conventional_infantry` to `22`,
+> which returns zero units from the API.
 | 23 | Support Vehicle | ⚠️ Maybe |
 
 ### Era IDs

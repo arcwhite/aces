@@ -18,14 +18,16 @@ defmodule Aces.Release do
     {:ok, _, _} = Ecto.Migrator.with_repo(repo, &Ecto.Migrator.run(&1, :down, to: version))
   end
 
+  # MUL has a single "Infantry" supertype (Type 21) covering both battle armor
+  # and conventional infantry; a Type-21 fetch returns both, and the importer
+  # splits them by BFType into battle_armor / conventional_infantry. There is no
+  # API type for one or the other, so "infantry" is the only infantry keyword.
   @type_mappings %{
     "battlemech" => 18,
     "mech" => 18,
     "combat_vehicle" => 19,
     "vehicle" => 19,
-    "battle_armor" => 21,
-    "infantry" => 22,
-    "conventional_infantry" => 22,
+    "infantry" => 21,
     "protomech" => 20
   }
 
@@ -36,7 +38,7 @@ defmodule Aces.Release do
 
     if is_nil(type_id) do
       IO.puts("Unknown type: #{type}")
-      IO.puts("Valid types: battlemech, combat_vehicle, battle_armor, infantry, protomech")
+      IO.puts("Valid types: battlemech, combat_vehicle, infantry, protomech")
       :error
     else
       IO.puts("Fetching #{era} #{type} units for #{faction}...")
@@ -68,6 +70,48 @@ defmodule Aces.Release do
       end
     end
   end
+
+  @doc """
+  Dry run of the BFType infantry correction (see `specs/BFTYPE_INFANTRY_FIX.md`).
+
+  Reports what would change without modifying anything. `scopes` is a list of
+  `%{era: era, faction: faction}` maps; omit to use the default scope.
+
+      bin/aces eval 'Aces.Release.correct_infantry_dry_run()'
+  """
+  def correct_infantry_dry_run(scopes \\ nil) do
+    start_app()
+
+    scopes
+    |> scopes_or_default()
+    |> Aces.Units.InfantryCorrection.analyze()
+    |> Aces.Units.InfantryCorrection.format_report(:dry_run)
+    |> IO.puts()
+  end
+
+  @doc """
+  Applies the BFType infantry correction (see `specs/BFTYPE_INFANTRY_FIX.md`).
+
+  Re-types mislabeled `battle_armor` rows to `conventional_infantry` and clears
+  now-invalid roster pilot assignments, in a transaction. Active sorties are
+  reported for manual review, never mutated. Run the dry run first.
+
+      bin/aces eval 'Aces.Release.correct_infantry_apply()'
+  """
+  def correct_infantry_apply(scopes \\ nil) do
+    start_app()
+
+    case scopes |> scopes_or_default() |> Aces.Units.InfantryCorrection.apply_correction() do
+      {:ok, summary} ->
+        IO.puts(Aces.Units.InfantryCorrection.format_report(summary, :applied))
+
+      {:error, reason} ->
+        IO.puts("Correction failed: #{inspect(reason)}")
+    end
+  end
+
+  defp scopes_or_default(nil), do: Aces.Units.InfantryCorrection.default_scopes()
+  defp scopes_or_default(scopes) when is_list(scopes), do: scopes
 
   defp repos do
     Application.fetch_env!(@app, :ecto_repos)

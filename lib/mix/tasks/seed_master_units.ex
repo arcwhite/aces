@@ -48,14 +48,17 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
   @shortdoc "Seeds master units from MUL API"
 
+  # MUL has a single "Infantry" supertype (Type 21) covering both battle armor
+  # and conventional infantry. A single `--types infantry` fetch returns both
+  # categories; the importer splits them by BFType into battle_armor /
+  # conventional_infantry. There is no API type for one or the other, so
+  # `infantry` is the only infantry keyword (it always yields both).
   @type_mappings %{
     "battlemech" => 18,
     "mech" => 18,
     "combat_vehicle" => 19,
     "vehicle" => 19,
-    "battle_armor" => 21,
-    "infantry" => 22,
-    "conventional_infantry" => 22,
+    "infantry" => 21,
     "protomech" => 20
   }
 

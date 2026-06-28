@@ -29,6 +29,9 @@ defmodule Aces.Units.MasterUnit do
     field :variant, :string
     field :full_name, :string
     field :unit_type, :string
+    # MUL sub-type ("BA" / "CI") for the shared "Infantry" supertype; nil for
+    # non-infantry units. unit_type is derived from this during normalization.
+    field :bf_type, :string
     field :tonnage, :integer
     field :point_value, :integer
     field :battle_value, :integer
@@ -69,6 +72,7 @@ defmodule Aces.Units.MasterUnit do
       :variant,
       :full_name,
       :unit_type,
+      :bf_type,
       :tonnage,
       :point_value,
       :battle_value,
