@@ -15,7 +15,8 @@ defmodule Aces.Campaigns.SortieCompletionTest do
       company = company_fixture(user: user)
       campaign = campaign_fixture(company)
       pilot1 = pilot_fixture(company: company, name: "Pilot 1", callsign: "Alpha")
-      pilot2 = pilot_fixture(company: company, name: "Pilot 2", callsign: "Beta")
+      # Pilot 2 crews the combat vehicle below, so must be qualified for it
+      pilot2 = pilot_fixture(company: company, name: "Pilot 2", callsign: "Beta", unit_type: "combat_vehicle")
 
       # Create units with different sizes
       master_unit1 = units_master_unit_fixture(%{name: "Mech 1", bf_size: 4})

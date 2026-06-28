@@ -214,6 +214,35 @@ defmodule Aces.CampaignsTest do
       assert deployment.sortie_id == sortie.id
     end
 
+    test "rejects deploying a pilot not qualified for the unit's type", %{sortie: sortie, company: company} do
+      # Default pilot is a battlemech pilot; deploy it into a battle_armor unit
+      mech_pilot = pilot_fixture(company: company, unit_type: "battlemech")
+      ba_master = units_master_unit_fixture(%{name: "Elemental", unit_type: "battle_armor"})
+      ba_unit = company_unit_fixture(company: company, master_unit: ba_master)
+
+      assert {:error, %Ecto.Changeset{} = changeset} =
+               Campaigns.create_deployment(sortie, %{
+                 company_unit_id: ba_unit.id,
+                 pilot_id: mech_pilot.id
+               })
+
+      assert %{pilot_id: ["Pilot is not qualified for this unit type"]} = errors_on(changeset)
+    end
+
+    test "allows deploying a pilot qualified for the unit's type", %{sortie: sortie, company: company} do
+      ba_pilot = pilot_fixture(company: company, unit_type: "battle_armor")
+      ba_master = units_master_unit_fixture(%{name: "Elemental", unit_type: "battle_armor"})
+      ba_unit = company_unit_fixture(company: company, master_unit: ba_master)
+
+      assert {:ok, deployment} =
+               Campaigns.create_deployment(sortie, %{
+                 company_unit_id: ba_unit.id,
+                 pilot_id: ba_pilot.id
+               })
+
+      assert deployment.pilot_id == ba_pilot.id
+    end
+
     test "prevents duplicate unit deployment in same sortie", %{sortie: sortie, pilot: pilot, company_unit: company_unit} do
       deployment_attrs = %{
         company_unit_id: company_unit.id,

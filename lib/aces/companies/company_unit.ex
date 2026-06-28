@@ -36,6 +36,10 @@ defmodule Aces.Companies.CompanyUnit do
     def duplicate_variant, do: "Cannot add duplicate Battlemech variants of the same chassis"
     def max_identical_units_exceeded, do: "Cannot add more than 2 identical units of the same type"
     def pilot_not_allowed_on_infantry, do: "Conventional infantry cannot be assigned a pilot"
+
+    def pilot_not_qualified(unit_type) do
+      "Pilot is not qualified for #{Pilot.unit_type_display_name(unit_type)} units"
+    end
   end
 
   @valid_statuses ~w(operational damaged destroyed salvaged)
@@ -66,6 +70,7 @@ defmodule Aces.Companies.CompanyUnit do
     |> foreign_key_constraint(:master_unit_id)
     |> foreign_key_constraint(:pilot_id)
     |> validate_pilot_not_on_infantry()
+    |> validate_pilot_qualification()
   end
 
   # Conventional infantry cannot be crewed. This rule previously lived only in
@@ -83,6 +88,25 @@ defmodule Aces.Companies.CompanyUnit do
         end
       else
         changeset
+      end
+    end)
+  end
+
+  # A pilot may only crew a unit they're qualified for: the pilot's unit_type
+  # must match the unit's. This rule lived only in the sortie UIs, not the roster
+  # editor or the schema, so enforce it at the data layer so no path (roster
+  # editor, draft/active purchase, seeds) can persist a mismatched assignment.
+  # Conventional infantry is handled separately by validate_pilot_not_on_infantry.
+  defp validate_pilot_qualification(changeset) do
+    validate_when_valid(changeset, fn changeset ->
+      with pilot_id when not is_nil(pilot_id) <- get_field(changeset, :pilot_id),
+           %MasterUnit{unit_type: unit_type} when unit_type != "conventional_infantry" <-
+             get_master_unit(changeset),
+           %Pilot{unit_type: pilot_type} <- get_pilot(changeset),
+           true <- pilot_type != unit_type do
+        add_error(changeset, :pilot_id, ValidationErrors.pilot_not_qualified(unit_type))
+      else
+        _ -> changeset
       end
     end)
   end
@@ -215,6 +239,11 @@ defmodule Aces.Companies.CompanyUnit do
   defp get_master_unit(changeset) do
     master_unit_id = get_field(changeset, :master_unit_id)
     if master_unit_id, do: Aces.Repo.get(MasterUnit, master_unit_id), else: nil
+  end
+
+  defp get_pilot(changeset) do
+    pilot_id = get_field(changeset, :pilot_id)
+    if pilot_id, do: Aces.Repo.get(Pilot, pilot_id), else: nil
   end
 
   # Optimized helper functions for validation
