@@ -342,34 +342,7 @@ defmodule AcesWeb.CompanyLive.Draft do
   def handle_info({:perform_search, search_term}, socket) do
     if socket.assigns.unit_search_term == search_term do
       opts = build_search_opts(socket.assigns)
-
-      case Units.search_units(search_term, opts) do
-        {:ok, {results, _source}} ->
-          {:noreply,
-           socket
-           |> assign(:search_results, results)
-           |> assign(:search_loading, false)}
-
-        {:error, {:term_too_short, _}} ->
-          {:noreply,
-           socket
-           |> assign(:search_results, [])
-           |> assign(:search_loading, false)}
-
-        {:error, {:mul_unavailable, _reason}} ->
-          {:noreply,
-           socket
-           |> assign(:search_results, [])
-           |> assign(:search_loading, false)
-           |> put_flash(:error, "Master Unit List is temporarily unreachable.")}
-
-        {:error, {:query_failed, _reason}} ->
-          {:noreply,
-           socket
-           |> assign(:search_results, [])
-           |> assign(:search_loading, false)
-           |> put_flash(:error, "Search failed. Please try again.")}
-      end
+      {:noreply, apply_search_result(socket, Units.search_units(search_term, opts))}
     else
       {:noreply, socket}
     end
@@ -397,27 +370,45 @@ defmodule AcesWeb.CompanyLive.Draft do
     opts
   end
 
-  # Helper to run search immediately when filters change
+  # Helper to run search immediately when filters change. Mirrors the typed
+  # error handling in handle_info({:perform_search, _}) so filter-change
+  # searches surface :mul_unavailable / :query_failed to the user instead
+  # of silently collapsing to an empty result list.
   defp maybe_run_search(socket) do
     search_term = socket.assigns.unit_search_term
 
     if String.length(search_term) >= 2 do
       opts = build_search_opts(socket.assigns)
-
-      case Units.search_units(search_term, opts) do
-        {:ok, {results, _source}} ->
-          socket
-          |> assign(:search_results, results)
-          |> assign(:search_loading, false)
-
-        {:error, _typed} ->
-          socket
-          |> assign(:search_results, [])
-          |> assign(:search_loading, false)
-      end
+      apply_search_result(socket, Units.search_units(search_term, opts))
     else
       socket
     end
+  end
+
+  defp apply_search_result(socket, {:ok, {results, _source}}) do
+    socket
+    |> assign(:search_results, results)
+    |> assign(:search_loading, false)
+  end
+
+  defp apply_search_result(socket, {:error, {:term_too_short, _}}) do
+    socket
+    |> assign(:search_results, [])
+    |> assign(:search_loading, false)
+  end
+
+  defp apply_search_result(socket, {:error, {:mul_unavailable, _reason}}) do
+    socket
+    |> assign(:search_results, [])
+    |> assign(:search_loading, false)
+    |> put_flash(:error, "Master Unit List is temporarily unreachable.")
+  end
+
+  defp apply_search_result(socket, {:error, {:query_failed, _reason}}) do
+    socket
+    |> assign(:search_results, [])
+    |> assign(:search_loading, false)
+    |> put_flash(:error, "Search failed. Please try again.")
   end
 
   @impl true

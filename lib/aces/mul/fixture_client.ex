@@ -89,12 +89,14 @@ defmodule Aces.MUL.FixtureClient do
   end
 
   defp filter_units(units, filters) do
+    eras = normalize_eras(Map.get(filters, :era) || Map.get(filters, :eras))
+    factions = normalize_factions(Map.get(filters, :factions))
+
     units
     |> filter_by_name(Map.get(filters, :name))
     |> filter_by_types(Map.get(filters, :types))
     |> filter_by_unit_type(Map.get(filters, :unit_type))
-    |> filter_by_era(Map.get(filters, :era) || Map.get(filters, :eras))
-    |> filter_by_factions(Map.get(filters, :factions))
+    |> filter_by_era_faction(eras, factions)
     |> filter_by_tonnage(Map.get(filters, :min_tons), Map.get(filters, :max_tons))
   end
 
@@ -114,16 +116,17 @@ defmodule Aces.MUL.FixtureClient do
   defp filter_by_types(units, []), do: units
 
   defp filter_by_types(units, type_ids) when is_list(type_ids) do
-    allowed = Enum.map(type_ids, &type_id_to_unit_type/1) |> Enum.reject(&is_nil/1)
+    allowed = Enum.flat_map(type_ids, &type_id_to_unit_types/1)
     if allowed == [], do: units, else: Enum.filter(units, &(&1.unit_type in allowed))
   end
 
-  # MUL Type 21 covers both battle_armor and conventional_infantry; keep both.
-  defp type_id_to_unit_type(18), do: "battlemech"
-  defp type_id_to_unit_type(19), do: "combat_vehicle"
-  defp type_id_to_unit_type(20), do: "protomech"
-  defp type_id_to_unit_type(21), do: :infantry_supertype
-  defp type_id_to_unit_type(_), do: nil
+  # MUL Type 21 ("Infantry" supertype) covers both battle_armor and
+  # conventional_infantry, so it expands to both concrete unit_types.
+  defp type_id_to_unit_types(18), do: ["battlemech"]
+  defp type_id_to_unit_types(19), do: ["combat_vehicle"]
+  defp type_id_to_unit_types(20), do: ["protomech"]
+  defp type_id_to_unit_types(21), do: ["battle_armor", "conventional_infantry"]
+  defp type_id_to_unit_types(_), do: []
 
   defp filter_by_unit_type(units, nil), do: units
   defp filter_by_unit_type(units, ""), do: units
@@ -135,30 +138,50 @@ defmodule Aces.MUL.FixtureClient do
     Enum.filter(units, &(&1.unit_type == unit_type))
   end
 
-  defp filter_by_era(units, nil), do: units
-  defp filter_by_era(units, ""), do: units
-  defp filter_by_era(units, []), do: units
+  defp normalize_eras(nil), do: nil
+  defp normalize_eras(""), do: nil
+  defp normalize_eras([]), do: nil
+  defp normalize_eras(era) when is_binary(era), do: [era]
+  defp normalize_eras(eras) when is_list(eras), do: eras
 
-  defp filter_by_era(units, era) when is_binary(era), do: filter_by_era(units, [era])
+  defp normalize_factions(nil), do: nil
+  defp normalize_factions([]), do: nil
 
-  defp filter_by_era(units, eras) when is_list(eras) do
+  defp normalize_factions(factions) when is_list(factions),
+    do: Enum.map(factions, &String.downcase/1)
+
+  # When both eras and factions are present, we intersect them: keep a unit
+  # only if it lists one of the wanted factions *within* one of the wanted
+  # eras. Filtering them independently would let, e.g.,
+  # {eras: ["ilclan"], factions: ["draconis_combine"]} match a unit that
+  # lists draconis_combine only under "clan_invasion" — surfacing units the
+  # live MUL would exclude for the same query.
+  defp filter_by_era_faction(units, nil, nil), do: units
+
+  defp filter_by_era_faction(units, eras, nil) do
     Enum.filter(units, fn unit ->
-      factions = unit.factions || %{}
-      Enum.any?(eras, &Map.has_key?(factions, &1))
+      factions_map = unit.factions || %{}
+      Enum.any?(eras, &Map.has_key?(factions_map, &1))
     end)
   end
 
-  defp filter_by_factions(units, nil), do: units
-  defp filter_by_factions(units, []), do: units
-
-  defp filter_by_factions(units, factions) when is_list(factions) do
-    wanted = Enum.map(factions, &String.downcase/1)
-
+  defp filter_by_era_faction(units, nil, wanted_factions) do
     Enum.filter(units, fn unit ->
       unit_factions = unit.factions || %{}
 
       Enum.any?(unit_factions, fn {_era, faction_list} ->
-        Enum.any?(wanted, &(&1 in (faction_list || [])))
+        Enum.any?(wanted_factions, &(&1 in (faction_list || [])))
+      end)
+    end)
+  end
+
+  defp filter_by_era_faction(units, eras, wanted_factions) do
+    Enum.filter(units, fn unit ->
+      unit_factions = unit.factions || %{}
+
+      Enum.any?(eras, fn era ->
+        era_list = Map.get(unit_factions, era) || []
+        Enum.any?(wanted_factions, &(&1 in era_list))
       end)
     end)
   end

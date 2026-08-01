@@ -20,13 +20,18 @@ if System.get_env("PHX_SERVER") do
   config :aces, AcesWeb.Endpoint, server: true
 end
 
-# Allow any environment (notably the dev-mode smoke server driven by
-# bin/local-smoke) to swap the MUL client to fixture-backed via env var
-# without editing config files.
-case System.get_env("MUL_CLIENT_SOURCE") do
-  "fixture" -> config :aces, mul_client_source: :fixture
-  "api" -> config :aces, mul_client_source: :api
-  _ -> :ok
+# Allow any non-test environment (notably the dev-mode smoke server driven
+# by bin/local-smoke) to swap the MUL client to fixture-backed via env var
+# without editing config files. The :test env is intentionally excluded —
+# config/test.exs hard-locks it to :fixture, and a stray
+# `export MUL_CLIENT_SOURCE=api` left in the shell must not silently flip
+# the suite onto the live MUL service.
+if config_env() != :test do
+  case System.get_env("MUL_CLIENT_SOURCE") do
+    "fixture" -> config :aces, mul_client_source: :fixture
+    "api" -> config :aces, mul_client_source: :api
+    _ -> :ok
+  end
 end
 
 if config_env() == :prod do

@@ -41,20 +41,30 @@ defmodule Aces.Units do
     if String.length(search_term) < 2 do
       {:error, {:term_too_short, search_term}}
     else
-      try do
-        local_results = search_local_units(search_term, opts)
-
-        if length(local_results) > 0 do
-          {:ok, {local_results, :local}}
-        else
+      # The rescue is deliberately scoped to search_local_units/2 only: a
+      # raise from search_and_cache_from_api/2 (e.g. inside
+      # create_or_update_master_unit/1) must not be misattributed to the
+      # local DB path — the whole point of the typed error contract is to
+      # name the actual failing subsystem.
+      case safe_search_local(search_term, opts) do
+        {:ok, []} ->
           search_and_cache_from_api(search_term, opts)
-        end
-      rescue
-        error ->
-          Logger.error("Local unit search failed for '#{search_term}': #{inspect(error)}")
-          {:error, {:query_failed, {:local_search_raised, error.__struct__}}}
+
+        {:ok, local_results} ->
+          {:ok, {local_results, :local}}
+
+        {:error, _} = err ->
+          err
       end
     end
+  end
+
+  defp safe_search_local(search_term, opts) do
+    {:ok, search_local_units(search_term, opts)}
+  rescue
+    error ->
+      Logger.error("Local unit search failed for '#{search_term}': #{inspect(error)}")
+      {:error, {:query_failed, {:local_search_raised, error.__struct__}}}
   end
 
   @doc """
