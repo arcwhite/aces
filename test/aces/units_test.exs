@@ -412,6 +412,54 @@ defmodule Aces.UnitsTest do
     end
   end
 
+  describe "list_cached_master_units/1" do
+    test "returns {:ok, units} with all cached units ordered by name" do
+      _bravo = units_master_unit_fixture(name: "Bravo", variant: "BR-1", full_name: "Bravo BR-1")
+      _alpha = units_master_unit_fixture(name: "Alpha", variant: "AL-1", full_name: "Alpha AL-1")
+
+      assert {:ok, units} = Units.list_cached_master_units()
+      names = Enum.map(units, & &1.name)
+      assert Enum.sort(names) == names
+      assert "Alpha" in names
+      assert "Bravo" in names
+    end
+
+    test "returns {:ok, []} when the cache is empty" do
+      assert {:ok, []} = Units.list_cached_master_units()
+    end
+
+    test "honours the :limit opt without leaking it into the query filter" do
+      for i <- 1..5 do
+        units_master_unit_fixture(
+          name: "Limit Test #{i}",
+          variant: "LT-#{i}",
+          full_name: "Limit Test LT-#{i}"
+        )
+      end
+
+      assert {:ok, units} = Units.list_cached_master_units(limit: 3)
+      assert length(units) == 3
+    end
+
+    test "passes through Filters keys such as :unit_type" do
+      _mech = units_master_unit_fixture(
+        name: "Cached Mech",
+        variant: "CM-1",
+        full_name: "Cached Mech CM-1",
+        unit_type: "battlemech"
+      )
+
+      _vehicle = combat_vehicle_fixture(
+        name: "Cached Vehicle",
+        variant: "CV-1",
+        full_name: "Cached Vehicle CV-1"
+      )
+
+      assert {:ok, units} = Units.list_cached_master_units(unit_type: "battlemech")
+      assert Enum.all?(units, fn u -> u.unit_type == "battlemech" end)
+    end
+  end
+
   describe "count_cached_units/0" do
     test "returns correct count of cached units" do
       initial_count = Units.count_cached_units()

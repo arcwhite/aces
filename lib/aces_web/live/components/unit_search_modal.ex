@@ -57,11 +57,11 @@ defmodule AcesWeb.Components.UnitSearchModal do
         |> assign(assigns)
         |> assign(:initialized, true)
         |> assign(:search_term, "")
-        |> assign(:search_results, [])
-        |> assign(:search_loading, false)
         |> assign(:filter_eras, ["ilclan", "dark_age"])
         |> assign(:filter_faction, "mercenary")
         |> assign(:filter_type, nil)
+        |> assign_results([], :idle, nil)
+        |> load_default_results()
       end
 
     {:ok, socket}
@@ -74,8 +74,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
     {:noreply,
      socket
      |> assign(:search_term, "")
-     |> assign(:search_results, [])
-     |> assign(:search_loading, false)}
+     |> assign_results([], :idle, nil)}
   end
 
   def handle_event("toggle_era_filter", %{"era" => era}, socket) do
@@ -128,8 +127,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
       else
         socket
         |> assign(:search_term, search_term)
-        |> assign(:search_results, [])
-        |> assign(:search_loading, false)
+        |> load_default_results()
       end
 
     {:noreply, socket}
@@ -151,7 +149,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
     if String.length(socket.assigns.search_term) >= 2 do
       perform_search(socket)
     else
-      socket
+      load_default_results(socket)
     end
   end
 
@@ -163,21 +161,25 @@ defmodule AcesWeb.Components.UnitSearchModal do
     }
 
     case Units.search_units_for_company(socket.assigns.search_term, filters) do
-      {:ok, results} ->
-        socket
-        |> assign(:search_results, results)
-        |> assign(:search_loading, false)
-
-      {:error, :term_too_short} ->
-        socket
-        |> assign(:search_results, [])
-        |> assign(:search_loading, false)
-
-      {:error, _reason} ->
-        socket
-        |> assign(:search_results, [])
-        |> assign(:search_loading, false)
+      {:ok, results} -> assign_results(socket, results, :search, nil)
+      {:error, :term_too_short} -> assign_results(socket, [], :idle, nil)
+      {:error, reason} -> assign_results(socket, [], :error, reason)
     end
+  end
+
+  defp load_default_results(socket) do
+    case Units.list_cached_master_units(limit: 24) do
+      {:ok, units} -> assign_results(socket, units, :default, nil)
+      {:error, reason} -> assign_results(socket, [], :error, reason)
+    end
+  end
+
+  defp assign_results(socket, units, source, error) do
+    socket
+    |> assign(:search_results, units)
+    |> assign(:search_loading, false)
+    |> assign(:results_source, source)
+    |> assign(:results_error, error)
   end
 
   defp notify_parent(msg), do: send(self(), {__MODULE__, msg})
@@ -360,41 +362,41 @@ defmodule AcesWeb.Components.UnitSearchModal do
 
             <div class="divider"></div>
 
-            <div class="max-h-96 overflow-y-auto">
-              <%= if @search_loading do %>
-                <div class="flex justify-center py-8">
-                  <span class="loading loading-spinner loading-lg"></span>
-                </div>
-              <% else %>
-                <%= if length(@search_results) > 0 do %>
-                  <div class="grid gap-3">
-                    <%= for unit <- @search_results do %>
-                      <.unit_card
-                        unit={unit}
-                        mode={@mode}
-                        can_afford={can_afford?(unit, assigns)}
-                        myself={@myself}
-                      />
-                    <% end %>
+            <div class="max-h-96 overflow-y-auto" data-role="results-container">
+              <%= cond do %>
+                <% @search_loading -> %>
+                  <div class="flex justify-center py-8" data-role="results-loading">
+                    <span class="loading loading-spinner loading-lg"></span>
                   </div>
-                <% else %>
-                  <%= if @search_term != "" do %>
-                    <div class="text-center py-8">
-                      <p class="text-gray-600">No units found for "{@search_term}"</p>
-                      <p class="text-sm text-gray-500 mt-2">
-                        Try searching by chassis name (e.g., "Atlas" instead of "AS7-D")
-                      </p>
-                    </div>
-                  <% else %>
-                    <div class="text-center py-8">
-                      <p class="text-gray-600">
-                        Search for units to <%= if @mode == :pv_budget,
-                          do: "add to your company roster",
-                          else: "purchase for your company" %>
-                      </p>
-                    </div>
-                  <% end %>
-                <% end %>
+                <% @results_source == :error -> %>
+                  <div class="text-center py-8" data-role="results-error">
+                    <p class="text-gray-600">Could not load units. Please try again.</p>
+                  </div>
+                <% @search_results != [] -> %>
+                  <div class="grid gap-3" data-role="results-list">
+                    <.unit_card
+                      :for={unit <- @search_results}
+                      unit={unit}
+                      mode={@mode}
+                      can_afford={can_afford?(unit, assigns)}
+                      myself={@myself}
+                    />
+                  </div>
+                <% @search_term != "" -> %>
+                  <div class="text-center py-8" data-role="results-empty-search">
+                    <p class="text-gray-600">No units found for "{@search_term}"</p>
+                    <p class="text-sm text-gray-500 mt-2">
+                      Try searching by chassis name (e.g., "Atlas" instead of "AS7-D")
+                    </p>
+                  </div>
+                <% true -> %>
+                  <div class="text-center py-8" data-role="results-empty-idle">
+                    <p class="text-gray-600">
+                      Search for units to {if @mode == :pv_budget,
+                        do: "add to your company roster",
+                        else: "purchase for your company"}
+                    </p>
+                  </div>
               <% end %>
             </div>
       </.modal>

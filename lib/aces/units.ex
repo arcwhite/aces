@@ -69,16 +69,33 @@ defmodule Aces.Units do
   end
 
   @doc """
-  Get all master units from local cache
+  Get master units from local cache.
 
-  This is useful for offline scenarios or when you want to
-  avoid API calls entirely.
+  Returns `{:ok, units}` on success, `{:error, {:query_failed, reason}}` if the
+  DB call raises. Callers should pattern-match instead of rescuing at the view
+  layer — the shape mirrors `search_units_for_company/2` so both boundary calls
+  can be handled uniformly.
+
+  In addition to the keys accepted by `Aces.Units.Filters`, `:limit` caps the
+  returned row count (useful for populating default UI listings).
   """
   def list_cached_master_units(opts \\ []) do
-    MasterUnit
-    |> Filters.filter(opts)
-    |> order_by([u], u.name)
-    |> Repo.all()
+    {limit, filter_opts} = Keyword.pop(opts, :limit)
+
+    query =
+      MasterUnit
+      |> Filters.filter(filter_opts)
+      |> order_by([u], u.name)
+
+    query = if limit, do: limit(query, ^limit), else: query
+
+    try do
+      {:ok, Repo.all(query)}
+    rescue
+      error ->
+        Logger.error("list_cached_master_units failed: #{inspect(error)}")
+        {:error, {:query_failed, error}}
+    end
   end
 
   @doc """
