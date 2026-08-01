@@ -39,6 +39,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
 
   use AcesWeb, :live_component
 
+  alias Aces.MUL.Vocabulary
   alias Aces.Units
 
   @impl true
@@ -292,49 +293,14 @@ defmodule AcesWeb.Components.UnitSearchModal do
                   </label>
                   <div class="flex flex-wrap gap-2">
                     <button
+                      :for={era <- Vocabulary.eras()}
                       type="button"
                       phx-click="toggle_era_filter"
-                      phx-value-era="ilclan"
+                      phx-value-era={era.key}
                       phx-target={@myself}
-                      class={"btn btn-sm #{if "ilclan" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
+                      class={"btn btn-sm #{if era.key in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
                     >
-                      ilClan
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="toggle_era_filter"
-                      phx-value-era="dark_age"
-                      phx-target={@myself}
-                      class={"btn btn-sm #{if "dark_age" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                    >
-                      Dark Age
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="toggle_era_filter"
-                      phx-value-era="late_republic"
-                      phx-target={@myself}
-                      class={"btn btn-sm #{if "late_republic" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                    >
-                      Late Republic
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="toggle_era_filter"
-                      phx-value-era="early_republic"
-                      phx-target={@myself}
-                      class={"btn btn-sm #{if "early_republic" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                    >
-                      Early Republic
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="toggle_era_filter"
-                      phx-value-era="clan_invasion"
-                      phx-target={@myself}
-                      class={"btn btn-sm #{if "clan_invasion" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                    >
-                      Clan Invasion
+                      {era.label}
                     </button>
                   </div>
                 </div>
@@ -346,73 +312,27 @@ defmodule AcesWeb.Components.UnitSearchModal do
                   </label>
                   <form phx-change="set_faction_filter" phx-target={@myself}>
                     <select class="select select-bordered select-sm" name="faction">
-                      <option value="mercenary" selected={@filter_faction == "mercenary"}>
-                        Mercenary
-                      </option>
-                      <optgroup label="Inner Sphere">
-                        <option
-                          value="capellan_confederation"
-                          selected={@filter_faction == "capellan_confederation"}
-                        >
-                          Capellan Confederation
-                        </option>
-                        <option
-                          value="draconis_combine"
-                          selected={@filter_faction == "draconis_combine"}
-                        >
-                          Draconis Combine
-                        </option>
-                        <option
-                          value="federated_suns"
-                          selected={@filter_faction == "federated_suns"}
-                        >
-                          Federated Suns
-                        </option>
-                        <option
-                          value="free_worlds_league"
-                          selected={@filter_faction == "free_worlds_league"}
-                        >
-                          Free Worlds League
-                        </option>
-                        <option
-                          value="lyran_commonwealth"
-                          selected={@filter_faction == "lyran_commonwealth"}
-                        >
-                          Lyran Commonwealth
-                        </option>
-                        <option
-                          value="republic_of_the_sphere"
-                          selected={@filter_faction == "republic_of_the_sphere"}
-                        >
-                          Republic of the Sphere
-                        </option>
-                      </optgroup>
-                      <optgroup label="Clans">
-                        <option value="clan_wolf" selected={@filter_faction == "clan_wolf"}>
-                          Clan Wolf
-                        </option>
-                        <option
-                          value="clan_jade_falcon"
-                          selected={@filter_faction == "clan_jade_falcon"}
-                        >
-                          Clan Jade Falcon
-                        </option>
-                        <option
-                          value="clan_ghost_bear"
-                          selected={@filter_faction == "clan_ghost_bear"}
-                        >
-                          Clan Ghost Bear
-                        </option>
-                        <option value="clan_sea_fox" selected={@filter_faction == "clan_sea_fox"}>
-                          Clan Sea Fox
-                        </option>
-                        <option
-                          value="clan_hell_horses"
-                          selected={@filter_faction == "clan_hell_horses"}
-                        >
-                          Clan Hell's Horses
-                        </option>
-                      </optgroup>
+                      <%= for {group_label, factions} <- Vocabulary.faction_option_groups() do %>
+                        <%= if group_label do %>
+                          <optgroup label={group_label}>
+                            <option
+                              :for={faction <- factions}
+                              value={faction.key}
+                              selected={@filter_faction == faction.key}
+                            >
+                              {faction.label}
+                            </option>
+                          </optgroup>
+                        <% else %>
+                          <option
+                            :for={faction <- factions}
+                            value={faction.key}
+                            selected={@filter_faction == faction.key}
+                          >
+                            {faction.label}
+                          </option>
+                        <% end %>
+                      <% end %>
                     </select>
                   </form>
                 </div>
@@ -425,23 +345,12 @@ defmodule AcesWeb.Components.UnitSearchModal do
                   <form phx-change="set_type_filter" phx-target={@myself}>
                     <select class="select select-bordered select-sm" name="type">
                       <option value="" selected={@filter_type == nil}>All Types</option>
-                      <option value="battlemech" selected={@filter_type == "battlemech"}>
-                        BattleMech
-                      </option>
-                      <option value="combat_vehicle" selected={@filter_type == "combat_vehicle"}>
-                        Combat Vehicle
-                      </option>
-                      <option value="battle_armor" selected={@filter_type == "battle_armor"}>
-                        Battle Armor
-                      </option>
                       <option
-                        value="conventional_infantry"
-                        selected={@filter_type == "conventional_infantry"}
+                        :for={unit_type <- Vocabulary.unit_types()}
+                        value={unit_type.key}
+                        selected={@filter_type == unit_type.key}
                       >
-                        Infantry
-                      </option>
-                      <option value="protomech" selected={@filter_type == "protomech"}>
-                        ProtoMech
+                        {unit_type.label}
                       </option>
                     </select>
                   </form>

@@ -31,7 +31,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
   ## Valid Eras
 
-      ilclan, dark_age, republic, jihad, civil_war, clan_invasion
+      See `Aces.MUL.Vocabulary.era_keys/0`.
 
   ## Valid Factions
 
@@ -42,7 +42,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
   use Mix.Task
   alias Aces.{ChangesetHelpers, Units}
-  alias Aces.MUL.Client
+  alias Aces.MUL.{Client, Vocabulary}
 
   require Logger
 
@@ -62,7 +62,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
     "protomech" => 20
   }
 
-  @valid_eras ~w(ilclan dark_age late_republic early_republic jihad civil_war clan_invasion)
+  @valid_eras Vocabulary.era_keys()
 
   def run(args) do
     Mix.Task.run("app.start")

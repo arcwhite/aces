@@ -19,9 +19,13 @@ defmodule Aces.Units.MasterUnit do
   import Ecto.Changeset
 
   alias Aces.Companies.CompanyUnit
+  alias Aces.MUL.Vocabulary
 
-  @valid_unit_types ~w(battlemech combat_vehicle battle_armor conventional_infantry protomech other)
-  @valid_eras ~w(ilclan dark_age late_republic early_republic jihad civil_war clan_invasion)
+  # "other" is not part of the shared vocabulary; it exists solely as a
+  # fallback bucket for MUL payloads whose type resolution returns "other"
+  # (see `Aces.MUL.Client.resolve_unit_type/2`).
+  @valid_unit_types Vocabulary.unit_type_keys() ++ ["other"]
+  @valid_eras Vocabulary.era_keys()
 
   schema "master_units" do
     field :mul_id, :integer

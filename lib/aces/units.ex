@@ -12,7 +12,7 @@ defmodule Aces.Units do
   alias Aces.Repo
   alias Aces.Units.Filters
   alias Aces.Units.MasterUnit
-  alias Aces.MUL.Client
+  alias Aces.MUL.{Client, Vocabulary}
 
   require Logger
 
@@ -203,7 +203,7 @@ defmodule Aces.Units do
   end
 
   defp translate_filter({:unit_type, type}, acc) do
-    case unit_type_to_mul_type_id(type) do
+    case Vocabulary.mul_type_id(type) do
       nil -> acc
       id -> Map.put(acc, :types, [id])
     end
@@ -226,15 +226,6 @@ defmodule Aces.Units do
       _ -> filters
     end
   end
-
-  # MUL type IDs mirror lib/mix/tasks/seed_master_units.ex @type_mappings.
-  # Battle armor and conventional infantry both live under type 21 (Infantry).
-  defp unit_type_to_mul_type_id("battlemech"), do: 18
-  defp unit_type_to_mul_type_id("combat_vehicle"), do: 19
-  defp unit_type_to_mul_type_id("protomech"), do: 20
-  defp unit_type_to_mul_type_id("battle_armor"), do: 21
-  defp unit_type_to_mul_type_id("conventional_infantry"), do: 21
-  defp unit_type_to_mul_type_id(_), do: nil
 
   defp fetch_and_cache_unit(_mul_id) do
     # Cannot fetch by MUL ID alone - the MUL API requires a name search

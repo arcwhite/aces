@@ -18,19 +18,8 @@ defmodule Aces.Units.Filters do
     * `{:tonnage_range, {min, max}}` - Filter by tonnage range (inclusive)
 
   ### Era
-    * `{:era, era_string}` - Filter by unit introduction era
-
-    Supported era strings:
-      - "ilclan" (3151+)
-      - "dark_age"
-      - "late_republic" / "republic"
-      - "early_republic"
-      - "jihad"
-      - "civil_war"
-      - "clan_invasion"
-      - "late_succession_war"
-      - "early_succession_war"
-      - "star_league"
+    * `{:era, era_string}` - Filter by unit introduction era.
+      Valid era strings come from `Aces.MUL.Vocabulary.era_keys/0`.
 
   ### Faction Availability
     * `{:faction, faction_string}` - Filter by faction availability (legacy format)
@@ -57,21 +46,10 @@ defmodule Aces.Units.Filters do
 
   import Ecto.Query
 
-  # Era ID mapping for filtering by unit introduction era
-  # Note: This filters by when the unit was INTRODUCED, not faction availability
-  @era_ids %{
-    "ilclan" => 257,
-    "dark_age" => 16,
-    "late_republic" => 254,
-    "republic" => 254,
-    "early_republic" => 15,
-    "jihad" => 14,
-    "civil_war" => 247,
-    "clan_invasion" => 13,
-    "late_succession_war" => 256,
-    "early_succession_war" => 11,
-    "star_league" => 10
-  }
+  alias Aces.MUL.Vocabulary
+
+  # Filters by the era in which a unit was INTRODUCED (not faction availability).
+  @era_ids Vocabulary.era_ids()
 
   @doc """
   Apply a list of filters to a query.
