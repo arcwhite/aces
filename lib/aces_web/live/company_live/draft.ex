@@ -33,12 +33,11 @@ defmodule AcesWeb.CompanyLive.Draft do
          |> assign(:page_title, "Setup: #{company.name}")
          |> assign(:show_unit_search, false)
          |> assign(:unit_search_term, "")
-         |> assign(:search_results, [])
-         |> assign(:search_loading, false)
          |> assign(:unit_add_error, nil)
          |> assign(:search_filter_eras, ["ilclan", "dark_age"])
          |> assign(:search_filter_faction, "mercenary")
          |> assign(:search_filter_type, nil)
+         |> assign_results([], :idle, nil)
          |> assign(:show_pilot_form, false)
          |> assign(:pilot_form_action, :new)
          |> assign(:show_unit_edit, false)
@@ -116,9 +115,8 @@ defmodule AcesWeb.CompanyLive.Draft do
     {:noreply,
      socket
      |> assign(:unit_search_term, "")
-     |> assign(:search_results, [])
-     |> assign(:search_loading, false)
      |> assign(:unit_add_error, nil)
+     |> assign_results([], :idle, nil)
      |> push_patch(to: ~p"/companies/#{company}/draft")}
   end
 
@@ -169,9 +167,8 @@ defmodule AcesWeb.CompanyLive.Draft do
       else
         socket
         |> assign(:unit_search_term, search_term)
-        |> assign(:search_results, [])
-        |> assign(:search_loading, false)
         |> assign(:unit_add_error, nil)
+        |> assign_results([], :idle, nil)
       end
 
     {:noreply, socket}
@@ -341,71 +338,45 @@ defmodule AcesWeb.CompanyLive.Draft do
 
   def handle_info({:perform_search, search_term}, socket) do
     if socket.assigns.unit_search_term == search_term do
-      try do
-        # Build search options from filters
-        opts = build_search_opts(socket.assigns)
-        search_results = Units.search_units(search_term, opts)
-
-        {:noreply,
-         socket
-         |> assign(:search_results, search_results)
-         |> assign(:search_loading, false)}
-      rescue
-        _error ->
-          {:noreply,
-           socket
-           |> assign(:search_results, [])
-           |> assign(:search_loading, false)
-           |> put_flash(:error, "Search failed. Please try again.")}
-      end
+      {:noreply, perform_search(socket, search_term)}
     else
       {:noreply, socket}
     end
   end
 
-  defp build_search_opts(assigns) do
-    opts = []
-
-    # Add unit type filter if set
-    opts =
-      if assigns.search_filter_type do
-        [{:unit_type, assigns.search_filter_type} | opts]
-      else
-        opts
-      end
-
-    # Add era + faction filter if both are set
-    opts =
-      if length(assigns.search_filter_eras) > 0 and assigns.search_filter_faction do
-        [{:era_faction, {assigns.search_filter_eras, assigns.search_filter_faction}} | opts]
-      else
-        opts
-      end
-
-    opts
+  defp perform_search(socket, search_term) do
+    case Units.search(search_term, filters_from_assigns(socket.assigns)) do
+      {:ok, results} -> assign_results(socket, results, :search, nil)
+      {:error, :term_too_short} -> assign_results(socket, [], :idle, nil)
+      {:error, reason} -> assign_results(socket, [], :error, reason)
+    end
   end
 
-  # Helper to run search immediately when filters change
+  # Run search immediately when filters change (if we have a search term)
   defp maybe_run_search(socket) do
     search_term = socket.assigns.unit_search_term
 
     if String.length(search_term) >= 2 do
-      try do
-        opts = build_search_opts(socket.assigns)
-        search_results = Units.search_units(search_term, opts)
-
-        socket
-        |> assign(:search_results, search_results)
-        |> assign(:search_loading, false)
-      rescue
-        _error ->
-          socket
-          |> assign(:search_results, [])
-          |> assign(:search_loading, false)
-      end
+      perform_search(socket, search_term)
     else
       socket
     end
+  end
+
+  defp filters_from_assigns(assigns) do
+    %{
+      eras: assigns.search_filter_eras,
+      faction: assigns.search_filter_faction,
+      type: assigns.search_filter_type
+    }
+  end
+
+  defp assign_results(socket, units, source, error) do
+    socket
+    |> assign(:search_results, units)
+    |> assign(:search_loading, false)
+    |> assign(:results_source, source)
+    |> assign(:results_error, error)
   end
 
   @impl true
@@ -861,14 +832,18 @@ defmodule AcesWeb.CompanyLive.Draft do
 
             <div class="divider"></div>
 
-            <div class="max-h-96 overflow-y-auto">
-              <%= if @search_loading do %>
-                <div class="flex justify-center py-8">
-                  <span class="loading loading-spinner loading-lg"></span>
-                </div>
-              <% else %>
-                <%= if length(@search_results) > 0 do %>
-                  <div class="grid gap-3">
+            <div class="max-h-96 overflow-y-auto" data-role="results-container">
+              <%= cond do %>
+                <% @search_loading -> %>
+                  <div class="flex justify-center py-8" data-role="results-loading">
+                    <span class="loading loading-spinner loading-lg"></span>
+                  </div>
+                <% @results_source == :error -> %>
+                  <div class="text-center py-8" data-role="results-error">
+                    <p class="text-gray-600">Could not load units. Please try again.</p>
+                  </div>
+                <% @search_results != [] -> %>
+                  <div class="grid gap-3" data-role="results-list">
                     <%= for unit <- @search_results do %>
                       <div class="card bg-base-100 shadow compact">
                         <div class="card-body">
@@ -938,20 +913,17 @@ defmodule AcesWeb.CompanyLive.Draft do
                       </div>
                     <% end %>
                   </div>
-                <% else %>
-                  <%= if @unit_search_term != "" do %>
-                    <div class="text-center py-8">
-                      <p class="text-gray-600">No units found for "{@unit_search_term}"</p>
-                      <p class="text-sm text-gray-500 mt-2">
-                        Try searching by chassis name (e.g., "Atlas" instead of "AS7-D")
-                      </p>
-                    </div>
-                  <% else %>
-                    <div class="text-center py-8">
-                      <p class="text-gray-600">Search for units to add to your company roster</p>
-                    </div>
-                  <% end %>
-                <% end %>
+                <% @unit_search_term != "" -> %>
+                  <div class="text-center py-8" data-role="results-empty-search">
+                    <p class="text-gray-600">No units found for "{@unit_search_term}"</p>
+                    <p class="text-sm text-gray-500 mt-2">
+                      Try searching by chassis name (e.g., "Atlas" instead of "AS7-D")
+                    </p>
+                  </div>
+                <% true -> %>
+                  <div class="text-center py-8" data-role="results-empty-idle">
+                    <p class="text-gray-600">Search for units to add to your company roster</p>
+                  </div>
               <% end %>
             </div>
       </.modal>

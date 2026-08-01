@@ -19,37 +19,6 @@ defmodule Aces.Units do
   @cache_ttl_days 30  # Refresh cached units after 30 days
 
   @doc """
-  Search for units - checks local DB first, falls back to API
-
-  ## Examples
-
-      iex> search_units("Atlas")
-      [%MasterUnit{name: "Atlas", variant: "AS7-D"}, ...]
-  """
-  def search_units(search_term, opts \\ []) when is_binary(search_term) do
-    search_term = String.trim(search_term)
-
-    if String.length(search_term) < 2 do
-      []
-    else
-      local_results = search_local_units(search_term, opts)
-
-      # If we have recent local results, return them
-      if length(local_results) > 0 do
-        local_results
-      else
-        # Try API as fallback
-        case search_and_cache_from_api(search_term, opts) do
-          {:ok, units} -> units
-          {:error, reason} ->
-            Logger.info("MUL API search failed for '#{search_term}': #{reason}")
-            []  # Graceful degradation
-        end
-      end
-    end
-  end
-
-  @doc """
   Get unit by MUL ID - checks cache first, then API
   """
   def get_master_unit_by_mul_id(mul_id) when is_integer(mul_id) do
@@ -73,8 +42,8 @@ defmodule Aces.Units do
 
   Returns `{:ok, units}` on success, `{:error, {:query_failed, reason}}` if the
   DB call raises. Callers should pattern-match instead of rescuing at the view
-  layer — the shape mirrors `search_units_for_company/2` so both boundary calls
-  can be handled uniformly.
+  layer — the shape mirrors `search/2` so both boundary calls can be handled
+  uniformly.
 
   In addition to the keys accepted by `Aces.Units.Filters`, `:limit` caps the
   returned row count (useful for populating default UI listings).
@@ -275,8 +244,9 @@ defmodule Aces.Units do
   @doc """
   Search for units with user-friendly filter format.
 
-  This function is designed for use in LiveViews and contexts that need
-  simple, user-facing filter options with comprehensive error handling.
+  Checks local DB first and falls back to the MUL API for cache misses.
+  Designed for use in LiveViews and contexts that need simple, user-facing
+  filter options with comprehensive error handling.
 
   ## Parameters
 
@@ -294,45 +264,60 @@ defmodule Aces.Units do
 
   ## Examples
 
-      iex> search_units_for_company("Atlas", %{eras: ["ilclan"], faction: "mercenary"})
+      iex> search("Atlas", %{eras: ["ilclan"], faction: "mercenary"})
       {:ok, [%MasterUnit{name: "Atlas", ...}, ...]}
 
-      iex> search_units_for_company("A", %{})
+      iex> search("A", %{})
       {:error, :term_too_short}
   """
-  def search_units_for_company(search_term, filters \\ %{}) when is_binary(search_term) do
+  def search(search_term, filters \\ %{}) when is_binary(search_term) do
     search_term = String.trim(search_term)
 
-    cond do
-      String.length(search_term) < 2 ->
-        {:error, :term_too_short}
-
-      true ->
-        try do
-          # Build search options from user-friendly filters
-          opts = build_search_opts_from_filters(filters)
-          results = search_units(search_term, opts)
-          {:ok, results}
-        rescue
-          error ->
-            Logger.error("Unit search failed for '#{search_term}': #{inspect(error)}")
-            {:error, :search_failed}
-        end
+    if String.length(search_term) < 2 do
+      {:error, :term_too_short}
+    else
+      try do
+        opts = build_search_opts_from_filters(filters)
+        {:ok, do_search(search_term, opts)}
+      rescue
+        error ->
+          Logger.error("Unit search failed for '#{search_term}': #{inspect(error)}")
+          {:error, :search_failed}
+      end
     end
   end
 
-  # Convert user-friendly filter format to internal opts format
-  defp build_search_opts_from_filters(filters) when is_map(filters) do
+  defp do_search(search_term, opts) do
+    local_results = search_local_units(search_term, opts)
+
+    if length(local_results) > 0 do
+      local_results
+    else
+      case search_and_cache_from_api(search_term, opts) do
+        {:ok, units} ->
+          units
+
+        {:error, reason} ->
+          Logger.info("MUL API search failed for '#{search_term}': #{reason}")
+          []
+      end
+    end
+  end
+
+  @doc """
+  Convert user-friendly filter format to the internal opts keyword list used
+  by the local query pipeline. Public so LiveViews and tests can build opts
+  consistently instead of duplicating the mapping.
+  """
+  def build_search_opts_from_filters(filters) when is_map(filters) do
     opts = []
 
-    # Add unit type filter if set
     opts =
       case Map.get(filters, :type) do
         nil -> opts
         type -> [{:unit_type, type} | opts]
       end
 
-    # Add era + faction filter if both are set
     opts =
       case {Map.get(filters, :eras), Map.get(filters, :faction)} do
         {eras, faction} when is_list(eras) and length(eras) > 0 and is_binary(faction) ->

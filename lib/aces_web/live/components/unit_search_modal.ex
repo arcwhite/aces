@@ -160,7 +160,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
       type: socket.assigns.filter_type
     }
 
-    case Units.search_units_for_company(socket.assigns.search_term, filters) do
+    case Units.search(socket.assigns.search_term, filters) do
       {:ok, results} -> assign_results(socket, results, :search, nil)
       {:error, :term_too_short} -> assign_results(socket, [], :idle, nil)
       {:error, reason} -> assign_results(socket, [], :error, reason)
