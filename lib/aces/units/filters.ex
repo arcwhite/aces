@@ -49,7 +49,7 @@ defmodule Aces.Units.Filters do
       alias Aces.Units.Filters
 
       MasterUnit
-      |> Filters.apply(unit_type: "BattleMech", min_pv: 20, max_pv: 50)
+      |> Filters.filter(unit_type: "BattleMech", min_pv: 20, max_pv: 50)
       |> Repo.all()
 
   Unknown filter keys are silently ignored, allowing forward compatibility.

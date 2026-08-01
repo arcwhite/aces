@@ -87,13 +87,22 @@ defmodule Aces.Units do
   When updating an existing unit, the factions field is merged rather than replaced,
   allowing faction availability to accumulate across multiple seed operations with
   different era/faction combinations.
+
+  Returns `{:error, :no_alpha_strike_card}` for payloads that lack both `bf_type`
+  and `point_value` — units without an Alpha Strike statline are not useful to
+  cache and would otherwise fall through to `TypeMapping.resolve/2`'s `"other"`
+  bucket.
   """
   def create_or_update_master_unit(attrs) when is_map(attrs) do
     case Repo.get_by(MasterUnit, mul_id: attrs[:mul_id] || attrs["mul_id"]) do
       nil ->
-        %MasterUnit{}
-        |> MasterUnit.changeset(attrs)
-        |> Repo.insert()
+        if no_alpha_strike_card?(attrs) do
+          {:error, :no_alpha_strike_card}
+        else
+          %MasterUnit{}
+          |> MasterUnit.changeset(attrs)
+          |> Repo.insert()
+        end
 
       existing ->
         # Merge factions instead of replacing
@@ -103,6 +112,11 @@ defmodule Aces.Units do
         |> MasterUnit.changeset(merged_attrs)
         |> Repo.update()
     end
+  end
+
+  defp no_alpha_strike_card?(attrs) do
+    is_nil(attrs[:bf_type] || attrs["bf_type"]) and
+      is_nil(attrs[:point_value] || attrs["point_value"])
   end
 
   # Merge new faction data with existing faction data
@@ -148,36 +162,79 @@ defmodule Aces.Units do
 
     case Client.fetch_units(filters) do
       {:ok, api_units} ->
-        cached_units =
-          api_units
-          |> Enum.map(&create_or_update_master_unit/1)
-          |> Enum.filter(&match?({:ok, _}, &1))
-          |> Enum.map(fn {:ok, unit} -> unit end)
+        Enum.each(api_units, &create_or_update_master_unit/1)
+        # Re-run the local pass with the full original opts so untranslatable
+        # filters (dropped from the API request) still narrow the returned set.
+        {:ok, search_local_units(search_term, opts)}
 
-        {:ok, cached_units}
-
-      error -> error
+      error ->
+        error
     end
   end
 
-  # Translate internal filter format to MUL API format
-  defp translate_filters_for_api(opts) do
-    Enum.reduce(opts, %{}, fn
-      {:era_faction, {eras, faction}}, acc ->
-        # Convert era_faction tuple to separate eras and factions filters
-        acc
-        |> Map.put(:eras, eras)
-        |> Map.put(:factions, [faction])
+  # Internal opt keys that MUL binds. Anything not here is dropped from the
+  # API request (with a debug log) and enforced by the local pass instead.
+  @supported_filter_keys ~w(era eras era_faction unit_type min_pv max_pv tonnage_range)a
 
-      {:unit_type, type}, acc ->
-        # Pass through unit_type as-is (Client handles it)
-        Map.put(acc, :unit_type, type)
+  @doc false
+  # Translate internal filter opts into a best-effort MUL API narrowing request.
+  # Unknown keys never fail the search — they just don't reach MUL. Public for
+  # test visibility; not part of the API contract.
+  def translate_filters_for_api(opts) do
+    {known, unknown} = Enum.split_with(opts, fn {key, _} -> key in @supported_filter_keys end)
 
-      {key, value}, acc ->
-        # Pass through other filters
-        Map.put(acc, key, value)
-    end)
+    if unknown != [] do
+      Logger.debug(fn ->
+        keys = unknown |> Enum.map(fn {k, _} -> k end) |> Enum.uniq()
+        "MUL filter translation dropped unsupported keys: #{inspect(keys)}"
+      end)
+    end
+
+    known
+    |> Enum.reduce(%{}, &translate_filter/2)
+    |> pair_complete(:min_pv, :max_pv, 0, 9999)
+    |> pair_complete(:min_tons, :max_tons, 0, 200)
   end
+
+  defp translate_filter({:era_faction, {eras, faction}}, acc) do
+    acc
+    |> Map.put(:eras, eras)
+    |> Map.put(:factions, [faction])
+  end
+
+  defp translate_filter({:unit_type, type}, acc) do
+    case unit_type_to_mul_type_id(type) do
+      nil -> acc
+      id -> Map.put(acc, :types, [id])
+    end
+  end
+
+  defp translate_filter({:tonnage_range, {min, max}}, acc) do
+    acc
+    |> Map.put(:min_tons, min)
+    |> Map.put(:max_tons, max)
+  end
+
+  defp translate_filter({key, value}, acc), do: Map.put(acc, key, value)
+
+  # MUL ignores a lone bound in a range filter; emit the pair or neither, using
+  # sentinels for the missing side (verified: MinPV=0&MaxPV=9999 is unfiltered).
+  defp pair_complete(filters, min_key, max_key, min_default, max_default) do
+    case {Map.has_key?(filters, min_key), Map.has_key?(filters, max_key)} do
+      {true, false} -> Map.put(filters, max_key, max_default)
+      {false, true} -> Map.put(filters, min_key, min_default)
+      _ -> filters
+    end
+  end
+
+  # MUL type IDs mirror lib/mix/tasks/seed_master_units.ex @type_mappings.
+  # Battle armor and conventional infantry both live under type 21 (Infantry).
+  defp unit_type_to_mul_type_id("battlemech"), do: 18
+  defp unit_type_to_mul_type_id("combat_vehicle"), do: 19
+  defp unit_type_to_mul_type_id("protomech"), do: 20
+  defp unit_type_to_mul_type_id("battle_armor"), do: 21
+  defp unit_type_to_mul_type_id("conventional_infantry"), do: 21
+  defp unit_type_to_mul_type_id(_), do: nil
 
   defp fetch_and_cache_unit(_mul_id) do
     # Cannot fetch by MUL ID alone - the MUL API requires a name search

@@ -282,7 +282,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
     start_time = System.monotonic_time()
     log_file = open_error_log()
 
-    results = %{success: 0, errors: 0, error_details: [], log_file: log_file}
+    results = %{success: 0, errors: 0, skipped: 0, error_details: [], log_file: log_file}
 
     final_results =
       units
@@ -295,6 +295,9 @@ defmodule Mix.Tasks.SeedMasterUnits do
         case Units.create_or_update_master_unit(unit_data) do
           {:ok, _unit} ->
             %{acc | success: acc.success + 1}
+
+          {:error, :no_alpha_strike_card} ->
+            %{acc | skipped: acc.skipped + 1}
 
           {:error, changeset} ->
             error_msg = ChangesetHelpers.format_errors(changeset)
@@ -318,10 +321,19 @@ defmodule Mix.Tasks.SeedMasterUnits do
     Map.delete(final_results, :log_file)
   end
 
-  defp display_import_results(%{success: success, errors: errors, error_details: error_details}) do
+  defp display_import_results(%{
+         success: success,
+         errors: errors,
+         skipped: skipped,
+         error_details: error_details
+       }) do
     IO.puts("")
     IO.puts("📊 Import Results:")
     IO.puts("  • Successfully imported: #{success} units")
+
+    if skipped > 0 do
+      IO.puts("  • Skipped (no Alpha Strike statline): #{skipped} units")
+    end
 
     if errors > 0 do
       IO.puts("  • Failed imports: #{errors} units")
