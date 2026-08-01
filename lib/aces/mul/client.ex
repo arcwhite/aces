@@ -269,6 +269,8 @@ defmodule Aces.MUL.Client do
 
   defp encode_param(:min_tons, tons), do: "MinTons=#{tons}"
   defp encode_param(:max_tons, tons), do: "MaxTons=#{tons}"
+  defp encode_param(:min_pv, pv), do: "MinPV=#{pv}"
+  defp encode_param(:max_pv, pv), do: "MaxPV=#{pv}"
   defp encode_param(:name, name), do: "Name=#{URI.encode(name)}"
 
   # Faction name to ID mapping (extracted from https://masterunitlist.azurewebsites.net/Faction/Index)

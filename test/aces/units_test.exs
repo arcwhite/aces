@@ -483,6 +483,33 @@ defmodule Aces.UnitsTest do
       assert updated.variant == "AS7-K"
     end
 
+    test "returns :no_alpha_strike_card when payload has neither bf_type nor point_value" do
+      attrs = %{
+        mul_id: 5150,
+        name: "Stateless Row",
+        variant: "SR-1",
+        full_name: "Stateless Row SR-1",
+        unit_type: "other"
+      }
+
+      assert {:error, :no_alpha_strike_card} = Units.create_or_update_master_unit(attrs)
+      assert is_nil(Aces.Repo.get_by(Aces.Units.MasterUnit, mul_id: 5150))
+    end
+
+    test "accepts payloads that carry bf_type even without point_value" do
+      attrs = %{
+        mul_id: 5151,
+        name: "BF-only Row",
+        variant: "BFO-1",
+        full_name: "BF-only Row BFO-1",
+        unit_type: "battle_armor",
+        bf_type: "BA"
+      }
+
+      assert {:ok, unit} = Units.create_or_update_master_unit(attrs)
+      assert unit.bf_type == "BA"
+    end
+
     test "merges faction data when updating" do
       existing =
         units_master_unit_fixture(
@@ -505,6 +532,58 @@ defmodule Aces.UnitsTest do
       assert Map.has_key?(updated.factions, "dark_age")
       assert "mercenary" in updated.factions["ilclan"]
       assert "clan_wolf" in updated.factions["dark_age"]
+    end
+  end
+
+  describe "translate_filters_for_api/1" do
+    test "drops unknown opts silently instead of failing" do
+      # An unknown opt used to leak into the API request; now it should just be
+      # dropped (correctness comes from the local pass re-running).
+      assert Units.translate_filters_for_api(foo: :bar) == %{}
+
+      # A mix of known + unknown keeps the known ones.
+      result = Units.translate_filters_for_api(unit_type: "battlemech", foo: :bar)
+      assert result == %{types: [18]}
+    end
+
+    test "pair-completes a one-sided min_pv with a MaxPV sentinel" do
+      # MUL ignores a lone MinPV / MaxPV; we must emit both.
+      assert Units.translate_filters_for_api(min_pv: 20) == %{min_pv: 20, max_pv: 9999}
+      assert Units.translate_filters_for_api(max_pv: 40) == %{min_pv: 0, max_pv: 40}
+      assert Units.translate_filters_for_api(min_pv: 20, max_pv: 40) ==
+               %{min_pv: 20, max_pv: 40}
+    end
+
+    test "translates tonnage_range and pair-completes a lone tonnage bound" do
+      assert Units.translate_filters_for_api(tonnage_range: {50, 75}) ==
+               %{min_tons: 50, max_tons: 75}
+    end
+
+    test "translates era_faction into eras + factions" do
+      assert Units.translate_filters_for_api(era_faction: {["ilclan"], "mercenary"}) ==
+               %{eras: ["ilclan"], factions: ["mercenary"]}
+    end
+  end
+
+  describe "search_units/2 filter honouring" do
+    test "min_pv is honoured in the returned local set" do
+      _heavy = units_master_unit_fixture(
+        name: "Filter Heavy",
+        variant: "FH-1",
+        full_name: "Filter Heavy FH-1",
+        point_value: 50
+      )
+
+      light = units_master_unit_fixture(
+        name: "Filter Light",
+        variant: "FL-1",
+        full_name: "Filter Light FL-1",
+        point_value: 10
+      )
+
+      results = Units.search_units("Filter", min_pv: 40)
+      assert Enum.all?(results, fn u -> u.point_value >= 40 end)
+      refute Enum.any?(results, fn u -> u.id == light.id end)
     end
   end
 
