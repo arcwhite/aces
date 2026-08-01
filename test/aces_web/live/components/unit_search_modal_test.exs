@@ -44,10 +44,13 @@ defmodule AcesWeb.Components.UnitSearchModalTest do
       {:ok, view, _html} =
         live(conn, ~p"/companies/#{company}/campaigns/#{campaign}?modal=unit_search")
 
-      html =
-        view
-        |> element("input[name=search]")
-        |> render_keyup(%{"value" => "zz-no-match-zz"})
+      view
+      |> element("input[name=search]")
+      |> render_keyup(%{"value" => "zz-no-match-zz"})
+
+      # The search runs in start_async; wait for the task to complete before
+      # asserting on the resulting HTML.
+      html = render_async(view, 2_000)
 
       assert html =~ ~s(data-role="results-empty-search")
       refute html =~ ~s(data-role="results-list")

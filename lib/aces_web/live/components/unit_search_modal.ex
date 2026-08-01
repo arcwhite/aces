@@ -122,7 +122,6 @@ defmodule AcesWeb.Components.UnitSearchModal do
       if String.length(search_term) >= 2 do
         socket
         |> assign(:search_term, search_term)
-        |> assign(:search_loading, true)
         |> perform_search()
       else
         socket
@@ -144,6 +143,23 @@ defmodule AcesWeb.Components.UnitSearchModal do
     end
   end
 
+  @impl true
+  def handle_async(:search, {:ok, {:ok, results}}, socket) do
+    {:noreply, assign_results(socket, results, :search, nil)}
+  end
+
+  def handle_async(:search, {:ok, {:error, :term_too_short}}, socket) do
+    {:noreply, assign_results(socket, [], :idle, nil)}
+  end
+
+  def handle_async(:search, {:ok, {:error, reason}}, socket) do
+    {:noreply, assign_results(socket, [], :error, reason)}
+  end
+
+  def handle_async(:search, {:exit, reason}, socket) do
+    {:noreply, assign_results(socket, [], :error, {:task_exit, reason})}
+  end
+
   # Run search immediately when filters change (if we have a search term)
   defp maybe_run_search(socket) do
     if String.length(socket.assigns.search_term) >= 2 do
@@ -153,18 +169,20 @@ defmodule AcesWeb.Components.UnitSearchModal do
     end
   end
 
+  # start_async cancels any in-flight :search task, so rapid typing and
+  # filter-toggling self-debounce without extra bookkeeping.
   defp perform_search(socket) do
+    term = socket.assigns.search_term
+
     filters = %{
       eras: socket.assigns.filter_eras,
       faction: socket.assigns.filter_faction,
       type: socket.assigns.filter_type
     }
 
-    case Units.search(socket.assigns.search_term, filters) do
-      {:ok, results} -> assign_results(socket, results, :search, nil)
-      {:error, :term_too_short} -> assign_results(socket, [], :idle, nil)
-      {:error, reason} -> assign_results(socket, [], :error, reason)
-    end
+    socket
+    |> assign(:search_loading, true)
+    |> start_async(:search, fn -> Units.search(term, filters) end)
   end
 
   defp load_default_results(socket) do
