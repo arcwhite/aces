@@ -126,6 +126,29 @@ defmodule Aces.Units do
     Repo.aggregate(MasterUnit, :count)
   end
 
+  @doc """
+  Imports a batch of normalized unit maps into the local cache.
+
+  Returns `%{successes: n, errors: n, skipped: n, errored: [{unit_data, changeset}]}`.
+  `skipped` counts payloads rejected as cardless (see
+  `create_or_update_master_unit/1`); `errored` carries the changeset for each
+  validation failure so callers can log or format them.
+  """
+  def import_units(units) when is_list(units) do
+    Enum.reduce(units, %{successes: 0, errors: 0, skipped: 0, errored: []}, fn unit_data, acc ->
+      case create_or_update_master_unit(unit_data) do
+        {:ok, _} ->
+          %{acc | successes: acc.successes + 1}
+
+        {:error, :no_alpha_strike_card} ->
+          %{acc | skipped: acc.skipped + 1}
+
+        {:error, changeset} ->
+          %{acc | errors: acc.errors + 1, errored: [{unit_data, changeset} | acc.errored]}
+      end
+    end)
+  end
+
   # Private functions
 
   defp search_local_units(search_term, opts) do

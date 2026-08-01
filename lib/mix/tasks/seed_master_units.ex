@@ -41,8 +41,8 @@ defmodule Mix.Tasks.SeedMasterUnits do
   """
 
   use Mix.Task
-  alias Aces.{ChangesetHelpers, Units}
-  alias Aces.MUL.{Client, Vocabulary}
+  alias Aces.{ChangesetHelpers, MUL, Units}
+  alias Aces.MUL.Vocabulary
 
   require Logger
 
@@ -90,11 +90,14 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
     case validate_required_opts(opts) do
       :ok ->
-        if opts[:dry_run] do
-          dry_run(opts)
-        else
-          perform_seed(opts)
-        end
+        result =
+          if opts[:dry_run] do
+            dry_run(opts)
+          else
+            perform_seed(opts)
+          end
+
+        if result == :error, do: System.halt(1)
 
       {:error, message} ->
         IO.puts("❌ #{message}")
@@ -142,7 +145,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
     filters = build_filters(opts)
     display_filters(filters)
 
-    case Client.fetch_units(filters) do
+    case MUL.client().fetch_units(filters) do
       {:ok, units} ->
         IO.puts("✅ Found #{length(units)} units that would be seeded:")
         IO.puts("")
@@ -159,49 +162,54 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
         IO.puts("")
         IO.puts("Run without --dry-run to actually seed these units.")
+        :ok
 
       {:error, reason} ->
-        IO.puts("❌ Failed to fetch units: #{reason}")
+        IO.puts("❌ Failed to fetch units: #{inspect(reason)}")
+        :error
     end
   end
 
-  defp perform_seed(opts) do
+  @doc false
+  # Public so tests can drive the seed flow against a stubbed client without
+  # relying on System.halt (which run/1 handles based on the :ok | :error
+  # return here).
+  def perform_seed(opts) do
     existing_count = Units.count_cached_units()
 
     if existing_count > 0 and not (opts[:force] || false) do
       IO.puts("⚠️  Database already contains #{existing_count} cached units.")
       IO.puts("Use --force to seed additional units or clear the database first.")
-      System.halt(1)
-    end
+      :error
+    else
+      IO.puts("🚀 Fetching units from Master Unit List...")
+      IO.puts("")
 
-    IO.puts("🚀 Fetching units from Master Unit List...")
-    IO.puts("")
+      filters = build_filters(opts)
+      display_filters(filters)
 
-    filters = build_filters(opts)
-    display_filters(filters)
+      case MUL.client().fetch_units(filters) do
+        {:ok, units} ->
+          total_units = length(units)
+          limited_units = if opts[:limit], do: Enum.take(units, opts[:limit]), else: units
 
-    case Client.fetch_units(filters) do
-      {:ok, units} ->
-        total_units = length(units)
-        limited_units = if opts[:limit], do: Enum.take(units, opts[:limit]), else: units
+          IO.puts("✅ Found #{total_units} units from MUL API")
 
-        IO.puts("✅ Found #{total_units} units from MUL API")
+          if opts[:limit] do
+            IO.puts("📊 Limiting to #{length(limited_units)} units due to --limit option")
+          end
 
-        if opts[:limit] do
-          IO.puts("📊 Limiting to #{length(limited_units)} units due to --limit option")
-        end
+          IO.puts("💾 Importing to database...")
+          IO.puts("")
 
-        IO.puts("💾 Importing to database...")
-        IO.puts("")
+          display_import_results(run_import(limited_units))
+          :ok
 
-        import_results = import_units(limited_units)
-
-        display_import_results(import_results)
-
-      {:error, reason} ->
-        IO.puts("❌ Failed to fetch units from MUL API: #{reason}")
-        IO.puts("Please check your internet connection and try again.")
-        System.halt(1)
+        {:error, reason} ->
+          IO.puts("❌ Failed to fetch units from MUL API: #{inspect(reason)}")
+          IO.puts("Please check your internet connection and try again.")
+          :error
+      end
     end
   end
 
@@ -278,58 +286,45 @@ defmodule Mix.Tasks.SeedMasterUnits do
     IO.puts("")
   end
 
-  defp import_units(units) do
+  defp run_import(units) do
     start_time = System.monotonic_time()
     log_file = open_error_log()
 
-    results = %{success: 0, errors: 0, skipped: 0, error_details: [], log_file: log_file}
+    results = Units.import_units(units)
 
-    final_results =
-      units
-      |> Enum.with_index(1)
-      |> Enum.reduce(results, fn {unit_data, index}, acc ->
-        if rem(index, 10) == 0 do
-          IO.write("\r💾 Imported #{index}/#{length(units)} units")
-        end
-
-        case Units.create_or_update_master_unit(unit_data) do
-          {:ok, _unit} ->
-            %{acc | success: acc.success + 1}
-
-          {:error, :no_alpha_strike_card} ->
-            %{acc | skipped: acc.skipped + 1}
-
-          {:error, changeset} ->
-            error_msg = ChangesetHelpers.format_errors(changeset)
-            log_error_details(acc.log_file, unit_data, changeset)
-            %{
-              acc |
-              errors: acc.errors + 1,
-              error_details: [error_msg | acc.error_details]
-            }
-        end
-      end)
+    Enum.each(results.errored, fn {unit_data, changeset} ->
+      log_error_details(log_file, unit_data, changeset)
+    end)
 
     close_error_log(log_file)
 
     elapsed = System.monotonic_time() - start_time
     elapsed_ms = System.convert_time_unit(elapsed, :native, :millisecond)
 
-    IO.write("\r")  # Clear progress line
     IO.puts("✅ Import completed in #{elapsed_ms}ms")
 
-    Map.delete(final_results, :log_file)
+    error_details =
+      results.errored
+      |> Enum.reverse()
+      |> Enum.map(fn {_unit_data, changeset} -> ChangesetHelpers.format_errors(changeset) end)
+
+    %{
+      successes: results.successes,
+      errors: results.errors,
+      skipped: results.skipped,
+      error_details: error_details
+    }
   end
 
   defp display_import_results(%{
-         success: success,
+         successes: successes,
          errors: errors,
          skipped: skipped,
          error_details: error_details
        }) do
     IO.puts("")
     IO.puts("📊 Import Results:")
-    IO.puts("  • Successfully imported: #{success} units")
+    IO.puts("  • Successfully imported: #{successes} units")
 
     if skipped > 0 do
       IO.puts("  • Skipped (no Alpha Strike statline): #{skipped} units")

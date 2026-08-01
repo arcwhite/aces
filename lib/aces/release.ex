@@ -45,28 +45,20 @@ defmodule Aces.Release do
 
       filters = %{era: era, factions: [faction], types: [type_id]}
 
-      case Aces.MUL.Client.fetch_units(filters) do
+      case Aces.MUL.client().fetch_units(filters) do
         {:ok, units} ->
-          total = length(units)
-          IO.puts("Found #{total} units. Importing...")
+          IO.puts("Found #{length(units)} units. Importing...")
 
-          {success, errors} =
-            units
-            |> Enum.with_index(1)
-            |> Enum.reduce({0, 0}, fn {unit_data, index}, {s, e} ->
-              if rem(index, 50) == 0, do: IO.puts("  #{index}/#{total}...")
+          %{successes: successes, errors: errors, skipped: skipped} =
+            Aces.Units.import_units(units)
 
-              case Aces.Units.create_or_update_master_unit(unit_data) do
-                {:ok, _} -> {s + 1, e}
-                {:error, _} -> {s, e + 1}
-              end
-            end)
-
-          IO.puts("Done! #{success} imported, #{errors} errors.")
+          summary = "#{successes} imported, #{errors} errors"
+          summary = if skipped > 0, do: summary <> ", #{skipped} skipped", else: summary
+          IO.puts("Done! #{summary}.")
           IO.puts("Total cached units: #{Aces.Units.count_cached_units()}")
 
         {:error, reason} ->
-          IO.puts("Failed to fetch units: #{reason}")
+          IO.puts("Failed to fetch units: #{inspect(reason)}")
       end
     end
   end
