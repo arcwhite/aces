@@ -308,8 +308,13 @@ defmodule Aces.UnitsTest do
       assert {:ok, %{units: [], source: :fixture}} = Units.search("NoSuchLocalUnit")
     end
 
-    test "passes a structured filter error through as {:query_failed, {:unsupported_filter, key}}" do
-      assert {:error, {:query_failed, {:unsupported_filter, :bogus}}} =
+    test "drops an untranslatable opt instead of failing the search" do
+      # Best-effort narrowing: a key MUL doesn't bind never reaches the API
+      # request, and the local re-run enforces whatever it can. A stray opt is
+      # not a reason to fail a user's search.
+      put_fixture_units([])
+
+      assert {:ok, %{units: [], source: :fixture}} =
                Units.search("NoSuchLocalUnit", bogus: 1)
     end
 
@@ -378,7 +383,7 @@ defmodule Aces.UnitsTest do
           point_value: 8
         )
 
-      results = Units.list_cached_master_units()
+      assert {:ok, results} = Units.list_cached_master_units()
       names = Enum.map(results, & &1.name)
 
       assert names == ["ZZZ Light", "AAA Middle", "ZZZ Heavy"]
@@ -394,7 +399,8 @@ defmodule Aces.UnitsTest do
         )
       end
 
-      assert length(Units.list_cached_master_units()) == 50
+      assert {:ok, units} = Units.list_cached_master_units()
+      assert length(units) == 50
     end
 
     test "honours an explicit :limit option" do
@@ -407,7 +413,8 @@ defmodule Aces.UnitsTest do
         )
       end
 
-      assert length(Units.list_cached_master_units(limit: 2)) == 2
+      assert {:ok, units} = Units.list_cached_master_units(limit: 2)
+      assert length(units) == 2
     end
 
     test "forwards non-:limit options to Filters.filter/2" do
@@ -426,12 +433,20 @@ defmodule Aces.UnitsTest do
           full_name: "Filter Vehicle FV-1"
         )
 
-      results = Units.list_cached_master_units(unit_type: "battlemech")
+      assert {:ok, results} = Units.list_cached_master_units(unit_type: "battlemech")
       assert Enum.all?(results, fn u -> u.unit_type == "battlemech" end)
     end
 
-    test "returns [] against an empty cache" do
-      assert Units.list_cached_master_units() == []
+    test "returns {:ok, []} against an empty cache" do
+      assert {:ok, []} = Units.list_cached_master_units()
+    end
+
+    test "does not leak :limit into the query filter" do
+      # :limit is popped before Filters.filter/2 sees the opts; if it leaked
+      # through it would be treated as an unknown filter key.
+      _mech = units_master_unit_fixture(name: "Leak Test", variant: "LK-1", full_name: "Leak Test LK-1")
+
+      assert {:ok, [_ | _]} = Units.list_cached_master_units(limit: 3)
     end
   end
 

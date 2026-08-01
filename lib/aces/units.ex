@@ -124,6 +124,11 @@ defmodule Aces.Units do
   @doc """
   Get master units from local cache, ordered by point_value then name.
 
+  Returns `{:ok, units}` on success, `{:error, {:query_failed, reason}}` if the
+  DB call raises. Callers should pattern-match instead of rescuing at the view
+  layer — the shape mirrors `search/2` so both boundary calls can be handled
+  uniformly.
+
   Options:
     * `:limit` — max rows to return (default `50`).
     * Everything else is forwarded to `Aces.Units.Filters.filter/2`.
@@ -134,11 +139,19 @@ defmodule Aces.Units do
   def list_cached_master_units(opts \\ []) do
     {limit, filter_opts} = Keyword.pop(opts, :limit, 50)
 
-    MasterUnit
-    |> Filters.filter(filter_opts)
-    |> order_by([u], [u.point_value, u.name])
-    |> limit(^limit)
-    |> Repo.all()
+    query =
+      MasterUnit
+      |> Filters.filter(filter_opts)
+      |> order_by([u], [u.point_value, u.name])
+      |> limit(^limit)
+
+    try do
+      {:ok, Repo.all(query)}
+    rescue
+      error ->
+        Logger.error("list_cached_master_units failed: #{inspect(error)}")
+        {:error, {:query_failed, error}}
+    end
   end
 
   @doc """

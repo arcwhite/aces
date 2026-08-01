@@ -180,86 +180,60 @@ defmodule AcesWeb.Components.UnitSearchModal do
 
     case Units.search(socket.assigns.search_term, opts) do
       # MUL was reached and had nothing. Distinct from an empty local cache,
-      # so the template can say which one happened. `source` is still
-      # assigned: knowing an empty result came from fixtures rather than the
+      # so the template can say which one happened. `source` is still passed
+      # through: knowing an empty result came from fixtures rather than the
       # live MUL is exactly what smoke operators need to see.
       {:ok, %{units: [], source: source}} when source != :local ->
-        socket
-        |> assign(:search_results, [])
-        |> assign(:search_source, source)
-        |> assign(:search_error, :mul_empty)
-        |> assign(:search_loading, false)
+        assign_results(socket, [], source, :mul_empty)
 
       {:ok, %{units: units, source: source}} ->
-        socket
-        |> assign(:search_results, units)
-        |> assign(:search_source, source)
-        |> assign(:search_error, nil)
-        |> assign(:search_loading, false)
+        assign_results(socket, units, source, nil)
 
       {:error, :term_too_short} ->
-        socket
-        |> assign(:search_results, [])
-        |> assign(:search_source, nil)
-        |> assign(:search_error, nil)
-        |> assign(:search_loading, false)
+        assign_results(socket, [], nil, nil)
 
       {:error, {:mul_unavailable, reason}} ->
-        socket
-        |> assign(:search_results, [])
-        |> assign(:search_source, nil)
-        |> assign(:search_error, {:mul_unavailable, reason})
-        |> assign(:search_loading, false)
+        assign_results(socket, [], nil, {:mul_unavailable, reason})
 
       {:error, {:query_failed, reason}} ->
         Logger.error("Unit search query failed: #{inspect(reason)}")
-
-        socket
-        |> assign(:search_results, [])
-        |> assign(:search_source, nil)
-        |> assign(:search_error, :query_failed)
-        |> assign(:search_loading, false)
+        assign_results(socket, [], nil, :query_failed)
     end
   end
 
   defp load_default_results(socket) do
-    opts = current_filter_opts(socket.assigns)
+    # The context returns a typed result now, so the view no longer rescues
+    # Postgrex errors itself.
+    case Units.list_cached_master_units(current_filter_opts(socket.assigns)) do
+      {:ok, []} ->
+        assign_results(socket, [], nil, :cache_empty)
 
-    try do
-      case Units.list_cached_master_units(opts) do
-        [] ->
-          socket
-          |> assign(:search_results, [])
-          |> assign(:search_source, nil)
-          |> assign(:search_error, :cache_empty)
-          |> assign(:search_loading, false)
+      {:ok, units} ->
+        assign_results(socket, units, :local, nil)
 
-        units ->
-          socket
-          |> assign(:search_results, units)
-          |> assign(:search_source, :local)
-          |> assign(:search_error, nil)
-          |> assign(:search_loading, false)
-      end
-    rescue
-      error in [Postgrex.Error, DBConnection.ConnectionError] ->
-        Logger.error("Default unit load failed: #{inspect(error)}")
-
-        socket
-        |> assign(:search_results, [])
-        |> assign(:search_source, nil)
-        |> assign(:search_error, :query_failed)
-        |> assign(:search_loading, false)
+      {:error, {:query_failed, reason}} ->
+        Logger.error("Default unit load failed: #{inspect(reason)}")
+        assign_results(socket, [], nil, :query_failed)
     end
   end
 
+  # Single place that writes the four result assigns, so every branch above
+  # stays one line. `source` is data provenance (:local/:api/:fixture or nil);
+  # `error` is the render-state atom the template matches on.
+  defp assign_results(socket, units, source, error) do
+    socket
+    |> assign(:search_results, units)
+    |> assign(:search_source, source)
+    |> assign(:search_error, error)
+    |> assign(:search_loading, false)
+  end
+
+  # Clears the term as well as the results, so reopening the modal starts from
+  # a blank search rather than a stale one.
   defp reset_search(socket) do
     socket
     |> assign(:search_term, "")
-    |> assign(:search_results, [])
-    |> assign(:search_loading, false)
-    |> assign(:search_source, nil)
-    |> assign(:search_error, nil)
+    |> assign_results([], nil, nil)
   end
 
   defp current_filter_opts(assigns) do
