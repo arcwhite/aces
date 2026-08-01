@@ -341,17 +341,29 @@ defmodule AcesWeb.CompanyLive.Draft do
 
   def handle_info({:perform_search, search_term}, socket) do
     if socket.assigns.unit_search_term == search_term do
-      try do
-        # Build search options from filters
-        opts = build_search_opts(socket.assigns)
-        search_results = Units.search_units(search_term, opts)
+      opts = build_search_opts(socket.assigns)
 
-        {:noreply,
-         socket
-         |> assign(:search_results, search_results)
-         |> assign(:search_loading, false)}
-      rescue
-        _error ->
+      case Units.search_units(search_term, opts) do
+        {:ok, {results, _source}} ->
+          {:noreply,
+           socket
+           |> assign(:search_results, results)
+           |> assign(:search_loading, false)}
+
+        {:error, {:term_too_short, _}} ->
+          {:noreply,
+           socket
+           |> assign(:search_results, [])
+           |> assign(:search_loading, false)}
+
+        {:error, {:mul_unavailable, _reason}} ->
+          {:noreply,
+           socket
+           |> assign(:search_results, [])
+           |> assign(:search_loading, false)
+           |> put_flash(:error, "Master Unit List is temporarily unreachable.")}
+
+        {:error, {:query_failed, _reason}} ->
           {:noreply,
            socket
            |> assign(:search_results, [])
@@ -390,15 +402,15 @@ defmodule AcesWeb.CompanyLive.Draft do
     search_term = socket.assigns.unit_search_term
 
     if String.length(search_term) >= 2 do
-      try do
-        opts = build_search_opts(socket.assigns)
-        search_results = Units.search_units(search_term, opts)
+      opts = build_search_opts(socket.assigns)
 
-        socket
-        |> assign(:search_results, search_results)
-        |> assign(:search_loading, false)
-      rescue
-        _error ->
+      case Units.search_units(search_term, opts) do
+        {:ok, {results, _source}} ->
+          socket
+          |> assign(:search_results, results)
+          |> assign(:search_loading, false)
+
+        {:error, _typed} ->
           socket
           |> assign(:search_results, [])
           |> assign(:search_loading, false)

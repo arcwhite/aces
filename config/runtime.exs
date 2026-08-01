@@ -20,6 +20,15 @@ if System.get_env("PHX_SERVER") do
   config :aces, AcesWeb.Endpoint, server: true
 end
 
+# Allow any environment (notably the dev-mode smoke server driven by
+# bin/local-smoke) to swap the MUL client to fixture-backed via env var
+# without editing config files.
+case System.get_env("MUL_CLIENT_SOURCE") do
+  "fixture" -> config :aces, mul_client_source: :fixture
+  "api" -> config :aces, mul_client_source: :api
+  _ -> :ok
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

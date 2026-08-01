@@ -143,8 +143,8 @@ defmodule Mix.Tasks.SeedMasterUnits do
     display_filters(filters)
 
     case Client.fetch_units(filters) do
-      {:ok, units} ->
-        IO.puts("✅ Found #{length(units)} units that would be seeded:")
+      {:ok, {units, source}} ->
+        IO.puts("✅ Found #{length(units)} units (source: #{source}) that would be seeded:")
         IO.puts("")
 
         units
@@ -160,8 +160,8 @@ defmodule Mix.Tasks.SeedMasterUnits do
         IO.puts("")
         IO.puts("Run without --dry-run to actually seed these units.")
 
-      {:error, reason} ->
-        IO.puts("❌ Failed to fetch units: #{reason}")
+      {:error, {kind, reason}} ->
+        IO.puts("❌ Failed to fetch units (#{kind}): #{inspect(reason)}")
     end
   end
 
@@ -181,11 +181,11 @@ defmodule Mix.Tasks.SeedMasterUnits do
     display_filters(filters)
 
     case Client.fetch_units(filters) do
-      {:ok, units} ->
+      {:ok, {units, source}} ->
         total_units = length(units)
         limited_units = if opts[:limit], do: Enum.take(units, opts[:limit]), else: units
 
-        IO.puts("✅ Found #{total_units} units from MUL API")
+        IO.puts("✅ Found #{total_units} units (source: #{source})")
 
         if opts[:limit] do
           IO.puts("📊 Limiting to #{length(limited_units)} units due to --limit option")
@@ -198,9 +198,14 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
         display_import_results(import_results)
 
-      {:error, reason} ->
-        IO.puts("❌ Failed to fetch units from MUL API: #{reason}")
-        IO.puts("Please check your internet connection and try again.")
+      {:error, {:mul_unavailable, reason}} ->
+        IO.puts("❌ MUL service unavailable: #{inspect(reason)}")
+        IO.puts("Please check your network / retry later — this is not a query error.")
+        System.halt(1)
+
+      {:error, {:query_failed, reason}} ->
+        IO.puts("❌ MUL rejected the query: #{inspect(reason)}")
+        IO.puts("Check the era/faction/type combination is valid on the MUL.")
         System.halt(1)
     end
   end

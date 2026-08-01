@@ -215,7 +215,7 @@ defmodule Aces.Units.InfantryCorrection do
 
   defp merge_scope_bf_types(acc, era, faction) do
     case Client.fetch_units(%{era: era, factions: [faction], types: [@infantry_type_id]}) do
-      {:ok, units} ->
+      {:ok, {units, _source}} ->
         Enum.reduce(units, acc, &put_bf_type/2)
 
       {:error, reason} ->

@@ -22,7 +22,11 @@ config :aces, :scopes,
 
 config :aces,
   ecto_repos: [Aces.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime],
+  # :api hits the live MUL service; :fixture uses Aces.MUL.FixtureClient. The
+  # smoke server (bin/local-smoke) and the test env flip this to :fixture so
+  # local development and CI never depend on the external MUL API.
+  mul_client_source: :api
 
 # Configures the endpoint
 config :aces, AcesWeb.Endpoint,

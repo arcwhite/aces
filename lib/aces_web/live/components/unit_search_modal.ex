@@ -57,6 +57,8 @@ defmodule AcesWeb.Components.UnitSearchModal do
         |> assign(:initialized, true)
         |> assign(:search_term, "")
         |> assign(:search_results, [])
+        |> assign(:search_result_source, nil)
+        |> assign(:search_error, nil)
         |> assign(:search_loading, false)
         |> assign(:filter_eras, ["ilclan", "dark_age"])
         |> assign(:filter_faction, "mercenary")
@@ -74,6 +76,8 @@ defmodule AcesWeb.Components.UnitSearchModal do
      socket
      |> assign(:search_term, "")
      |> assign(:search_results, [])
+     |> assign(:search_result_source, nil)
+     |> assign(:search_error, nil)
      |> assign(:search_loading, false)}
   end
 
@@ -128,6 +132,8 @@ defmodule AcesWeb.Components.UnitSearchModal do
         socket
         |> assign(:search_term, search_term)
         |> assign(:search_results, [])
+        |> assign(:search_result_source, nil)
+        |> assign(:search_error, nil)
         |> assign(:search_loading, false)
       end
 
@@ -162,19 +168,32 @@ defmodule AcesWeb.Components.UnitSearchModal do
     }
 
     case Units.search_units_for_company(socket.assigns.search_term, filters) do
-      {:ok, results} ->
+      {:ok, {results, source}} ->
         socket
         |> assign(:search_results, results)
+        |> assign(:search_result_source, source)
+        |> assign(:search_error, nil)
         |> assign(:search_loading, false)
 
       {:error, :term_too_short} ->
         socket
         |> assign(:search_results, [])
+        |> assign(:search_result_source, nil)
+        |> assign(:search_error, nil)
         |> assign(:search_loading, false)
 
-      {:error, _reason} ->
+      {:error, {:mul_unavailable, _reason}} ->
         socket
         |> assign(:search_results, [])
+        |> assign(:search_result_source, nil)
+        |> assign(:search_error, "The Master Unit List is temporarily unreachable. Cached results only.")
+        |> assign(:search_loading, false)
+
+      {:error, {:query_failed, _reason}} ->
+        socket
+        |> assign(:search_results, [])
+        |> assign(:search_result_source, nil)
+        |> assign(:search_error, "That search couldn't be run. Try adjusting the filters or the search term.")
         |> assign(:search_loading, false)
     end
   end
@@ -452,12 +471,22 @@ defmodule AcesWeb.Components.UnitSearchModal do
             <div class="divider"></div>
 
             <div class="max-h-96 overflow-y-auto">
+              <%= if @search_error do %>
+                <div class="alert alert-warning mb-4" role="alert">
+                  <span>{@search_error}</span>
+                </div>
+              <% end %>
               <%= if @search_loading do %>
                 <div class="flex justify-center py-8">
                   <span class="loading loading-spinner loading-lg"></span>
                 </div>
               <% else %>
                 <%= if length(@search_results) > 0 do %>
+                  <%= if @search_result_source == :fixture do %>
+                    <div class="text-xs text-gray-500 mb-2">
+                      Results from local fixtures (MUL live access disabled).
+                    </div>
+                  <% end %>
                   <div class="grid gap-3">
                     <%= for unit <- @search_results do %>
                       <.unit_card
@@ -469,14 +498,15 @@ defmodule AcesWeb.Components.UnitSearchModal do
                     <% end %>
                   </div>
                 <% else %>
-                  <%= if @search_term != "" do %>
+                  <%= if @search_term != "" and is_nil(@search_error) do %>
                     <div class="text-center py-8">
                       <p class="text-gray-600">No units found for "{@search_term}"</p>
                       <p class="text-sm text-gray-500 mt-2">
                         Try searching by chassis name (e.g., "Atlas" instead of "AS7-D")
                       </p>
                     </div>
-                  <% else %>
+                  <% end %>
+                  <%= if @search_term == "" do %>
                     <div class="text-center py-8">
                       <p class="text-gray-600">
                         Search for units to <%= if @mode == :pv_budget,

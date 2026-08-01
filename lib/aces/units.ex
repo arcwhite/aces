@@ -19,32 +19,40 @@ defmodule Aces.Units do
   @cache_ttl_days 30  # Refresh cached units after 30 days
 
   @doc """
-  Search for units - checks local DB first, falls back to API
+  Search for units — checks local DB first, falls back to the MUL client.
 
-  ## Examples
+  Returns a typed result identifying where the units came from:
 
-      iex> search_units("Atlas")
-      [%MasterUnit{name: "Atlas", variant: "AS7-D"}, ...]
+    * `{:ok, {units, :local}}` — local cache satisfied the query.
+    * `{:ok, {units, :api | :fixture}}` — fell through to `Aces.MUL.Client`,
+      whose configured source populated the result (see the client's
+      `mul_client_source` config).
+    * `{:error, {:term_too_short, _}}` — search terms shorter than 2 chars
+      are refused up-front rather than silently returning `[]`.
+    * `{:error, {:mul_unavailable, reason}}` — MUL was unreachable.
+    * `{:error, {:query_failed, reason}}` — MUL rejected the query, or a
+      local DB failure was caught here.
+
+  Callers that only care about the unit list can wrap this in a `with`.
   """
   def search_units(search_term, opts \\ []) when is_binary(search_term) do
     search_term = String.trim(search_term)
 
     if String.length(search_term) < 2 do
-      []
+      {:error, {:term_too_short, search_term}}
     else
-      local_results = search_local_units(search_term, opts)
+      try do
+        local_results = search_local_units(search_term, opts)
 
-      # If we have recent local results, return them
-      if length(local_results) > 0 do
-        local_results
-      else
-        # Try API as fallback
-        case search_and_cache_from_api(search_term, opts) do
-          {:ok, units} -> units
-          {:error, reason} ->
-            Logger.info("MUL API search failed for '#{search_term}': #{reason}")
-            []  # Graceful degradation
+        if length(local_results) > 0 do
+          {:ok, {local_results, :local}}
+        else
+          search_and_cache_from_api(search_term, opts)
         end
+      rescue
+        error ->
+          Logger.error("Local unit search failed for '#{search_term}': #{inspect(error)}")
+          {:error, {:query_failed, {:local_search_raised, error.__struct__}}}
       end
     end
   end
@@ -147,14 +155,14 @@ defmodule Aces.Units do
     filters = Map.put(api_filters, :name, search_term)
 
     case Client.fetch_units(filters) do
-      {:ok, api_units} ->
+      {:ok, {api_units, source}} ->
         cached_units =
           api_units
           |> Enum.map(&create_or_update_master_unit/1)
           |> Enum.filter(&match?({:ok, _}, &1))
           |> Enum.map(fn {:ok, unit} -> unit end)
 
-        {:ok, cached_units}
+        {:ok, {cached_units, source}}
 
       error -> error
     end
@@ -223,14 +231,17 @@ defmodule Aces.Units do
 
   ## Returns
 
-    * `{:ok, units}` - List of matching units
-    * `{:error, :term_too_short}` - When search term is less than 2 characters
-    * `{:error, reason}` - When search fails for other reasons
+    * `{:ok, {units, source}}` — `source` is `:local`, `:api`, or `:fixture`,
+      identifying where the units came from so callers can surface it.
+    * `{:error, :term_too_short}` — search term below 2 characters.
+    * `{:error, {:mul_unavailable, reason}}` — MUL unreachable / rate-limited.
+    * `{:error, {:query_failed, reason}}` — MUL rejected the query or a local
+      DB failure was caught.
 
   ## Examples
 
       iex> search_units_for_company("Atlas", %{eras: ["ilclan"], faction: "mercenary"})
-      {:ok, [%MasterUnit{name: "Atlas", ...}, ...]}
+      {:ok, {[%MasterUnit{name: "Atlas", ...}, ...], :local}}
 
       iex> search_units_for_company("A", %{})
       {:error, :term_too_short}
@@ -238,21 +249,21 @@ defmodule Aces.Units do
   def search_units_for_company(search_term, filters \\ %{}) when is_binary(search_term) do
     search_term = String.trim(search_term)
 
-    cond do
-      String.length(search_term) < 2 ->
-        {:error, :term_too_short}
+    if String.length(search_term) < 2 do
+      {:error, :term_too_short}
+    else
+      opts = build_search_opts_from_filters(filters)
 
-      true ->
-        try do
-          # Build search options from user-friendly filters
-          opts = build_search_opts_from_filters(filters)
-          results = search_units(search_term, opts)
-          {:ok, results}
-        rescue
-          error ->
-            Logger.error("Unit search failed for '#{search_term}': #{inspect(error)}")
-            {:error, :search_failed}
-        end
+      case search_units(search_term, opts) do
+        {:ok, {units, source}} ->
+          {:ok, {units, source}}
+
+        {:error, {:term_too_short, _}} ->
+          {:error, :term_too_short}
+
+        {:error, _typed} = err ->
+          err
+      end
     end
   end
 

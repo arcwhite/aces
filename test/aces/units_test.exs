@@ -10,7 +10,8 @@ defmodule Aces.UnitsTest do
       # Create a master unit that matches the search
       _atlas = atlas_master_unit_fixture()
 
-      assert {:ok, results} = Units.search_units_for_company("Atlas", %{})
+      assert {:ok, {results, source}} = Units.search_units_for_company("Atlas", %{})
+      assert source in [:local, :fixture, :api]
       assert length(results) > 0
       assert Enum.any?(results, fn unit -> unit.name == "Atlas" end)
     end
@@ -27,7 +28,7 @@ defmodule Aces.UnitsTest do
       _atlas = atlas_master_unit_fixture()
 
       assert {:error, :term_too_short} = Units.search_units_for_company("  A  ", %{})
-      assert {:ok, _results} = Units.search_units_for_company("  Atlas  ", %{})
+      assert {:ok, {_results, _source}} = Units.search_units_for_company("  Atlas  ", %{})
     end
 
     test "filters by unit type when type filter is provided" do
@@ -46,7 +47,7 @@ defmodule Aces.UnitsTest do
       )
 
       # Search for battlemechs only
-      assert {:ok, results} = Units.search_units_for_company("Test", %{type: "battlemech"})
+      assert {:ok, {results, _source}} = Units.search_units_for_company("Test", %{type: "battlemech"})
       assert Enum.all?(results, fn unit -> unit.unit_type == "battlemech" end)
     end
 
@@ -68,7 +69,7 @@ defmodule Aces.UnitsTest do
         faction: "mercenary"
       }
 
-      assert {:ok, results} = Units.search_units_for_company("Mercenary", filters)
+      assert {:ok, {results, _source}} = Units.search_units_for_company("Mercenary", filters)
       assert length(results) > 0
     end
 
@@ -96,12 +97,12 @@ defmodule Aces.UnitsTest do
         faction: "mercenary"
       }
 
-      assert {:ok, results} = Units.search_units_for_company("Combined Filter", filters)
+      assert {:ok, {results, _source}} = Units.search_units_for_company("Combined Filter", filters)
       assert Enum.all?(results, fn unit -> unit.unit_type == "battlemech" end)
     end
 
     test "returns empty list when no units match search term" do
-      assert {:ok, results} = Units.search_units_for_company("NonexistentUnit12345", %{})
+      assert {:ok, {results, _source}} = Units.search_units_for_company("NonexistentUnit12345", %{})
       assert results == []
     end
 
@@ -114,7 +115,7 @@ defmodule Aces.UnitsTest do
       )
 
       # Filter for combat_vehicle when only battlemech exists
-      assert {:ok, results} = Units.search_units_for_company("Filter Test", %{type: "combat_vehicle"})
+      assert {:ok, {results, _source}} = Units.search_units_for_company("Filter Test", %{type: "combat_vehicle"})
       assert results == []
     end
 
@@ -127,7 +128,7 @@ defmodule Aces.UnitsTest do
         faction: nil
       }
 
-      assert {:ok, results} = Units.search_units_for_company("Atlas", filters)
+      assert {:ok, {results, _source}} = Units.search_units_for_company("Atlas", filters)
       assert length(results) > 0
     end
 
@@ -140,7 +141,7 @@ defmodule Aces.UnitsTest do
       }
 
       # Empty eras list means era_faction filter is not applied
-      assert {:ok, results} = Units.search_units_for_company("Atlas", filters)
+      assert {:ok, {results, _source}} = Units.search_units_for_company("Atlas", filters)
       assert length(results) > 0
     end
 
@@ -153,7 +154,7 @@ defmodule Aces.UnitsTest do
       }
 
       # Missing faction means era_faction filter is not applied
-      assert {:ok, results} = Units.search_units_for_company("Atlas", filters)
+      assert {:ok, {results, _source}} = Units.search_units_for_company("Atlas", filters)
       assert length(results) > 0
     end
 
@@ -161,9 +162,9 @@ defmodule Aces.UnitsTest do
       _atlas = atlas_master_unit_fixture()
 
       # Search with different case variations
-      assert {:ok, results1} = Units.search_units_for_company("atlas", %{})
-      assert {:ok, results2} = Units.search_units_for_company("ATLAS", %{})
-      assert {:ok, results3} = Units.search_units_for_company("Atlas", %{})
+      assert {:ok, {results1, _source1}} = Units.search_units_for_company("atlas", %{})
+      assert {:ok, {results2, _source2}} = Units.search_units_for_company("ATLAS", %{})
+      assert {:ok, {results3, _source3}} = Units.search_units_for_company("Atlas", %{})
 
       assert length(results1) > 0
       assert length(results2) > 0
@@ -174,7 +175,7 @@ defmodule Aces.UnitsTest do
       _atlas = atlas_master_unit_fixture(variant: "AS7-D")
 
       # Search by variant code
-      assert {:ok, results} = Units.search_units_for_company("AS7", %{})
+      assert {:ok, {results, _source}} = Units.search_units_for_company("AS7", %{})
       assert length(results) > 0
       assert Enum.any?(results, fn unit -> unit.variant =~ "AS7" end)
     end
@@ -189,22 +190,21 @@ defmodule Aces.UnitsTest do
         )
       end
 
-      assert {:ok, results} = Units.search_units_for_company("Mass", %{})
+      assert {:ok, {results, _source}} = Units.search_units_for_company("Mass", %{})
       # The implementation limits to 50 results
       assert length(results) <= 50
     end
   end
 
   describe "search_units/2" do
-    test "returns empty list when search term is too short" do
-      results = Units.search_units("A")
-      assert results == []
+    test "returns typed :term_too_short error when search term is under two chars" do
+      assert {:error, {:term_too_short, "A"}} = Units.search_units("A")
     end
 
-    test "returns cached units when available" do
+    test "returns cached units tagged as :local when found in the DB" do
       atlas = atlas_master_unit_fixture()
 
-      results = Units.search_units("Atlas")
+      assert {:ok, {results, :local}} = Units.search_units("Atlas")
       assert length(results) > 0
       assert Enum.any?(results, fn unit -> unit.id == atlas.id end)
     end

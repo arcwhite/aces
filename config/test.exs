@@ -3,6 +3,9 @@ import Config
 # Only in tests, remove the complexity from the password hashing algorithm
 config :bcrypt_elixir, :log_rounds, 1
 
+# Tests must never reach the live MUL service; use fixtures.
+config :aces, mul_client_source: :fixture
+
 # Configure your database
 #
 # The MIX_TEST_PARTITION environment variable can be used
