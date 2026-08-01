@@ -32,17 +32,17 @@ defmodule Mix.Tasks.SeedMasterUnits do
   ## Matrix mode
 
   `--matrix` iterates every era × faction combination the unit-search modal
-  exposes (5 eras × 12 factions = 60 QuickList requests). Faction availability
+  exposes (7 availability eras × 12 factions = 84 QuickList requests). Faction availability
   is only recorded for combinations we explicitly seed, so a full matrix run is
   the way to make the cache actually usable for filtered searches.
 
-      # Full matrix — ~2–4 minutes wall clock at 1s/request
+      # Full matrix — ~3–6 minutes wall clock at 1s/request
       mix seed_master_units --matrix
 
       # Re-seed a single era (12 requests) after a MUL data change
       mix seed_master_units --matrix --era ilclan
 
-      # Re-seed a single faction across all eras (5 requests)
+      # Re-seed a single faction across all eras (7 requests)
       mix seed_master_units --matrix --faction clan_wolf
 
       # Print the combination list without calling the API
@@ -62,7 +62,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
   ## Valid Eras
 
-      ilclan, dark_age, republic, jihad, civil_war, clan_invasion
+      See `Aces.MUL.Vocabulary.era_keys/0`.
 
   ## Valid Factions
 
@@ -73,7 +73,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
   use Mix.Task
   alias Aces.{ChangesetHelpers, Repo, Units}
-  alias Aces.MUL.{Client, TypeMapping}
+  alias Aces.MUL.{Client, TypeMapping, Vocabulary}
   alias Aces.Units.MasterUnit
 
   import Ecto.Query, only: [from: 2]
@@ -86,29 +86,16 @@ defmodule Mix.Tasks.SeedMasterUnits do
   # to Aces.MUL.TypeMapping so the mapping stays in one place.
   @accepted_type_keywords ~w(battlemech mech combat_vehicle vehicle infantry protomech)
 
-  @valid_eras ~w(ilclan dark_age late_republic early_republic jihad civil_war clan_invasion)
+  @valid_eras Vocabulary.era_keys()
 
-  # Eras exposed by the unit-search modal's era selector. Matrix mode iterates
-  # this list; other @valid_eras are only reachable via single-combination runs.
-  @matrix_eras ~w(ilclan dark_age late_republic early_republic clan_invasion)
+  # Availability eras — the same set the modal's era selector offers. Sourced
+  # from Vocabulary so the two can't drift; the remaining @valid_eras are
+  # introduction-only and reachable via single-combination runs.
+  @matrix_eras Vocabulary.availability_era_keys()
 
-  # Factions exposed by the unit-search modal's <select>. Keep in sync with
-  # `lib/aces_web/live/components/unit_search_modal.ex`. Matrix mode iterates
-  # every combination of @matrix_eras × @matrix_factions.
-  @matrix_factions ~w(
-    mercenary
-    capellan_confederation
-    draconis_combine
-    federated_suns
-    free_worlds_league
-    lyran_commonwealth
-    republic_of_the_sphere
-    clan_wolf
-    clan_jade_falcon
-    clan_ghost_bear
-    clan_sea_fox
-    clan_hell_horses
-  )
+  # Factions exposed by the unit-search modal's <select>, also from Vocabulary.
+  # Matrix mode iterates every @matrix_eras × @matrix_factions combination.
+  @matrix_factions Vocabulary.faction_keys()
 
   # Unit-type IDs the modal can filter on: BattleMech, Combat Vehicle,
   # ProtoMech, Infantry. Type 21 (Infantry) returns both battle armor and
@@ -119,28 +106,29 @@ defmodule Mix.Tasks.SeedMasterUnits do
   def run(args) do
     Mix.Task.run("app.start")
 
-    {opts, _, _} = OptionParser.parse(args,
-      switches: [
-        era: :string,
-        types: :keep,
-        faction: :string,
-        min_tons: :integer,
-        max_tons: :integer,
-        dry_run: :boolean,
-        force: :boolean,
-        limit: :integer,
-        matrix: :boolean,
-        all_types: :boolean
-      ],
-      aliases: [
-        e: :era,
-        t: :types,
-        f: :faction,
-        d: :dry_run,
-        F: :force,
-        l: :limit
-      ]
-    )
+    {opts, _, _} =
+      OptionParser.parse(args,
+        switches: [
+          era: :string,
+          types: :keep,
+          faction: :string,
+          min_tons: :integer,
+          max_tons: :integer,
+          dry_run: :boolean,
+          force: :boolean,
+          limit: :integer,
+          matrix: :boolean,
+          all_types: :boolean
+        ],
+        aliases: [
+          e: :era,
+          t: :types,
+          f: :faction,
+          d: :dry_run,
+          F: :force,
+          l: :limit
+        ]
+      )
 
     if opts[:matrix] do
       run_matrix(opts)
@@ -169,7 +157,11 @@ defmodule Mix.Tasks.SeedMasterUnits do
         IO.puts("  --faction, -f  Faction name (e.g., mercenary, capellan_confederation)")
         IO.puts("")
         IO.puts("Options:")
-        IO.puts("  --types, -t    Unit type (#{Enum.join(@accepted_type_keywords, ", ")}) - can repeat")
+
+        IO.puts(
+          "  --types, -t    Unit type (#{Enum.join(@accepted_type_keywords, ", ")}) - can repeat"
+        )
+
         IO.puts("  --min-tons     Minimum tonnage filter")
         IO.puts("  --max-tons     Maximum tonnage filter")
         IO.puts("  --force, -F    Allow seeding when units already exist")
@@ -300,8 +292,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
     cond do
       era != nil and era not in @matrix_eras ->
-        {:error,
-         "Invalid --era for --matrix: '#{era}'. Valid: #{Enum.join(@matrix_eras, ", ")}"}
+        {:error, "Invalid --era for --matrix: '#{era}'. Valid: #{Enum.join(@matrix_eras, ", ")}"}
 
       faction != nil and faction not in @matrix_factions ->
         {:error,
@@ -531,6 +522,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
   defp maybe_add_era(filters, era), do: Map.put(filters, :era, era)
 
   defp maybe_add_types(filters, nil), do: filters
+
   defp maybe_add_types(filters, types) when is_list(types) do
     type_ids =
       types
@@ -543,23 +535,29 @@ defmodule Mix.Tasks.SeedMasterUnits do
       filters
     end
   end
+
   defp maybe_add_types(filters, type) when is_binary(type) do
     maybe_add_types(filters, [type])
   end
 
   defp maybe_add_faction(filters, nil), do: filters
+
   defp maybe_add_faction(filters, faction) when is_binary(faction) do
     Map.put(filters, :factions, [faction])
   end
 
   defp maybe_add_tonnage(filters, nil, nil), do: filters
+
   defp maybe_add_tonnage(filters, min_tons, nil) when is_integer(min_tons) do
     Map.put(filters, :min_tons, min_tons)
   end
+
   defp maybe_add_tonnage(filters, nil, max_tons) when is_integer(max_tons) do
     Map.put(filters, :max_tons, max_tons)
   end
-  defp maybe_add_tonnage(filters, min_tons, max_tons) when is_integer(min_tons) and is_integer(max_tons) do
+
+  defp maybe_add_tonnage(filters, min_tons, max_tons)
+       when is_integer(min_tons) and is_integer(max_tons) do
     filters
     |> Map.put(:min_tons, min_tons)
     |> Map.put(:max_tons, max_tons)
@@ -577,15 +575,24 @@ defmodule Mix.Tasks.SeedMasterUnits do
     IO.puts("🎯 Filters:")
 
     Enum.each(filters, fn
-      {:era, era} -> IO.puts("  • Era: #{String.capitalize(era)}")
+      {:era, era} ->
+        IO.puts("  • Era: #{String.capitalize(era)}")
+
       {:types, types} ->
         type_names = Enum.map(types, &mul_type_id_label/1)
         IO.puts("  • Types: #{Enum.join(type_names, ", ")}")
+
       {:factions, factions} ->
         IO.puts("  • Factions: #{Enum.join(factions, ", ")}")
-      {:min_tons, tons} -> IO.puts("  • Min tonnage: #{tons}")
-      {:max_tons, tons} -> IO.puts("  • Max tonnage: #{tons}")
-      _ -> nil
+
+      {:min_tons, tons} ->
+        IO.puts("  • Min tonnage: #{tons}")
+
+      {:max_tons, tons} ->
+        IO.puts("  • Max tonnage: #{tons}")
+
+      _ ->
+        nil
     end)
 
     IO.puts("")
@@ -615,10 +622,11 @@ defmodule Mix.Tasks.SeedMasterUnits do
           {:error, changeset} ->
             error_msg = ChangesetHelpers.format_errors(changeset)
             log_error_details(acc.log_file, unit_data, changeset)
+
             %{
-              acc |
-              errors: acc.errors + 1,
-              error_details: [error_msg | acc.error_details]
+              acc
+              | errors: acc.errors + 1,
+                error_details: [error_msg | acc.error_details]
             }
         end
       end)
@@ -628,7 +636,8 @@ defmodule Mix.Tasks.SeedMasterUnits do
     elapsed = System.monotonic_time() - start_time
     elapsed_ms = System.convert_time_unit(elapsed, :native, :millisecond)
 
-    IO.write("\r")  # Clear progress line
+    # Clear progress line
+    IO.write("\r")
     IO.puts("✅ Import completed in #{elapsed_ms}ms")
 
     Map.delete(final_results, :log_file)
@@ -701,11 +710,13 @@ defmodule Mix.Tasks.SeedMasterUnits do
     IO.write(file, "## Unit: #{unit_name} (MUL ID: #{mul_id})\n\n")
 
     IO.write(file, "### Validation Errors:\n")
+
     Enum.each(changeset.errors, fn {field, {msg, opts}} ->
       IO.write(file, "  - #{field}: #{msg} (#{inspect(opts)})\n")
     end)
 
     IO.write(file, "\n### Raw Data:\n")
+
     Enum.each(unit_data, fn {key, value} ->
       IO.write(file, "  #{key}: #{inspect(value)}\n")
     end)

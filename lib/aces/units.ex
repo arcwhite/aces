@@ -12,8 +12,7 @@ defmodule Aces.Units do
   alias Aces.Repo
   alias Aces.Units.Filters
   alias Aces.Units.MasterUnit
-  alias Aces.MUL.Client
-  alias Aces.MUL.TypeMapping
+  alias Aces.MUL.{Client, TypeMapping}
 
   require Logger
 
@@ -279,10 +278,10 @@ defmodule Aces.Units do
   end
 
   defp translate_filter({:unit_type, type}, acc) do
-    # Sourced from TypeMapping rather than a local table: a MUL type id can
-    # cover more internal unit types than we asked for (Types=21 is both
-    # battle armor and conventional infantry), and the local re-run is what
-    # narrows the result back down.
+    # TypeMapping rather than Vocabulary.mul_type_id/1: a single MUL type id
+    # can cover more internal unit types than we asked for (Types=21 is both
+    # battle armor and conventional infantry), so this returns a list. The
+    # local re-run is what narrows the result back down.
     case TypeMapping.to_mul_ids(type) do
       [] -> acc
       ids -> Map.put(acc, :types, ids)

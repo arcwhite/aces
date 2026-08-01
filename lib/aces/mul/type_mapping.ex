@@ -41,19 +41,26 @@ defmodule Aces.MUL.TypeMapping do
 
   require Logger
 
-  # Internal type → MUL Types ids for the QuickList request. Aliases like
-  # "mech" / "vehicle" resolve the same way as their canonical form; the
-  # `infantry` keyword returns MUL type 21 which contains both BA and CI.
-  @internal_to_mul_ids %{
-    "battlemech" => [18],
+  alias Aces.MUL.Vocabulary
+
+  # CLI/legacy spellings that Vocabulary deliberately doesn't carry, plus
+  # "infantry" as the supertype keyword: MUL type 21 contains both BA and CI,
+  # so asking for it returns the pair.
+  @alias_to_mul_ids %{
     "mech" => [18],
-    "combat_vehicle" => [19],
     "vehicle" => [19],
-    "protomech" => [20],
-    "infantry" => [21],
-    "battle_armor" => [21],
-    "conventional_infantry" => [21]
+    "infantry" => [21]
   }
+
+  # Internal type → MUL Types ids for the QuickList request. Canonical keys
+  # come from Vocabulary so the key ↔ type-id table lives in exactly one
+  # place; only the aliases above are local to this module.
+  @internal_to_mul_ids Map.merge(
+                         Map.new(Vocabulary.unit_types(), fn %{key: key, mul_type_id: id} ->
+                           {key, [id]}
+                         end),
+                         @alias_to_mul_ids
+                       )
 
   # BFType → internal `unit_type`. Case-insensitive lookup: live data mixes
   # "BA" and "ba".
@@ -99,7 +106,12 @@ defmodule Aces.MUL.TypeMapping do
   }
 
   # Modal-supported MUL Types ids. Matrix seeder and release.ex use this.
-  @supported_mul_type_ids [18, 19, 20, 21]
+  # Derived from Vocabulary's unit types (21 appears twice — battle armor and
+  # conventional infantry — hence the dedupe).
+  @supported_mul_type_ids Vocabulary.unit_types()
+                          |> Enum.map(& &1.mul_type_id)
+                          |> Enum.uniq()
+                          |> Enum.sort()
 
   @doc """
   Returns the MUL `Types` ids for an internal `unit_type` (or shorthand alias).

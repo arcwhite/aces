@@ -37,17 +37,10 @@ defmodule Aces.Units.Filters do
     * `{:era, era_string}` - Filter by unit *introduction* era (matches
       `master_units.era_id`, not availability).
 
-    Supported era strings:
-      - "ilclan" (3151+)
-      - "dark_age"
-      - "late_republic" / "republic"
-      - "early_republic"
-      - "jihad"
-      - "civil_war"
-      - "clan_invasion"
-      - "late_succession_war"
-      - "early_succession_war"
-      - "star_league"
+      Valid era strings come from `Aces.MUL.Vocabulary.era_keys/0`, which
+      spans the full introduction-era range — wider than the availability
+      eras the modal and the seed matrix expose. See
+      `Aces.MUL.Vocabulary.availability_era_keys/0` for that narrower set.
 
   ### Faction / Era Availability
     * `{:faction, faction_string}` - Filter by faction availability (legacy format)
@@ -80,21 +73,10 @@ defmodule Aces.Units.Filters do
 
   import Ecto.Query
 
-  # Era ID mapping for filtering by unit introduction era
-  # Note: This filters by when the unit was INTRODUCED, not faction availability
-  @era_ids %{
-    "ilclan" => 257,
-    "dark_age" => 16,
-    "late_republic" => 254,
-    "republic" => 254,
-    "early_republic" => 15,
-    "jihad" => 14,
-    "civil_war" => 247,
-    "clan_invasion" => 13,
-    "late_succession_war" => 256,
-    "early_succession_war" => 11,
-    "star_league" => 10
-  }
+  alias Aces.MUL.Vocabulary
+
+  # Filters by the era in which a unit was INTRODUCED (not faction availability).
+  @era_ids Vocabulary.era_ids()
 
   @doc """
   Apply a list of filters to a query.
