@@ -18,8 +18,10 @@ defmodule Aces.MUL.Client do
       unreachable or refused us: transport failure, timeout, 429, 5xx.
       The caller should treat data as unknown, not empty.
     * `{:error, {:query_failed, reason}}` — the MUL rejected or malformed
-      our request: 4xx client errors, non-JSON responses. This is a bug
-      in our filter shape, not a service outage.
+      our request: 4xx client errors, non-JSON responses, or a filter key
+      outside `@supported_filter_keys`
+      (`{:unsupported_filter, key}`). This is a bug in our filter shape,
+      not a service outage.
 
   ## Fixture-backed access
 
@@ -29,11 +31,17 @@ defmodule Aces.MUL.Client do
   smoke and unit tests off the external API.
   """
 
+  alias Aces.MUL.TypeMapping
+
   require Logger
 
   @base_url "https://masterunitlist.azurewebsites.net"
   @rate_limit_delay 1000  # 1 second between requests
   @request_timeout 10_000  # 10 second timeout
+
+  # Filter keys the QuickList endpoint understands. Anything outside this
+  # set is a bug in the caller — see fetch_units/1's allowlist check.
+  @supported_filter_keys ~w(era eras types factions min_tons max_tons name)a
 
   @doc """
   Fetches units, dispatching to the fixture client when so configured.
@@ -44,9 +52,14 @@ defmodule Aces.MUL.Client do
       {:ok, {[%{...}, ...], :api}}
   """
   def fetch_units(filters \\ %{}) do
-    case source() do
-      :fixture -> Aces.MUL.FixtureClient.fetch_units(filters)
-      _ -> fetch_units_from_api(filters)
+    # Filter-shape validation is a caller-bug check, so it runs ahead of the
+    # source dispatch — fixture-backed callers (tests, bin/local-smoke) must
+    # get the same {:unsupported_filter, key} contract as live API callers.
+    with :ok <- validate_filter_keys(filters) do
+      case source() do
+        :fixture -> Aces.MUL.FixtureClient.fetch_units(filters)
+        _ -> fetch_units_from_api(filters)
+      end
     end
   end
 
@@ -78,6 +91,16 @@ defmodule Aces.MUL.Client do
       {:error, reason} ->
         Logger.warning("MUL API request failed: #{inspect(reason)}")
         {:error, {:mul_unavailable, {:transport_error, reason}}}
+    end
+  end
+
+  # An unsupported filter key is a malformed request on our side, so it maps
+  # onto the :query_failed half of the typed contract rather than escaping as
+  # its own untyped shape — see the "Return contract" section above.
+  defp validate_filter_keys(filters) when is_map(filters) do
+    case Enum.find(Map.keys(filters), fn key -> key not in @supported_filter_keys end) do
+      nil -> :ok
+      bad_key -> {:error, {:query_failed, {:unsupported_filter, bad_key}}}
     end
   end
 
@@ -248,8 +271,6 @@ defmodule Aces.MUL.Client do
   defp encode_param(:max_tons, tons), do: "MaxTons=#{tons}"
   defp encode_param(:name, name), do: "Name=#{URI.encode(name)}"
 
-  defp encode_param(_, _), do: nil
-
   # Faction name to ID mapping (extracted from https://masterunitlist.azurewebsites.net/Faction/Index)
   @faction_mappings %{
     # Key factions for mercenary play
@@ -347,7 +368,7 @@ defmodule Aces.MUL.Client do
       name: api_data["Class"] || api_data["Name"],
       variant: api_data["Variant"],
       full_name: api_data["Name"],
-      unit_type: resolve_unit_type(api_data["Type"], api_data["BFType"]),
+      unit_type: TypeMapping.resolve(api_data["Type"], api_data["BFType"]),
       bf_type: api_data["BFType"],
       tonnage: safe_integer(api_data["Tonnage"]),
       point_value: safe_integer(api_data["BFPointValue"]),
@@ -369,130 +390,91 @@ defmodule Aces.MUL.Client do
       bf_abilities: api_data["BFAbilities"],
       image_url: api_data["ImageUrl"],
       is_published: api_data["IsPublished"],
-      factions: merge_faction_data(parse_factions(api_data["Factions"]), faction_context),
+      factions: build_era_keyed_factions(api_data["Factions"], faction_context),
       last_synced_at: DateTime.utc_now()
     }
   end
 
-  # Map MUL API type IDs to internal unit types.
+  # Build era-aware faction context from filters. The API's Factions field is
+  # a flat list of faction names — we know which era they apply to only
+  # because *we* asked the API for a particular era, so era context comes
+  # from the request filters, not the response.
   #
-  # The MUL groups both battle armor and conventional infantry under a single
-  # "Infantry" supertype (Type.Id 21). They share that type and are
-  # distinguished only by the BFType sub-type field ("BA" vs "CI"), so type 21
-  # is resolved via BFType (see resolve_unit_type/2) rather than this table.
-  @type_id_mappings %{
-    18 => "battlemech",
-    19 => "combat_vehicle",
-    20 => "protomech"
-  }
+  # Returns %{"era" => [faction_from_filter, ...]} — one entry per requested
+  # era. Filter factions may be empty (only eras were set); the era key still
+  # exists so API-returned factions can be folded into it downstream.
+  defp build_faction_context(filters) do
+    eras =
+      case {Map.get(filters, :era), Map.get(filters, :eras)} do
+        {nil, eras} when is_list(eras) -> eras
+        {era, _} when is_binary(era) -> [era]
+        _ -> []
+      end
 
-  @infantry_type_id 21
-  @infantry_type_name "Infantry"
+    filter_factions =
+      filters
+      |> Map.get(:factions, [])
+      |> Enum.map(&String.downcase/1)
 
-  defp resolve_unit_type(%{"Id" => @infantry_type_id}, bf_type), do: infantry_subtype(bf_type)
-  defp resolve_unit_type(%{"Name" => @infantry_type_name}, bf_type), do: infantry_subtype(bf_type)
-
-  defp resolve_unit_type(%{"Id" => id}, _bf_type) when is_map_key(@type_id_mappings, id) do
-    @type_id_mappings[id]
+    Enum.reduce(eras, %{}, fn era, acc ->
+      Map.put(acc, era, filter_factions)
+    end)
   end
 
-  defp resolve_unit_type(%{"Name" => name}, bf_type), do: map_unit_type_by_name(name, bf_type)
+  # Always produce an era-keyed factions map. The API's `Factions` value is a
+  # bare list of faction names with no era attached; the only era information
+  # we have is what *we* asked for (era_context). So:
+  #
+  #   * era_context present  → fold API-returned factions into each requested
+  #                            era, unioned with any faction filter values.
+  #   * era_context empty and API returned factions → drop them and log. A
+  #                            faction with no era cannot be represented in
+  #                            our schema, and smuggling it in as a top-level
+  #                            key mixes era keys with faction keys and
+  #                            corrupts every downstream reader.
+  #   * both empty → %{}
+  defp build_era_keyed_factions(api_factions, era_context) do
+    api_list = extract_api_faction_list(api_factions)
 
-  defp resolve_unit_type(name, bf_type) when is_binary(name),
-    do: map_unit_type_by_name(name, bf_type)
+    cond do
+      map_size(era_context) > 0 ->
+        Enum.reduce(era_context, %{}, fn {era, filter_factions}, acc ->
+          Map.put(acc, era, Enum.uniq(filter_factions ++ api_list))
+        end)
 
-  defp resolve_unit_type(_, _bf_type), do: "other"
+      api_list == [] ->
+        %{}
 
-  # Battle armor and conventional infantry share MUL's "Infantry" supertype;
-  # BFType is the only discriminator. "CI" => conventional infantry; anything
-  # else (including "BA", "ba", or a missing value) defaults to battle armor.
-  defp infantry_subtype(bf_type) when is_binary(bf_type) do
-    case String.downcase(bf_type) do
-      "ci" -> "conventional_infantry"
-      _ -> "battle_armor"
+      true ->
+        Logger.debug(
+          "MUL API returned #{length(api_list)} factions with no era context — dropping"
+        )
+
+        %{}
     end
   end
 
-  defp infantry_subtype(_), do: "battle_armor"
+  # Normalize the API's Factions field into a flat, lowercased list of names.
+  # Handles the various shapes MUL has returned (list of strings, list of
+  # objects with either "name" or "Name"). Maps and unexpected values yield
+  # an empty list.
+  defp extract_api_faction_list(nil), do: []
+  defp extract_api_faction_list([]), do: []
 
-  defp map_unit_type_by_name("BattleMech", _bf_type), do: "battlemech"
-  defp map_unit_type_by_name("Combat Vehicle", _bf_type), do: "combat_vehicle"
-  defp map_unit_type_by_name("Battle Armor", _bf_type), do: "battle_armor"
-  defp map_unit_type_by_name("Infantry", bf_type), do: infantry_subtype(bf_type)
-  defp map_unit_type_by_name("ProtoMech", _bf_type), do: "protomech"
-  defp map_unit_type_by_name("Mech", _bf_type), do: "battlemech"
-  defp map_unit_type_by_name("BattleMechs", _bf_type), do: "battlemech"
-  defp map_unit_type_by_name("Mechs", _bf_type), do: "battlemech"
-  defp map_unit_type_by_name(_, _bf_type), do: "other"
-
-  # Parse factions data - handle various possible formats from the API
-  defp parse_factions(nil), do: %{}
-  defp parse_factions([]), do: %{}
-  
-  defp parse_factions(factions) when is_list(factions) do
-    # If it's a list of faction objects or strings, convert to map
+  defp extract_api_faction_list(factions) when is_list(factions) do
     factions
-    |> Enum.reduce(%{}, fn faction, acc ->
+    |> Enum.reduce([], fn faction, acc ->
       case faction do
-        %{"name" => name} -> Map.put(acc, String.downcase(name), true)
-        %{"Name" => name} -> Map.put(acc, String.downcase(name), true)
-        name when is_binary(name) -> Map.put(acc, String.downcase(name), true)
+        %{"name" => name} when is_binary(name) -> [String.downcase(name) | acc]
+        %{"Name" => name} when is_binary(name) -> [String.downcase(name) | acc]
+        name when is_binary(name) -> [String.downcase(name) | acc]
         _ -> acc
       end
     end)
-  end
-  
-  defp parse_factions(factions) when is_map(factions) do
-    # If it's already a map, ensure keys are lowercase
-    factions
-    |> Enum.reduce(%{}, fn {key, value}, acc ->
-      Map.put(acc, String.downcase(to_string(key)), value)
-    end)
-  end
-  
-  defp parse_factions(_), do: %{}
-
-  # Build era-aware faction context from filters to store with units
-  # Returns format: %{"ilclan" => ["mercenary", "capellan_confederation"]}
-  defp build_faction_context(filters) do
-    # Support both :era (single) and :eras (multiple)
-    eras = case {Map.get(filters, :era), Map.get(filters, :eras)} do
-      {nil, eras} when is_list(eras) -> eras
-      {era, _} when is_binary(era) -> [era]
-      _ -> []
-    end
-
-    factions = Map.get(filters, :factions, [])
-
-    if length(eras) > 0 and length(factions) > 0 do
-      faction_list = Enum.map(factions, &String.downcase/1)
-      # Create entry for each era
-      Enum.reduce(eras, %{}, fn era, acc ->
-        Map.put(acc, era, faction_list)
-      end)
-    else
-      %{}
-    end
+    |> Enum.reverse()
   end
 
-  # Merge API faction data with context from our request filters
-  # Both should now be in era-aware format: %{"era" => ["faction1", "faction2"]}
-  defp merge_faction_data(api_factions, filter_context) when is_map(api_factions) and is_map(filter_context) do
-    # Deep merge: combine faction lists for each era
-    Map.merge(api_factions, filter_context, fn _era, api_list, filter_list ->
-      Enum.uniq((api_list || []) ++ (filter_list || []))
-    end)
-  end
-
-  defp merge_faction_data(_api_factions, filter_context) when is_map(filter_context) do
-    filter_context
-  end
-
-  defp merge_faction_data(api_factions, _) when is_map(api_factions) do
-    api_factions
-  end
-
-  defp merge_faction_data(_, _), do: %{}
+  defp extract_api_faction_list(_), do: []
 
   # Extract technology name from API response
   defp extract_technology(%{"Name" => name}), do: name

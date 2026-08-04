@@ -6,13 +6,13 @@ defmodule Mix.Tasks.SeedMasterUnits do
   in the local database. It's designed to be respectful of the API with
   built-in rate limiting and careful filtering.
 
-  ## Required Arguments
+  ## Required Arguments (single-combination mode)
 
   Both --era and --faction are required to properly track faction availability
   per era. This allows running the task multiple times with different combinations
   to build up a complete picture of unit availability.
 
-  ## Examples
+  ## Examples — single combination
 
       # Seed IlClan era mercenary BattleMechs
       mix seed_master_units --era ilclan --faction mercenary --types battlemech
@@ -29,6 +29,37 @@ defmodule Mix.Tasks.SeedMasterUnits do
       # Dry run to see what would be fetched
       mix seed_master_units --era ilclan --faction mercenary --dry-run
 
+  ## Matrix mode
+
+  `--matrix` iterates every era × faction combination the unit-search modal
+  exposes (5 eras × 12 factions = 60 QuickList requests). Faction availability
+  is only recorded for combinations we explicitly seed, so a full matrix run is
+  the way to make the cache actually usable for filtered searches.
+
+      # Full matrix — ~2–4 minutes wall clock at 1s/request
+      mix seed_master_units --matrix
+
+      # Re-seed a single era (12 requests) after a MUL data change
+      mix seed_master_units --matrix --era ilclan
+
+      # Re-seed a single faction across all eras (5 requests)
+      mix seed_master_units --matrix --faction clan_wolf
+
+      # Print the combination list without calling the API
+      mix seed_master_units --matrix --dry-run
+
+  Matrix mode requests the modal's supported unit types explicitly
+  (`Types=18&Types=19&Types=20&Types=21` — BattleMech, Combat Vehicle,
+  ProtoMech, Infantry). Use `--matrix --all-types` to survey what else MUL
+  holds — aerospace, large craft, and support vehicles all normalise to
+  `unit_type: "other"` and can't be selected in the modal, so the default
+  keeps them out of the cache.
+
+  Matrix mode bypasses the "already contains cached units" guard — the whole
+  point is to accumulate. Runs are idempotent: `create_or_update_master_unit/1`
+  merges faction data per era, so repeated runs top up availability rather
+  than duplicating rows.
+
   ## Valid Eras
 
       ilclan, dark_age, republic, jihad, civil_war, clan_invasion
@@ -41,28 +72,49 @@ defmodule Mix.Tasks.SeedMasterUnits do
   """
 
   use Mix.Task
-  alias Aces.{ChangesetHelpers, Units}
-  alias Aces.MUL.Client
+  alias Aces.{ChangesetHelpers, Repo, Units}
+  alias Aces.MUL.{Client, TypeMapping}
+  alias Aces.Units.MasterUnit
+
+  import Ecto.Query, only: [from: 2]
 
   require Logger
 
   @shortdoc "Seeds master units from MUL API"
 
-  # MUL has a single "Infantry" supertype (Type 21) covering both battle armor
-  # and conventional infantry. A single `--types infantry` fetch returns both
-  # categories; the importer splits them by BFType into battle_armor /
-  # conventional_infantry. There is no API type for one or the other, so
-  # `infantry` is the only infantry keyword (it always yields both).
-  @type_mappings %{
-    "battlemech" => 18,
-    "mech" => 18,
-    "combat_vehicle" => 19,
-    "vehicle" => 19,
-    "infantry" => 21,
-    "protomech" => 20
-  }
+  # Internal type keywords accepted by --types. The MUL-id lookup is delegated
+  # to Aces.MUL.TypeMapping so the mapping stays in one place.
+  @accepted_type_keywords ~w(battlemech mech combat_vehicle vehicle infantry protomech)
 
   @valid_eras ~w(ilclan dark_age late_republic early_republic jihad civil_war clan_invasion)
+
+  # Eras exposed by the unit-search modal's era selector. Matrix mode iterates
+  # this list; other @valid_eras are only reachable via single-combination runs.
+  @matrix_eras ~w(ilclan dark_age late_republic early_republic clan_invasion)
+
+  # Factions exposed by the unit-search modal's <select>. Keep in sync with
+  # `lib/aces_web/live/components/unit_search_modal.ex`. Matrix mode iterates
+  # every combination of @matrix_eras × @matrix_factions.
+  @matrix_factions ~w(
+    mercenary
+    capellan_confederation
+    draconis_combine
+    federated_suns
+    free_worlds_league
+    lyran_commonwealth
+    republic_of_the_sphere
+    clan_wolf
+    clan_jade_falcon
+    clan_ghost_bear
+    clan_sea_fox
+    clan_hell_horses
+  )
+
+  # Unit-type IDs the modal can filter on: BattleMech, Combat Vehicle,
+  # ProtoMech, Infantry. Type 21 (Infantry) returns both battle armor and
+  # conventional infantry in one call; the importer splits them by BFType.
+  # Sourced from TypeMapping so the modal-supported set stays in one place.
+  @matrix_supported_type_ids TypeMapping.supported_mul_type_ids()
 
   def run(args) do
     Mix.Task.run("app.start")
@@ -76,7 +128,9 @@ defmodule Mix.Tasks.SeedMasterUnits do
         max_tons: :integer,
         dry_run: :boolean,
         force: :boolean,
-        limit: :integer
+        limit: :integer,
+        matrix: :boolean,
+        all_types: :boolean
       ],
       aliases: [
         e: :era,
@@ -88,6 +142,14 @@ defmodule Mix.Tasks.SeedMasterUnits do
       ]
     )
 
+    if opts[:matrix] do
+      run_matrix(opts)
+    else
+      run_single(opts)
+    end
+  end
+
+  defp run_single(opts) do
     case validate_required_opts(opts) do
       :ok ->
         if opts[:dry_run] do
@@ -100,18 +162,21 @@ defmodule Mix.Tasks.SeedMasterUnits do
         IO.puts("❌ #{message}")
         IO.puts("")
         IO.puts("Usage: mix seed_master_units --era <era> --faction <faction> [options]")
+        IO.puts("       mix seed_master_units --matrix [--era X] [--faction Y] [--all-types]")
         IO.puts("")
-        IO.puts("Required:")
+        IO.puts("Required (single-combination mode):")
         IO.puts("  --era, -e      Era name (#{Enum.join(@valid_eras, ", ")})")
         IO.puts("  --faction, -f  Faction name (e.g., mercenary, capellan_confederation)")
         IO.puts("")
         IO.puts("Options:")
-        IO.puts("  --types, -t    Unit type (battlemech, combat_vehicle, etc.) - can repeat")
+        IO.puts("  --types, -t    Unit type (#{Enum.join(@accepted_type_keywords, ", ")}) - can repeat")
         IO.puts("  --min-tons     Minimum tonnage filter")
         IO.puts("  --max-tons     Maximum tonnage filter")
         IO.puts("  --force, -F    Allow seeding when units already exist")
         IO.puts("  --limit, -l    Limit number of units to import")
         IO.puts("  --dry-run, -d  Show what would be fetched without importing")
+        IO.puts("  --matrix       Iterate every era × faction combination the UI exposes")
+        IO.puts("  --all-types    In matrix mode, omit the type filter (survey mode)")
         System.halt(1)
     end
   end
@@ -210,6 +275,250 @@ defmodule Mix.Tasks.SeedMasterUnits do
     end
   end
 
+  # Matrix mode
+
+  defp run_matrix(opts) do
+    case validate_matrix_opts(opts) do
+      :ok ->
+        combos = matrix_combinations(opts)
+
+        if opts[:dry_run] do
+          matrix_dry_run(combos, opts)
+        else
+          matrix_seed(combos, opts)
+        end
+
+      {:error, message} ->
+        IO.puts("❌ #{message}")
+        System.halt(1)
+    end
+  end
+
+  defp validate_matrix_opts(opts) do
+    era = opts[:era]
+    faction = opts[:faction]
+
+    cond do
+      era != nil and era not in @matrix_eras ->
+        {:error,
+         "Invalid --era for --matrix: '#{era}'. Valid: #{Enum.join(@matrix_eras, ", ")}"}
+
+      faction != nil and faction not in @matrix_factions ->
+        {:error,
+         "Invalid --faction for --matrix: '#{faction}'. Valid: #{Enum.join(@matrix_factions, ", ")}"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp matrix_combinations(opts) do
+    eras = if opts[:era], do: [opts[:era]], else: @matrix_eras
+    factions = if opts[:faction], do: [opts[:faction]], else: @matrix_factions
+
+    for era <- eras, faction <- factions, do: {era, faction}
+  end
+
+  defp matrix_type_ids(opts) do
+    if opts[:all_types], do: nil, else: @matrix_supported_type_ids
+  end
+
+  defp matrix_dry_run(combos, opts) do
+    types = matrix_type_ids(opts)
+
+    IO.puts("🔍 Matrix dry run — no API calls will be made.")
+    IO.puts("")
+    IO.puts("Combinations (#{length(combos)}):")
+
+    Enum.each(combos, fn {era, faction} ->
+      IO.puts("  • #{era} / #{faction}")
+    end)
+
+    IO.puts("")
+    IO.puts("Type filter: #{matrix_type_filter_label(types)}")
+    IO.puts("Total QuickList requests: #{length(combos)}")
+    IO.puts("Rate limit: 1s between requests → ~#{length(combos)}s minimum wall clock")
+  end
+
+  defp matrix_type_filter_label(nil), do: "(none — --all-types)"
+
+  defp matrix_type_filter_label(types) do
+    "Types=" <> Enum.join(types, "&Types=")
+  end
+
+  defp matrix_seed(combos, opts) do
+    before_count = Units.count_cached_units()
+    types = matrix_type_ids(opts)
+
+    IO.puts("🚀 Matrix seed — #{length(combos)} combinations (era × faction)")
+    IO.puts("   Type filter: #{matrix_type_filter_label(types)}")
+    IO.puts("💾 Starting cache count: #{before_count}")
+    IO.puts("")
+
+    {results, failures} =
+      combos
+      |> Enum.reduce({[], []}, fn combo, {results, failures} ->
+        case seed_combination(combo, types) do
+          {:ok, stats} ->
+            display_combination_line(stats)
+            {[stats | results], failures}
+
+          {:error, reason} ->
+            IO.puts("  ❌ #{combo_label(combo)} → #{inspect(reason)}")
+            {results, [{combo, reason} | failures]}
+        end
+      end)
+
+    after_count = Units.count_cached_units()
+
+    IO.puts("")
+    IO.puts("💾 Ending cache count: #{after_count} (+#{after_count - before_count})")
+
+    display_bf_type_histogram()
+    display_matrix_summary(Enum.reverse(results), Enum.reverse(failures))
+
+    # Per-combination failures are non-halting by design: the histogram is the
+    # deliverable, and one flaky MUL request out of 60 shouldn't fail the run
+    # or block bin/local-smoke's start_server step. Failures are surfaced in
+    # the summary above.
+    :ok
+  end
+
+  defp seed_combination({era, faction}, types) do
+    filters = build_matrix_filters(era, faction, types)
+    before_count = Units.count_cached_units()
+
+    case Client.fetch_units(filters) do
+      {:ok, units} ->
+        {successes, errors} =
+          Enum.reduce(units, {0, 0}, fn unit_data, {s, e} ->
+            case Units.create_or_update_master_unit(unit_data) do
+              {:ok, _} -> {s + 1, e}
+              {:error, _} -> {s, e + 1}
+            end
+          end)
+
+        after_count = Units.count_cached_units()
+        new_count = after_count - before_count
+        merged_count = successes - new_count
+
+        {:ok,
+         %{
+           era: era,
+           faction: faction,
+           fetched: length(units),
+           successes: successes,
+           errors: errors,
+           new: new_count,
+           merged: merged_count
+         }}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp build_matrix_filters(era, faction, nil) do
+    %{era: era, factions: [faction]}
+  end
+
+  defp build_matrix_filters(era, faction, types) when is_list(types) do
+    %{era: era, factions: [faction], types: types}
+  end
+
+  defp combo_label({era, faction}), do: "#{era} / #{faction}"
+
+  defp display_combination_line(stats) do
+    parts = ["#{stats.new} new", "#{stats.merged} merged"]
+
+    parts =
+      if stats.errors > 0 do
+        parts ++ ["#{stats.errors} errored"]
+      else
+        parts
+      end
+
+    IO.puts(
+      "#{stats.era} / #{stats.faction} → #{stats.fetched} units (#{Enum.join(parts, ", ")})"
+    )
+  end
+
+  defp display_bf_type_histogram do
+    histogram = bf_type_histogram()
+    known = MapSet.new(TypeMapping.known_bf_types())
+
+    {expected, unexpected} =
+      Enum.split_with(histogram, fn {bf_type, _count} ->
+        bf_type != "unknown" and MapSet.member?(known, String.upcase(bf_type))
+      end)
+
+    formatted =
+      histogram
+      |> Enum.sort_by(fn {_type, count} -> -count end)
+      |> Enum.map_join(" · ", fn {type, count} -> "#{type} #{count}" end)
+
+    IO.puts("")
+    IO.puts("📊 bf_type histogram (all cached units):")
+    IO.puts("  #{formatted}")
+
+    if unexpected != [] do
+      IO.puts("")
+      IO.puts("⚠️  Unexpected BFType values (not in TypeMapping.known_bf_types/0):")
+
+      unexpected
+      |> Enum.sort_by(fn {_type, count} -> -count end)
+      |> Enum.each(fn {type, count} ->
+        IO.puts("  • #{type} → #{count} units")
+      end)
+
+      IO.puts("")
+      IO.puts("  Expected set: #{Enum.join(Enum.sort(TypeMapping.known_bf_types()), ", ")}")
+    else
+      expected_names = expected |> Enum.map(fn {t, _} -> String.upcase(t) end) |> Enum.sort()
+      IO.puts("  (all values within expected set: #{Enum.join(expected_names, ", ")})")
+    end
+  end
+
+  defp bf_type_histogram do
+    from(u in MasterUnit,
+      select: {u.bf_type, count(u.id)},
+      group_by: u.bf_type
+    )
+    |> Repo.all()
+    |> Enum.map(fn {bf_type, count} -> {bf_type || "unknown", count} end)
+  end
+
+  defp display_matrix_summary(results, failures) do
+    zero_result_combos = Enum.filter(results, fn r -> r.fetched == 0 end)
+
+    IO.puts("")
+    IO.puts("📋 Matrix summary:")
+    IO.puts("  • Combinations run: #{length(results) + length(failures)}")
+    IO.puts("  • Succeeded: #{length(results)}")
+    IO.puts("  • Failed: #{length(failures)}")
+    IO.puts("  • Zero-result combinations: #{length(zero_result_combos)}")
+
+    if zero_result_combos != [] do
+      IO.puts("")
+      IO.puts("⚠️  Combinations returning zero units:")
+
+      Enum.each(zero_result_combos, fn r ->
+        IO.puts("  • #{r.era} / #{r.faction}")
+      end)
+    end
+
+    if failures != [] do
+      IO.puts("")
+      IO.puts("❌ Combinations that errored:")
+
+      Enum.each(failures, fn {combo, reason} ->
+        IO.puts("  • #{combo_label(combo)} → #{inspect(reason)}")
+      end)
+    end
+  end
+
+  # Single-combination helpers
+
   defp build_filters(opts) do
     %{}
     |> maybe_add_era(opts[:era])
@@ -223,10 +532,10 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
   defp maybe_add_types(filters, nil), do: filters
   defp maybe_add_types(filters, types) when is_list(types) do
-    type_ids = 
+    type_ids =
       types
-      |> Enum.map(&@type_mappings[&1])
-      |> Enum.reject(&is_nil/1)
+      |> Enum.flat_map(&TypeMapping.to_mul_ids/1)
+      |> Enum.uniq()
 
     if length(type_ids) > 0 do
       Map.put(filters, :types, type_ids)
@@ -256,24 +565,23 @@ defmodule Mix.Tasks.SeedMasterUnits do
     |> Map.put(:max_tons, max_tons)
   end
 
+  # Human-readable label for a MUL Types id. Only used for the display
+  # summary; the canonical mapping lives in TypeMapping.
+  defp mul_type_id_label(18), do: "battlemech"
+  defp mul_type_id_label(19), do: "combat_vehicle"
+  defp mul_type_id_label(20), do: "protomech"
+  defp mul_type_id_label(21), do: "infantry"
+  defp mul_type_id_label(id), do: "Unknown(#{id})"
+
   defp display_filters(filters) do
     IO.puts("🎯 Filters:")
 
     Enum.each(filters, fn
       {:era, era} -> IO.puts("  • Era: #{String.capitalize(era)}")
-      {:types, types} -> 
-        type_names = 
-          types
-          |> Enum.map(fn id -> 
-            @type_mappings
-            |> Enum.find(fn {_, v} -> v == id end)
-            |> case do
-              {name, _} -> name
-              nil -> "Unknown(#{id})"
-            end
-          end)
+      {:types, types} ->
+        type_names = Enum.map(types, &mul_type_id_label/1)
         IO.puts("  • Types: #{Enum.join(type_names, ", ")}")
-      {:factions, factions} -> 
+      {:factions, factions} ->
         IO.puts("  • Factions: #{Enum.join(factions, ", ")}")
       {:min_tons, tons} -> IO.puts("  • Min tonnage: #{tons}")
       {:max_tons, tons} -> IO.puts("  • Max tonnage: #{tons}")

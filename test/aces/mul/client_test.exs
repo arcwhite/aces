@@ -46,19 +46,24 @@ defmodule Aces.MUL.ClientTest do
              }).unit_type == "battle_armor"
     end
 
-    test "infantry payload with missing/unknown BFType defaults to battle_armor" do
+    test "infantry payload with missing/unknown BFType falls through to \"other\"" do
+      # Under BFType-first resolution a bare Type.Id-21 payload is
+      # unclassifiable — 21 covers both BA and CI, and only BFType can tell
+      # them apart. The fallback table deliberately omits 21 so these rows
+      # surface as "other" (and are logged) instead of silently bucketing
+      # into battle_armor.
       assert Client.normalize_unit(%{
                "Id" => 3,
                "Name" => "No BFType",
                "Type" => %{"Id" => 21}
-             }).unit_type == "battle_armor"
+             }).unit_type == "other"
 
       assert Client.normalize_unit(%{
                "Id" => 4,
                "Name" => "Odd BFType",
                "Type" => %{"Id" => 21},
                "BFType" => "???"
-             }).unit_type == "battle_armor"
+             }).unit_type == "other"
     end
 
     test "infantry resolved by type Name when no Id is present" do
@@ -70,8 +75,12 @@ defmodule Aces.MUL.ClientTest do
              }).unit_type == "conventional_infantry"
     end
 
-    test "non-infantry types are unaffected by BFType" do
-      mech =
+    test "known BFType wins over Type.Id (BFType-first precedence)" do
+      # If BFType is present and known, it decides — even for non-infantry
+      # rows. This case shouldn't occur in real MUL data (Type.Id 18 with
+      # BFType CI would be a data glitch), but the precedence rule is the
+      # whole point of the new resolver, so we pin the behaviour here.
+      mech_with_bogus_ci =
         Client.normalize_unit(%{
           "Id" => 39,
           "Name" => "Atlas AS7-D",
@@ -79,9 +88,43 @@ defmodule Aces.MUL.ClientTest do
           "BFType" => "CI"
         })
 
-      assert mech.unit_type == "battlemech"
-      assert mech.bf_type == "CI"
+      assert mech_with_bogus_ci.unit_type == "conventional_infantry"
+      assert mech_with_bogus_ci.bf_type == "CI"
+    end
 
+    test "IndustrialMech (BFType \"IM\") collapses to battlemech" do
+      assert Client.normalize_unit(%{
+               "Id" => 500,
+               "Name" => "Carbine IndustrialMech",
+               "Type" => %{"Id" => 18, "Name" => "BattleMech"},
+               "BFType" => "IM"
+             }).unit_type == "battlemech"
+    end
+
+    test "Support Vehicle (BFType \"SV\") collapses to combat_vehicle" do
+      assert Client.normalize_unit(%{
+               "Id" => 501,
+               "Name" => "Ferret Support VTOL",
+               "Type" => %{"Id" => 19, "Name" => "Combat Vehicle"},
+               "BFType" => "SV"
+             }).unit_type == "combat_vehicle"
+    end
+
+    test "aerospace / large craft BFType values resolve to other" do
+      for bf <- ~w(AF CF SC DS DA JS WS SS MS) do
+        unit =
+          Client.normalize_unit(%{
+            "Id" => 600,
+            "Name" => "Aero example",
+            "Type" => %{"Id" => 77, "Name" => "AerospaceFighter"},
+            "BFType" => bf
+          })
+
+        assert unit.unit_type == "other", "expected BFType #{bf} to resolve to other"
+      end
+    end
+
+    test "non-infantry types with no BFType still use Type.Id fallback" do
       vehicle =
         Client.normalize_unit(%{
           "Id" => 100,

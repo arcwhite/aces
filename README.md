@@ -57,6 +57,27 @@ are real MUL data baked into the task and upserted offline, so they need no
 separate seeding. The task is **idempotent**: if `admin@aces.test` already
 exists it reports and exits without making changes.
 
+For a fully populated cache (every era × faction the unit-search modal
+exposes), use matrix mode instead — one command, ~2–4 minutes wall clock:
+
+```
+mix seed_master_units --matrix
+```
+
+Faction availability is only tracked for combinations you actually seed, so
+the matrix run is what makes filtered searches in the modal work end-to-end.
+Pin one axis to re-seed a slice after a MUL data change:
+
+```
+mix seed_master_units --matrix --era ilclan          # 12 requests
+mix seed_master_units --matrix --faction clan_wolf   # 5 requests
+mix seed_master_units --matrix --dry-run             # print combos, no API calls
+```
+
+Matrix runs are idempotent (faction data is merged per era) and safe to
+re-run. Cached data is a local/prod runtime asset — it isn't committed
+to the repo.
+
 ## Local smoke testing
 
 `bin/local-smoke` spins up a second copy of the app — pinned to whatever
