@@ -381,11 +381,20 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
     case Client.fetch_units(filters) do
       {:ok, {units, _source}} ->
-        {successes, errors} =
-          Enum.reduce(units, {0, 0}, fn unit_data, {s, e} ->
+        {successes, skipped, errors} =
+          Enum.reduce(units, {0, 0, 0}, fn unit_data, {s, sk, e} ->
             case Units.create_or_update_master_unit(unit_data) do
-              {:ok, _} -> {s + 1, e}
-              {:error, _} -> {s, e + 1}
+              {:ok, _} ->
+                {s + 1, sk, e}
+
+              # Deliberately not cached — a skip, not a failure. Tallied apart
+              # so a combination full of statline-less rows doesn't read as a
+              # combination full of errors.
+              {:error, :no_alpha_strike_card} ->
+                {s, sk + 1, e}
+
+              {:error, _} ->
+                {s, sk, e + 1}
             end
           end)
 
@@ -399,6 +408,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
            faction: faction,
            fetched: length(units),
            successes: successes,
+           skipped: skipped,
            errors: errors,
            new: new_count,
            merged: merged_count
@@ -421,6 +431,13 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
   defp display_combination_line(stats) do
     parts = ["#{stats.new} new", "#{stats.merged} merged"]
+
+    parts =
+      if stats.skipped > 0 do
+        parts ++ ["#{stats.skipped} skipped (no AS card)"]
+      else
+        parts
+      end
 
     parts =
       if stats.errors > 0 do
