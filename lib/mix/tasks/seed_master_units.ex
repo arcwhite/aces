@@ -389,7 +389,7 @@ defmodule Mix.Tasks.SeedMasterUnits do
     before_count = Units.count_cached_units()
 
     case Client.fetch_units(filters) do
-      {:ok, units} ->
+      {:ok, {units, _source}} ->
         {successes, errors} =
           Enum.reduce(units, {0, 0}, fn unit_data, {s, e} ->
             case Units.create_or_update_master_unit(unit_data) do
