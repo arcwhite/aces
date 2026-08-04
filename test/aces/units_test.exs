@@ -256,20 +256,6 @@ defmodule Aces.UnitsTest do
     end
   end
 
-  describe "search_units/2 (deprecated)" do
-    test "collapses a too-short term to an empty list" do
-      assert [] == Units.search_units("A")
-    end
-
-    test "returns cached units as a plain list when found in the DB" do
-      atlas = atlas_master_unit_fixture()
-
-      results = Units.search_units("Atlas")
-      assert length(results) > 0
-      assert Enum.any?(results, fn unit -> unit.id == atlas.id end)
-    end
-  end
-
   describe "search/2" do
     test "returns :term_too_short for trimmed term under 2 chars" do
       assert {:error, :term_too_short} = Units.search("A")
@@ -596,7 +582,7 @@ defmodule Aces.UnitsTest do
         point_value: 10
       )
 
-      results = Units.search_units("Filter", min_pv: 40)
+      assert {:ok, %{units: results}} = Units.search("Filter", min_pv: 40)
       assert Enum.all?(results, fn u -> u.point_value >= 40 end)
       refute Enum.any?(results, fn u -> u.id == light.id end)
     end

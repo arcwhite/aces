@@ -19,29 +19,6 @@ defmodule Aces.Units do
   @cache_ttl_days 30  # Refresh cached units after 30 days
 
   @doc """
-  Search for units — checks local DB first, falls back to the MUL client.
-
-  This function returns a plain list for backward compatibility with the
-  draft LiveView. Prefer `search/2` for new callers — it identifies where
-  the units came from (`:local`, `:api`, `:fixture`) and surfaces specific
-  failure modes in the return value instead of collapsing them to `[]`.
-  """
-  @deprecated "Use search/2 for typed results including error branches"
-  def search_units(search_term, opts \\ []) when is_binary(search_term) do
-    case search(search_term, opts) do
-      {:ok, %{units: units}} ->
-        units
-
-      {:error, :term_too_short} ->
-        []
-
-      {:error, reason} ->
-        Logger.info("MUL API search failed for '#{search_term}': #{inspect(reason)}")
-        []
-    end
-  end
-
-  @doc """
   Typed unit search. Returns a tagged tuple naming what happened so callers
   can distinguish cache hits from MUL fallbacks and from targeted failures
   like rate limiting or filter validation errors.
