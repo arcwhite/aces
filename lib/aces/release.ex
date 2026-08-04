@@ -37,19 +37,23 @@ defmodule Aces.Release do
             total = length(units)
             IO.puts("Found #{total} units (source: #{source}). Importing...")
 
-            {success, errors} =
+            {success, skipped, errors} =
               units
               |> Enum.with_index(1)
-              |> Enum.reduce({0, 0}, fn {unit_data, index}, {s, e} ->
+              |> Enum.reduce({0, 0, 0}, fn {unit_data, index}, {s, sk, e} ->
                 if rem(index, 50) == 0, do: IO.puts("  #{index}/#{total}...")
 
                 case Aces.Units.create_or_update_master_unit(unit_data) do
-                  {:ok, _} -> {s + 1, e}
-                  {:error, _} -> {s, e + 1}
+                  {:ok, _} -> {s + 1, sk, e}
+                  # Rows with no Alpha Strike statline are deliberately not
+                  # cached — a skip, not a failure. Tallied separately so the
+                  # summary doesn't read as though the import went wrong.
+                  {:error, :no_alpha_strike_card} -> {s, sk + 1, e}
+                  {:error, _} -> {s, sk, e + 1}
                 end
               end)
 
-            IO.puts("Done! #{success} imported, #{errors} errors.")
+            IO.puts("Done! #{success} imported, #{skipped} skipped (no AS card), #{errors} errors.")
             IO.puts("Total cached units: #{Aces.Units.count_cached_units()}")
 
           {:error, {:mul_unavailable, reason}} ->

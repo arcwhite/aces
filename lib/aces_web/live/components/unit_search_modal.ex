@@ -136,7 +136,6 @@ defmodule AcesWeb.Components.UnitSearchModal do
       if String.length(search_term) >= 2 do
         socket
         |> assign(:search_term, search_term)
-        |> assign(:search_loading, true)
         |> perform_search()
       else
         socket
@@ -149,7 +148,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
 
   def handle_event("retry_search", _params, socket) do
     if socket.assigns.search_term != "" do
-      {:noreply, socket |> assign(:search_loading, true) |> perform_search()}
+      {:noreply, perform_search(socket)}
     else
       {:noreply, load_default_results(socket)}
     end
@@ -175,10 +174,31 @@ defmodule AcesWeb.Components.UnitSearchModal do
     end
   end
 
+  # Dispatched async so the reduction returns immediately and the spinner
+  # actually reaches the browser — a search can carry a MUL round-trip.
+  # start_async cancels any in-flight :search task, so rapid typing and
+  # filter-toggling self-debounce without extra bookkeeping.
   defp perform_search(socket) do
+    term = socket.assigns.search_term
     opts = current_filter_opts(socket.assigns)
 
-    case Units.search(socket.assigns.search_term, opts) do
+    socket
+    |> assign(:search_loading, true)
+    |> start_async(:search, fn -> Units.search(term, opts) end)
+  end
+
+  @impl true
+  def handle_async(:search, {:ok, result}, socket) do
+    {:noreply, apply_search_result(socket, result)}
+  end
+
+  def handle_async(:search, {:exit, reason}, socket) do
+    Logger.error("Unit search task exited: #{inspect(reason)}")
+    {:noreply, assign_results(socket, [], nil, :query_failed)}
+  end
+
+  defp apply_search_result(socket, result) do
+    case result do
       # MUL was reached and had nothing. Distinct from an empty local cache,
       # so the template can say which one happened. `source` is still passed
       # through: knowing an empty result came from fixtures rather than the

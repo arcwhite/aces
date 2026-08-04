@@ -176,6 +176,8 @@ defmodule AcesWeb.Components.UnitSearchModalTest do
       |> element("input[name=search]")
       |> render_keyup(%{"value" => "Nonexistent"})
 
+      # Search runs in start_async — let the task land before asserting.
+      render_async(view)
       assert render(view) =~ "No units match"
 
       # Trigger close via the modal's own X button.
@@ -199,6 +201,8 @@ defmodule AcesWeb.Components.UnitSearchModalTest do
       |> element("input[name=search]")
       |> render_keyup(%{"value" => "Nonexistent"})
 
+      # Search runs in start_async — let the task land before asserting.
+      render_async(view)
       assert render(view) =~ "No units match"
 
       # Parent-driven close (e.g. push_patch back to base URL).
@@ -225,6 +229,7 @@ defmodule AcesWeb.Components.UnitSearchModalTest do
       |> element("input[name=search]")
       |> render_keyup(%{"value" => "Zzzzzzz"})
 
+      render_async(view)
       html = render(view)
       assert html =~ ~s(No units match &quot;Zzzzzzz&quot;)
       refute html =~ "Unit cache is empty"
@@ -247,6 +252,7 @@ defmodule AcesWeb.Components.UnitSearchModalTest do
       |> element("input[name=search]")
       |> render_keyup(%{"value" => "Zzzzzzz"})
 
+      render_async(view)
       html = render(view)
       assert html =~ ~s(data-role="query-failed")
       assert html =~ "Something went wrong looking up units"
@@ -264,6 +270,7 @@ defmodule AcesWeb.Components.UnitSearchModalTest do
       |> element("input[name=search]")
       |> render_keyup(%{"value" => "Atlas"})
 
+      render_async(view)
       html = render(view)
       assert html =~ "Atlas"
       assert html =~ "from local cache"
@@ -293,6 +300,7 @@ defmodule AcesWeb.Components.UnitSearchModalTest do
       |> element("input[name=search]")
       |> render_keyup(%{"value" => "Fallback"})
 
+      render_async(view)
       html = render(view)
       assert html =~ "MUL Fallback Mech"
       assert html =~ "from local fixtures"
