@@ -5,6 +5,28 @@ defmodule Aces.MUL.Client do
   This module provides a respectful interface to the unofficial MUL API,
   with built-in rate limiting and error handling to be considerate of
   the external service.
+
+  ## Return contract
+
+  `fetch_units/1` returns typed results so callers can distinguish failure
+  modes and stop collapsing "rate limited", "DNS failed", "bad query", and
+  "zero results" into an empty list:
+
+    * `{:ok, {units, source}}` — `source` is `:api` for live fetches, or
+      `:fixture` when the fixture-backed client is configured (see below).
+    * `{:error, {:mul_unavailable, reason}}` — the MUL service was
+      unreachable or refused us: transport failure, timeout, 429, 5xx.
+      The caller should treat data as unknown, not empty.
+    * `{:error, {:query_failed, reason}}` — the MUL rejected or malformed
+      our request: 4xx client errors, non-JSON responses. This is a bug
+      in our filter shape, not a service outage.
+
+  ## Fixture-backed access
+
+  When `config :aces, :mul_client_source, :fixture` is set (see
+  `bin/local-smoke` and the test env), calls are dispatched to
+  `Aces.MUL.FixtureClient` instead of hitting the live service. This keeps
+  smoke and unit tests off the external API.
   """
 
   require Logger
@@ -14,29 +36,48 @@ defmodule Aces.MUL.Client do
   @request_timeout 10_000  # 10 second timeout
 
   @doc """
-  Fetches units from MUL API with filters
+  Fetches units, dispatching to the fixture client when so configured.
 
   ## Examples
 
       iex> Client.fetch_units(%{era: "ilclan", types: [18]})
-      {:ok, [%{...}, ...]}
+      {:ok, {[%{...}, ...], :api}}
   """
   def fetch_units(filters \\ %{}) do
+    case source() do
+      :fixture -> Aces.MUL.FixtureClient.fetch_units(filters)
+      _ -> fetch_units_from_api(filters)
+    end
+  end
+
+  defp source do
+    Application.get_env(:aces, :mul_client_source, :api)
+  end
+
+  defp fetch_units_from_api(filters) do
     with :ok <- rate_limit_check(),
-         {:ok, response} <- make_request("/Unit/QuickList", filters) do
-      units = parse_response(response, filters)
-      {:ok, units}
+         {:ok, response} <- make_request("/Unit/QuickList", filters),
+         {:ok, units} <- parse_response(response, filters) do
+      {:ok, {units, :api}}
     else
       {:error, :rate_limited} ->
-        {:error, "Rate limited - please try again later"}
+        {:error, {:mul_unavailable, :rate_limited}}
 
-      {:error, %{status: status, body: body}} ->
-        Logger.warning("MUL API error #{status}: #{inspect(body)}")
-        {:error, "MUL API returned error status #{status}"}
+      {:error, {:non_json_response, _} = reason} ->
+        Logger.warning("MUL API returned non-JSON body")
+        {:error, {:query_failed, reason}}
+
+      {:error, %{status: status, body: body}} when status >= 500 ->
+        Logger.warning("MUL API server error #{status}: #{inspect(body)}")
+        {:error, {:mul_unavailable, {:server_error, status}}}
+
+      {:error, %{status: status, body: body}} when status >= 400 ->
+        Logger.warning("MUL API client error #{status}: #{inspect(body)}")
+        {:error, {:query_failed, {:client_error, status}}}
 
       {:error, reason} ->
         Logger.warning("MUL API request failed: #{inspect(reason)}")
-        {:error, "Failed to connect to MUL API"}
+        {:error, {:mul_unavailable, {:transport_error, reason}}}
     end
   end
 
@@ -57,8 +98,8 @@ defmodule Aces.MUL.Client do
   """
   def fetch_unit_by_name(full_name) when is_binary(full_name) do
     case fetch_units(%{name: full_name}) do
-      {:ok, [unit | _]} -> {:ok, unit}
-      {:ok, []} -> {:error, :not_found}
+      {:ok, {[unit | _], _source}} -> {:ok, unit}
+      {:ok, {[], _source}} -> {:error, :not_found}
       error -> error
     end
   end
@@ -69,7 +110,7 @@ defmodule Aces.MUL.Client do
   """
   def fetch_unit(mul_id, full_name) when is_integer(mul_id) and is_binary(full_name) do
     case fetch_units(%{name: full_name}) do
-      {:ok, units} ->
+      {:ok, {units, _source}} ->
         case Enum.find(units, fn u -> u.mul_id == mul_id end) do
           nil -> {:error, :not_found}
           unit -> {:ok, unit}
@@ -274,16 +315,18 @@ defmodule Aces.MUL.Client do
   defp parse_response(%{body: %{"Units" => units}}, filters) when is_list(units) do
     # Extract faction names from filters to store with units
     faction_context = build_faction_context(filters)
-    Enum.map(units, &normalize_unit(&1, faction_context))
+    {:ok, Enum.map(units, &normalize_unit(&1, faction_context))}
   end
 
   defp parse_response(%{body: body}, _filters) when is_binary(body) do
     # Received HTML or other non-JSON response
     Logger.warning("MUL API returned non-JSON response for unit search")
-    []
+    {:error, {:non_json_response, :body_is_string}}
   end
 
-  defp parse_response(_, _), do: []
+  defp parse_response(%{body: body}, _filters) do
+    {:error, {:non_json_response, {:unexpected_body_shape, body}}}
+  end
 
   @doc """
   Normalizes a single raw MUL API unit map into our internal unit map.

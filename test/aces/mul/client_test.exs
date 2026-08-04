@@ -110,4 +110,15 @@ defmodule Aces.MUL.ClientTest do
              }).unit_type == "other"
     end
   end
+
+  describe "fetch_units/1 dispatch" do
+    test "test env is wired to the fixture source" do
+      assert Application.get_env(:aces, :mul_client_source) == :fixture
+    end
+
+    test "returns the typed {:ok, {units, :fixture}} contract" do
+      assert {:ok, {units, :fixture}} = Client.fetch_units(%{name: "Atlas"})
+      assert Enum.any?(units, &(&1.name == "Atlas"))
+    end
+  end
 end

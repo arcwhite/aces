@@ -87,6 +87,10 @@ setup_smoke() {
     export MIX_ENV=dev
     export DB_NAME="$SMOKE_DB_NAME"
     export PORT="$SMOKE_PORT"
+    # Smoke server must never hit the live MUL API — fixture-backed access
+    # is enforced here via Aces.MUL.Client's runtime dispatch (see
+    # config/runtime.exs).
+    export MUL_CLIENT_SOURCE=fixture
     mix deps.get
     # ecto.setup is idempotent on a fresh DB; if it already exists we just migrate.
     if ! mix ecto.create --quiet 2>/dev/null; then
@@ -109,6 +113,10 @@ start_server() {
     export MIX_ENV=dev
     export DB_NAME="$SMOKE_DB_NAME"
     export PORT="$SMOKE_PORT"
+    # Smoke server must never hit the live MUL API — fixture-backed access
+    # is enforced here via Aces.MUL.Client's runtime dispatch (see
+    # config/runtime.exs).
+    export MUL_CLIENT_SOURCE=fixture
     nohup mix phx.server >"$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
   )

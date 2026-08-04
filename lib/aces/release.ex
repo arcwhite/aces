@@ -46,9 +46,9 @@ defmodule Aces.Release do
       filters = %{era: era, factions: [faction], types: [type_id]}
 
       case Aces.MUL.Client.fetch_units(filters) do
-        {:ok, units} ->
+        {:ok, {units, source}} ->
           total = length(units)
-          IO.puts("Found #{total} units. Importing...")
+          IO.puts("Found #{total} units (source: #{source}). Importing...")
 
           {success, errors} =
             units
@@ -65,8 +65,11 @@ defmodule Aces.Release do
           IO.puts("Done! #{success} imported, #{errors} errors.")
           IO.puts("Total cached units: #{Aces.Units.count_cached_units()}")
 
-        {:error, reason} ->
-          IO.puts("Failed to fetch units: #{reason}")
+        {:error, {:mul_unavailable, reason}} ->
+          IO.puts("MUL unavailable: #{inspect(reason)}")
+
+        {:error, {:query_failed, reason}} ->
+          IO.puts("MUL query failed: #{inspect(reason)}")
       end
     end
   end
