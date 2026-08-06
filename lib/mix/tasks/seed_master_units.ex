@@ -486,10 +486,15 @@ defmodule Mix.Tasks.SeedMasterUnits do
     end
   end
 
+  # Folded to upper case before grouping. MUL returns BFType in mixed case
+  # ("CV" and "cv" both occur), and `bf_type` is stored raw, so grouping on
+  # the column split one type across two buckets — making a casing quirk look
+  # like an unexpected value. Upper case also matches
+  # `TypeMapping.known_bf_types/0`, which the expected-set check compares to.
   defp bf_type_histogram do
     from(u in MasterUnit,
-      select: {u.bf_type, count(u.id)},
-      group_by: u.bf_type
+      select: {fragment("upper(?)", u.bf_type), count(u.id)},
+      group_by: fragment("upper(?)", u.bf_type)
     )
     |> Repo.all()
     |> Enum.map(fn {bf_type, count} -> {bf_type || "unknown", count} end)
