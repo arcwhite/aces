@@ -122,11 +122,11 @@ seed_matrix() {
     die "no worktree at ${SMOKE_DIR}; run 'bin/local-smoke up' first"
   fi
 
-  # Matrix mode iterates 7 availability eras × 12 factions with a 1s/request
-  # rate limit, so the full run is a 3–6 minute wall-clock step. We tee output to
+  # Matrix mode iterates 10 eras × 12 factions with a 1s/request rate limit,
+  # so the full run is a 6–9 minute wall-clock step. We tee output to
   # $SEED_LOG_FILE so the histogram/failures survive terminal scrollback.
   log "seeding master units — mix seed_master_units --matrix"
-  log "  7 eras × 12 factions (84 QuickList requests, ~3–6 min at 1s rate limit)"
+  log "  10 eras × 12 factions (120 QuickList requests, ~6–9 min at 1s rate limit)"
   log "  streaming to ${SEED_LOG_FILE}"
 
   # Wrap the subshell in `|| status=$?` so it runs in a conditional context —

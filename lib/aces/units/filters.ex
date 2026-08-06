@@ -37,10 +37,9 @@ defmodule Aces.Units.Filters do
     * `{:era, era_string}` - Filter by unit *introduction* era (matches
       `master_units.era_id`, not availability).
 
-      Valid era strings come from `Aces.MUL.Vocabulary.era_keys/0`, which
-      spans the full introduction-era range — wider than the availability
-      eras the modal and the seed matrix expose. See
-      `Aces.MUL.Vocabulary.availability_era_keys/0` for that narrower set.
+      Valid era strings come from `Aces.MUL.Vocabulary.era_keys/0`, the same
+      set the modal's era selector and the seed matrix use — though here they
+      match `era_id` (introduction) rather than availability keys.
 
   ### Faction / Era Availability
     * `{:faction, faction_string}` - Filter by faction availability (legacy format)

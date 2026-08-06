@@ -8,27 +8,26 @@ defmodule Aces.MUL.Vocabulary do
   vocabulary as of their timestamp rather than track a moving definition.
   """
 
-  # Two distinct axes share this table, so `:availability` marks which is
-  # which (see the Filters moduledoc on introduction vs availability era):
+  # Serves both era axes (see the Filters moduledoc on introduction vs
+  # availability era): every entry is a valid *introduction* era for `Filters`
+  # `:era`, and every entry is also offered as an *availability* era — the
+  # modal's era buttons and the seed matrix's iteration set.
   #
-  #   * every entry is a valid *introduction* era for `Filters` `:era`,
-  #     matching `master_units.era_id`;
-  #   * only `availability: true` entries are offered as availability eras —
-  #     the modal's era buttons and the seed matrix's iteration set.
-  #
-  # The three `availability: false` eras predate the faction-availability
-  # data MUL exposes, so seeding them would add rows with no faction keys.
+  # All ten carry real faction-availability data on MUL, verified against the
+  # live QuickList endpoint. The tail is thin — Star League returns ~48
+  # mercenary-available units against ilClan's ~1300 — but thin is not empty,
+  # so none are withheld from the selector.
   @eras [
-    %{key: "ilclan", label: "ilClan", era_id: 257, availability: true},
-    %{key: "dark_age", label: "Dark Age", era_id: 16, availability: true},
-    %{key: "late_republic", label: "Late Republic", era_id: 254, availability: true},
-    %{key: "early_republic", label: "Early Republic", era_id: 15, availability: true},
-    %{key: "jihad", label: "Jihad", era_id: 14, availability: true},
-    %{key: "civil_war", label: "Civil War", era_id: 247, availability: true},
-    %{key: "clan_invasion", label: "Clan Invasion", era_id: 13, availability: true},
-    %{key: "late_succession_war", label: "Late Succession War", era_id: 256, availability: false},
-    %{key: "early_succession_war", label: "Early Succession War", era_id: 11, availability: false},
-    %{key: "star_league", label: "Star League", era_id: 10, availability: false}
+    %{key: "ilclan", label: "ilClan", era_id: 257},
+    %{key: "dark_age", label: "Dark Age", era_id: 16},
+    %{key: "late_republic", label: "Late Republic", era_id: 254},
+    %{key: "early_republic", label: "Early Republic", era_id: 15},
+    %{key: "jihad", label: "Jihad", era_id: 14},
+    %{key: "civil_war", label: "Civil War", era_id: 247},
+    %{key: "clan_invasion", label: "Clan Invasion", era_id: 13},
+    %{key: "late_succession_war", label: "Late Succession War", era_id: 256},
+    %{key: "early_succession_war", label: "Early Succession War", era_id: 11},
+    %{key: "star_league", label: "Star League", era_id: 10}
   ]
 
   # Legacy era spellings accepted by `Filters` `:era`. Kept so callers that
@@ -78,17 +77,8 @@ defmodule Aces.MUL.Vocabulary do
   @doc "Full unit-type vocabulary entries."
   def unit_types, do: @unit_types
 
-  @doc "Era keys in canonical order — the full introduction-era range."
+  @doc "Era keys in canonical order."
   def era_keys, do: Enum.map(@eras, & &1.key)
-
-  @doc """
-  Era entries offered as *availability* eras: the modal's era buttons and the
-  set the seed matrix iterates. A strict subset of `eras/0`.
-  """
-  def availability_eras, do: Enum.filter(@eras, & &1.availability)
-
-  @doc "Availability era keys in canonical order."
-  def availability_era_keys, do: Enum.map(availability_eras(), & &1.key)
 
   @doc """
   Era key → MUL API era_id map, including legacy aliases so `:era` filtering

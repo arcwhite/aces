@@ -384,7 +384,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
               </label>
               <div class="flex flex-wrap gap-2">
                 <button
-                  :for={era <- Vocabulary.availability_eras()}
+                  :for={era <- Vocabulary.eras()}
                   type="button"
                   phx-click="toggle_era_filter"
                   phx-value-era={era.key}

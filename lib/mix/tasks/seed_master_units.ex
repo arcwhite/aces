@@ -32,17 +32,17 @@ defmodule Mix.Tasks.SeedMasterUnits do
   ## Matrix mode
 
   `--matrix` iterates every era × faction combination the unit-search modal
-  exposes (7 availability eras × 12 factions = 84 QuickList requests). Faction availability
+  exposes (10 eras × 12 factions = 120 QuickList requests). Faction availability
   is only recorded for combinations we explicitly seed, so a full matrix run is
   the way to make the cache actually usable for filtered searches.
 
-      # Full matrix — ~3–6 minutes wall clock at 1s/request
+      # Full matrix — ~6–9 minutes wall clock at 1s/request
       mix seed_master_units --matrix
 
       # Re-seed a single era (12 requests) after a MUL data change
       mix seed_master_units --matrix --era ilclan
 
-      # Re-seed a single faction across all eras (7 requests)
+      # Re-seed a single faction across all eras (10 requests)
       mix seed_master_units --matrix --faction clan_wolf
 
       # Print the combination list without calling the API
@@ -88,10 +88,9 @@ defmodule Mix.Tasks.SeedMasterUnits do
 
   @valid_eras Vocabulary.era_keys()
 
-  # Availability eras — the same set the modal's era selector offers. Sourced
-  # from Vocabulary so the two can't drift; the remaining @valid_eras are
-  # introduction-only and reachable via single-combination runs.
-  @matrix_eras Vocabulary.availability_era_keys()
+  # Eras the modal's selector offers. Sourced from Vocabulary so the selector
+  # and the matrix can't drift apart.
+  @matrix_eras Vocabulary.era_keys()
 
   # Factions exposed by the unit-search modal's <select>, also from Vocabulary.
   # Matrix mode iterates every @matrix_eras × @matrix_factions combination.
