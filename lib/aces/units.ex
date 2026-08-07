@@ -13,6 +13,7 @@ defmodule Aces.Units do
   alias Aces.Units.Filters
   alias Aces.Units.MasterUnit
   alias Aces.MUL.Client
+  alias Aces.MUL.TypeMapping
 
   require Logger
 
@@ -21,25 +22,60 @@ defmodule Aces.Units do
   @doc """
   Search for units — checks local DB first, falls back to the MUL client.
 
-  Returns a typed result identifying where the units came from:
-
-    * `{:ok, {units, :local}}` — local cache satisfied the query.
-    * `{:ok, {units, :api | :fixture}}` — fell through to `Aces.MUL.Client`,
-      whose configured source populated the result (see the client's
-      `mul_client_source` config).
-    * `{:error, {:term_too_short, _}}` — search terms shorter than 2 chars
-      are refused up-front rather than silently returning `[]`.
-    * `{:error, {:mul_unavailable, reason}}` — MUL was unreachable.
-    * `{:error, {:query_failed, reason}}` — MUL rejected the query, or a
-      local DB failure was caught here.
-
-  Callers that only care about the unit list can wrap this in a `with`.
+  This function returns a plain list for backward compatibility with the
+  draft LiveView. Prefer `search/2` for new callers — it identifies where
+  the units came from (`:local`, `:api`, `:fixture`) and surfaces specific
+  failure modes in the return value instead of collapsing them to `[]`.
   """
+  @deprecated "Use search/2 for typed results including error branches"
   def search_units(search_term, opts \\ []) when is_binary(search_term) do
+    case search(search_term, opts) do
+      {:ok, %{units: units}} ->
+        units
+
+      {:error, :term_too_short} ->
+        []
+
+      {:error, reason} ->
+        Logger.info("MUL API search failed for '#{search_term}': #{inspect(reason)}")
+        []
+    end
+  end
+
+  @doc """
+  Typed unit search. Returns a tagged tuple naming what happened so callers
+  can distinguish cache hits from MUL fallbacks and from targeted failures
+  like rate limiting or filter validation errors.
+
+  Result shapes:
+
+    * `{:ok, %{units: [_ | _], source: :local}}` — served entirely from the
+      local cache.
+    * `{:ok, %{units: units, source: :api | :fixture}}` — cache miss, so we
+      fell through to `Aces.MUL.Client`; `source` names which backing the
+      client used (see its `mul_client_source` config).
+    * `{:error, :term_too_short}` — trimmed term shorter than two chars.
+    * `{:error, {:mul_unavailable, reason}}` — network failure, rate
+      limiting, or HTTP error from MUL. `reason` is the underlying value
+      from the client.
+    * `{:error, {:query_failed, reason}}` — Postgres blew up on the local
+      lookup, or MUL rejected the query. `reason` is the underlying value.
+
+  There is no distinct "MUL had nothing" tag: that state is an empty
+  `:units` list with a non-`:local` `source`, which callers can match
+  directly (`%{units: [], source: s} when s != :local`).
+  """
+  @spec search(String.t(), keyword()) ::
+          {:ok, %{units: [MasterUnit.t()], source: :local | :api | :fixture}}
+          | {:error,
+             :term_too_short
+             | {:mul_unavailable, term()}
+             | {:query_failed, term()}}
+  def search(search_term, opts \\ []) when is_binary(search_term) do
     search_term = String.trim(search_term)
 
     if String.length(search_term) < 2 do
-      {:error, {:term_too_short, search_term}}
+      {:error, :term_too_short}
     else
       # The rescue is deliberately scoped to search_local_units/2 only: a
       # raise from search_and_cache_from_api/2 (e.g. inside
@@ -51,7 +87,7 @@ defmodule Aces.Units do
           search_and_cache_from_api(search_term, opts)
 
         {:ok, local_results} ->
-          {:ok, {local_results, :local}}
+          {:ok, %{units: local_results, source: :local}}
 
         {:error, _} = err ->
           err
@@ -87,15 +123,22 @@ defmodule Aces.Units do
   end
 
   @doc """
-  Get all master units from local cache
+  Get master units from local cache, ordered by point_value then name.
 
-  This is useful for offline scenarios or when you want to
-  avoid API calls entirely.
+  Options:
+    * `:limit` — max rows to return (default `50`).
+    * Everything else is forwarded to `Aces.Units.Filters.filter/2`.
+
+  This is the local-only path used by the search modal's default view; it
+  never falls back to MUL.
   """
   def list_cached_master_units(opts \\ []) do
+    {limit, filter_opts} = Keyword.pop(opts, :limit, 50)
+
     MasterUnit
-    |> Filters.filter(opts)
-    |> order_by([u], u.name)
+    |> Filters.filter(filter_opts)
+    |> order_by([u], [u.point_value, u.name])
+    |> limit(^limit)
     |> Repo.all()
   end
 
@@ -160,41 +203,72 @@ defmodule Aces.Units do
   end
 
   defp search_and_cache_from_api(search_term, opts) do
-    # Convert internal filter format to Client-compatible format
-    api_filters = translate_filters_for_api(opts)
-    filters = Map.put(api_filters, :name, search_term)
+    api_filters =
+      opts
+      |> translate_filters_for_api()
+      |> Map.put(:name, search_term)
 
-    case Client.fetch_units(filters) do
+    case Client.fetch_units(api_filters) do
       {:ok, {api_units, source}} ->
         cached_units =
           api_units
           |> Enum.map(&create_or_update_master_unit/1)
           |> Enum.filter(&match?({:ok, _}, &1))
           |> Enum.map(fn {:ok, unit} -> unit end)
+          |> post_filter_by_unit_type(opts)
 
-        {:ok, {cached_units, source}}
+        # An empty list here is a legitimate zero-match result, not an error;
+        # callers read it off {units: [], source: source}.
+        {:ok, %{units: cached_units, source: source}}
 
-      error -> error
+      # The client already returns {:mul_unavailable, _} / {:query_failed, _},
+      # so re-wrapping here would nest the tag twice.
+      {:error, _typed} = error ->
+        error
     end
   end
 
-  # Translate internal filter format to MUL API format
+  # Translate internal filter format to MUL API format.
+  #
+  # `:unit_type` is expanded to the MUL Types ids `TypeMapping` associates
+  # with it. Because a MUL type id can cover more internal unit types than
+  # we asked for (e.g. Types=21 returns both battle armor and conventional
+  # infantry, Types=18 returns both battlemechs and industrial mechs), the
+  # returned units are also post-filtered locally on the resolved unit_type
+  # — see `post_filter_by_unit_type/2`.
   defp translate_filters_for_api(opts) do
     Enum.reduce(opts, %{}, fn
       {:era_faction, {eras, faction}}, acc ->
-        # Convert era_faction tuple to separate eras and factions filters
         acc
         |> Map.put(:eras, eras)
         |> Map.put(:factions, [faction])
 
+      {:eras, eras}, acc when is_list(eras) ->
+        Map.put(acc, :eras, eras)
+
+      {:faction, faction}, acc when is_binary(faction) ->
+        Map.put(acc, :factions, [faction])
+
       {:unit_type, type}, acc ->
-        # Pass through unit_type as-is (Client handles it)
-        Map.put(acc, :unit_type, type)
+        case TypeMapping.to_mul_ids(type) do
+          [] -> acc
+          ids -> Map.put(acc, :types, ids)
+        end
 
       {key, value}, acc ->
-        # Pass through other filters
         Map.put(acc, key, value)
     end)
+  end
+
+  # Post-filter API-cached rows on the resolved unit_type so a request for
+  # e.g. "conventional_infantry" doesn't leak battle_armor rows from the
+  # same Types=21 fetch. We still cache everything MUL returned — the
+  # filter only trims the returned subset.
+  defp post_filter_by_unit_type(units, opts) do
+    case Keyword.get(opts, :unit_type) do
+      nil -> units
+      type -> Enum.filter(units, fn unit -> unit.unit_type == type end)
+    end
   end
 
   defp fetch_and_cache_unit(_mul_id) do
@@ -228,8 +302,10 @@ defmodule Aces.Units do
   @doc """
   Search for units with user-friendly filter format.
 
-  This function is designed for use in LiveViews and contexts that need
-  simple, user-facing filter options with comprehensive error handling.
+  Thin wrapper over `search/2` that translates the modal's `{:type, :eras,
+  :faction}` filter map into the internal `opts` shape. Every return value
+  comes straight from `search/2` — no `try/rescue → :search_failed`
+  swallowing.
 
   ## Parameters
 
@@ -241,8 +317,12 @@ defmodule Aces.Units do
 
   ## Returns
 
-    * `{:ok, {units, source}}` — `source` is `:local`, `:api`, or `:fixture`,
-      identifying where the units came from so callers can surface it.
+  Exactly what `search/2` returns:
+
+    * `{:ok, %{units: units, source: source}}` — `source` is `:local`,
+      `:api`, or `:fixture`, identifying where the units came from so
+      callers can surface it. An empty `:units` with a non-`:local` source
+      means MUL was reached and had no matches.
     * `{:error, :term_too_short}` — search term below 2 characters.
     * `{:error, {:mul_unavailable, reason}}` — MUL unreachable / rate-limited.
     * `{:error, {:query_failed, reason}}` — MUL rejected the query or a local
@@ -251,54 +331,60 @@ defmodule Aces.Units do
   ## Examples
 
       iex> search_units_for_company("Atlas", %{eras: ["ilclan"], faction: "mercenary"})
-      {:ok, {[%MasterUnit{name: "Atlas", ...}, ...], :local}}
+      {:ok, %{units: [%MasterUnit{name: "Atlas", ...}, ...], source: :local}}
 
       iex> search_units_for_company("A", %{})
       {:error, :term_too_short}
   """
   def search_units_for_company(search_term, filters \\ %{}) when is_binary(search_term) do
-    search_term = String.trim(search_term)
-
-    if String.length(search_term) < 2 do
-      {:error, :term_too_short}
-    else
-      opts = build_search_opts_from_filters(filters)
-
-      case search_units(search_term, opts) do
-        {:ok, {units, source}} ->
-          {:ok, {units, source}}
-
-        {:error, {:term_too_short, _}} ->
-          {:error, :term_too_short}
-
-        {:error, _typed} = err ->
-          err
-      end
-    end
+    filters
+    |> build_search_opts_from_filters()
+    |> then(&search(search_term, &1))
   end
 
-  # Convert user-friendly filter format to internal opts format
-  defp build_search_opts_from_filters(filters) when is_map(filters) do
+  @doc """
+  Convert the modal's user-friendly filter map to the internal opts keyword
+  list that `search/2` and `list_cached_master_units/1` accept.
+
+  Era and faction are independent selections in the UI, so deselecting one
+  must not silently disable the other. Three cases matter:
+
+    * both eras and a faction → `{:era_faction, {eras, faction}}`
+      (faction available in one of the named eras)
+    * only a faction          → `{:faction, faction}`
+      (available to that faction in any era)
+    * only eras               → `{:eras, eras}`
+      (available in any of those eras, faction unrestricted)
+
+  Neither set → no era/faction opt at all.
+  """
+  def build_search_opts_from_filters(filters) when is_map(filters) do
     opts = []
 
-    # Add unit type filter if set
     opts =
       case Map.get(filters, :type) do
         nil -> opts
         type -> [{:unit_type, type} | opts]
       end
 
-    # Add era + faction filter if both are set
-    opts =
-      case {Map.get(filters, :eras), Map.get(filters, :faction)} do
-        {eras, faction} when is_list(eras) and length(eras) > 0 and is_binary(faction) ->
-          [{:era_faction, {eras, faction}} | opts]
+    eras = Map.get(filters, :eras)
+    faction = Map.get(filters, :faction)
+    has_eras? = is_list(eras) and length(eras) > 0
+    has_faction? = is_binary(faction) and faction != ""
 
-        _ ->
-          opts
-      end
+    cond do
+      has_eras? and has_faction? ->
+        [{:era_faction, {eras, faction}} | opts]
 
-    opts
+      has_faction? ->
+        [{:faction, faction} | opts]
+
+      has_eras? ->
+        [{:eras, eras} | opts]
+
+      true ->
+        opts
+    end
   end
 
   @doc """

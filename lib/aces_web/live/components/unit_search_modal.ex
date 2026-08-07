@@ -39,15 +39,19 @@ defmodule AcesWeb.Components.UnitSearchModal do
 
   use AcesWeb, :live_component
 
+  require Logger
+
   alias Aces.Units
 
   @impl true
   def update(assigns, socket) do
-    # Initialize search state on first update, preserve on subsequent updates
+    previous_show = Map.get(socket.assigns, :show, false)
+    show = assigns[:show]
+
     socket =
       if socket.assigns[:initialized] do
         socket
-        |> assign(:show, assigns[:show])
+        |> assign(:show, show)
         |> assign(:budget, assigns[:budget])
         |> assign(:mode, assigns[:mode])
         |> assign(:error, assigns[:error])
@@ -55,14 +59,24 @@ defmodule AcesWeb.Components.UnitSearchModal do
         socket
         |> assign(assigns)
         |> assign(:initialized, true)
-        |> assign(:search_term, "")
-        |> assign(:search_results, [])
-        |> assign(:search_result_source, nil)
-        |> assign(:search_error, nil)
-        |> assign(:search_loading, false)
         |> assign(:filter_eras, ["ilclan", "dark_age"])
         |> assign(:filter_faction, "mercenary")
         |> assign(:filter_type, nil)
+        |> reset_search()
+      end
+
+    socket =
+      cond do
+        previous_show != true and show == true ->
+          socket
+          |> reset_search()
+          |> load_default_results()
+
+        previous_show == true and show != true ->
+          reset_search(socket)
+
+        true ->
+          socket
       end
 
     {:ok, socket}
@@ -71,14 +85,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
   @impl true
   def handle_event("close", _params, socket) do
     notify_parent(:close_modal)
-
-    {:noreply,
-     socket
-     |> assign(:search_term, "")
-     |> assign(:search_results, [])
-     |> assign(:search_result_source, nil)
-     |> assign(:search_error, nil)
-     |> assign(:search_loading, false)}
+    {:noreply, reset_search(socket)}
   end
 
   def handle_event("toggle_era_filter", %{"era" => era}, socket) do
@@ -94,16 +101,18 @@ defmodule AcesWeb.Components.UnitSearchModal do
     socket =
       socket
       |> assign(:filter_eras, new_eras)
-      |> maybe_run_search()
+      |> refresh_results()
 
     {:noreply, socket}
   end
 
   def handle_event("set_faction_filter", %{"faction" => faction}, socket) do
+    faction_value = if faction == "", do: nil, else: faction
+
     socket =
       socket
-      |> assign(:filter_faction, faction)
-      |> maybe_run_search()
+      |> assign(:filter_faction, faction_value)
+      |> refresh_results()
 
     {:noreply, socket}
   end
@@ -114,7 +123,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
     socket =
       socket
       |> assign(:filter_type, type_value)
-      |> maybe_run_search()
+      |> refresh_results()
 
     {:noreply, socket}
   end
@@ -131,13 +140,18 @@ defmodule AcesWeb.Components.UnitSearchModal do
       else
         socket
         |> assign(:search_term, search_term)
-        |> assign(:search_results, [])
-        |> assign(:search_result_source, nil)
-        |> assign(:search_error, nil)
-        |> assign(:search_loading, false)
+        |> load_default_results()
       end
 
     {:noreply, socket}
+  end
+
+  def handle_event("retry_search", _params, socket) do
+    if socket.assigns.search_term != "" do
+      {:noreply, socket |> assign(:search_loading, true) |> perform_search()}
+    else
+      {:noreply, load_default_results(socket)}
+    end
   end
 
   def handle_event("select_unit", %{"mul_id" => mul_id_str}, socket) do
@@ -151,51 +165,108 @@ defmodule AcesWeb.Components.UnitSearchModal do
     end
   end
 
-  # Run search immediately when filters change (if we have a search term)
-  defp maybe_run_search(socket) do
+  # Re-run whichever view is active (search or default) after a filter change.
+  defp refresh_results(socket) do
     if String.length(socket.assigns.search_term) >= 2 do
       perform_search(socket)
     else
-      socket
+      load_default_results(socket)
     end
   end
 
   defp perform_search(socket) do
-    filters = %{
-      eras: socket.assigns.filter_eras,
-      faction: socket.assigns.filter_faction,
-      type: socket.assigns.filter_type
-    }
+    opts = current_filter_opts(socket.assigns)
 
-    case Units.search_units_for_company(socket.assigns.search_term, filters) do
-      {:ok, {results, source}} ->
+    case Units.search(socket.assigns.search_term, opts) do
+      # MUL was reached and had nothing. Distinct from an empty local cache,
+      # so the template can say which one happened. `source` is still
+      # assigned: knowing an empty result came from fixtures rather than the
+      # live MUL is exactly what smoke operators need to see.
+      {:ok, %{units: [], source: source}} when source != :local ->
         socket
-        |> assign(:search_results, results)
-        |> assign(:search_result_source, source)
+        |> assign(:search_results, [])
+        |> assign(:search_source, source)
+        |> assign(:search_error, :mul_empty)
+        |> assign(:search_loading, false)
+
+      {:ok, %{units: units, source: source}} ->
+        socket
+        |> assign(:search_results, units)
+        |> assign(:search_source, source)
         |> assign(:search_error, nil)
         |> assign(:search_loading, false)
 
       {:error, :term_too_short} ->
         socket
         |> assign(:search_results, [])
-        |> assign(:search_result_source, nil)
+        |> assign(:search_source, nil)
         |> assign(:search_error, nil)
         |> assign(:search_loading, false)
 
-      {:error, {:mul_unavailable, _reason}} ->
+      {:error, {:mul_unavailable, reason}} ->
         socket
         |> assign(:search_results, [])
-        |> assign(:search_result_source, nil)
-        |> assign(:search_error, "The Master Unit List is temporarily unreachable. Cached results only.")
+        |> assign(:search_source, nil)
+        |> assign(:search_error, {:mul_unavailable, reason})
         |> assign(:search_loading, false)
 
-      {:error, {:query_failed, _reason}} ->
+      {:error, {:query_failed, reason}} ->
+        Logger.error("Unit search query failed: #{inspect(reason)}")
+
         socket
         |> assign(:search_results, [])
-        |> assign(:search_result_source, nil)
-        |> assign(:search_error, "That search couldn't be run. Try adjusting the filters or the search term.")
+        |> assign(:search_source, nil)
+        |> assign(:search_error, :query_failed)
         |> assign(:search_loading, false)
     end
+  end
+
+  defp load_default_results(socket) do
+    opts = current_filter_opts(socket.assigns)
+
+    try do
+      case Units.list_cached_master_units(opts) do
+        [] ->
+          socket
+          |> assign(:search_results, [])
+          |> assign(:search_source, nil)
+          |> assign(:search_error, :cache_empty)
+          |> assign(:search_loading, false)
+
+        units ->
+          socket
+          |> assign(:search_results, units)
+          |> assign(:search_source, :local)
+          |> assign(:search_error, nil)
+          |> assign(:search_loading, false)
+      end
+    rescue
+      error in [Postgrex.Error, DBConnection.ConnectionError] ->
+        Logger.error("Default unit load failed: #{inspect(error)}")
+
+        socket
+        |> assign(:search_results, [])
+        |> assign(:search_source, nil)
+        |> assign(:search_error, :query_failed)
+        |> assign(:search_loading, false)
+    end
+  end
+
+  defp reset_search(socket) do
+    socket
+    |> assign(:search_term, "")
+    |> assign(:search_results, [])
+    |> assign(:search_loading, false)
+    |> assign(:search_source, nil)
+    |> assign(:search_error, nil)
+  end
+
+  defp current_filter_opts(assigns) do
+    Units.build_search_opts_from_filters(%{
+      eras: assigns.filter_eras,
+      faction: assigns.filter_faction,
+      type: assigns.filter_type
+    })
   end
 
   defp notify_parent(msg), do: send(self(), {__MODULE__, msg})
@@ -230,6 +301,13 @@ defmodule AcesWeb.Components.UnitSearchModal do
     end
   end
 
+  defp source_label(:local), do: "from local cache"
+  defp source_label(:api), do: "from Master Unit List"
+  # Smoke/test environments run the fixture-backed client; say so rather than
+  # implying these rows came off the live MUL.
+  defp source_label(:fixture), do: "from local fixtures (MUL live access disabled)"
+  defp source_label(_), do: nil
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -238,286 +316,334 @@ defmodule AcesWeb.Components.UnitSearchModal do
         <:title>{modal_title(@mode)}</:title>
 
         <div class="mb-4">
-              <!-- Budget/Warchest info for SP purchase mode -->
-              <%= if @mode == :sp_purchase do %>
-                <div class="alert alert-info mb-4">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    class="stroke-current shrink-0 w-6 h-6"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    >
-                    </path>
-                  </svg>
-                  <div>
-                    <div class="font-semibold">Warchest: {@budget} SP</div>
-                    <div class="text-sm">Unit cost = PV × 40 SP</div>
-                  </div>
-                </div>
-              <% end %>
-
-              <!-- Error display -->
-              <%= if @error do %>
-                <div class="alert alert-error mb-4">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    class="stroke-current shrink-0 h-6 w-6"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                  <span>{@error}</span>
-                </div>
-              <% end %>
-
-              <input
-                type="text"
-                name="search"
-                placeholder="Search for units (e.g. Atlas, Timber Wolf, Locust...)"
-                class="input input-bordered w-full"
-                value={@search_term}
-                phx-keyup="search"
-                phx-target={@myself}
-                phx-debounce="300"
-              />
-              <p class="text-sm text-gray-600 mt-2">
-                Units are sourced from
-                <a href="https://masterunitlist.info" target="_blank" class="link">
-                  Master Unit List
-                </a>
-                with respect and attribution.
-              </p>
-            </div>
-
-            <!-- Filters -->
-            <div class="bg-base-200 p-4 rounded-lg mb-4">
-              <div class="flex flex-wrap gap-4">
-                <!-- Era Filter -->
-                <div>
-                  <label class="label">
-                    <span class="label-text font-semibold">Era</span>
-                  </label>
-                  <div class="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      phx-click="toggle_era_filter"
-                      phx-value-era="ilclan"
-                      phx-target={@myself}
-                      class={"btn btn-sm #{if "ilclan" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                    >
-                      ilClan
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="toggle_era_filter"
-                      phx-value-era="dark_age"
-                      phx-target={@myself}
-                      class={"btn btn-sm #{if "dark_age" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                    >
-                      Dark Age
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="toggle_era_filter"
-                      phx-value-era="late_republic"
-                      phx-target={@myself}
-                      class={"btn btn-sm #{if "late_republic" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                    >
-                      Late Republic
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="toggle_era_filter"
-                      phx-value-era="early_republic"
-                      phx-target={@myself}
-                      class={"btn btn-sm #{if "early_republic" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                    >
-                      Early Republic
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="toggle_era_filter"
-                      phx-value-era="clan_invasion"
-                      phx-target={@myself}
-                      class={"btn btn-sm #{if "clan_invasion" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                    >
-                      Clan Invasion
-                    </button>
-                  </div>
-                </div>
-
-                <!-- Faction Filter -->
-                <div>
-                  <label class="label">
-                    <span class="label-text font-semibold">Faction</span>
-                  </label>
-                  <form phx-change="set_faction_filter" phx-target={@myself}>
-                    <select class="select select-bordered select-sm" name="faction">
-                      <option value="mercenary" selected={@filter_faction == "mercenary"}>
-                        Mercenary
-                      </option>
-                      <optgroup label="Inner Sphere">
-                        <option
-                          value="capellan_confederation"
-                          selected={@filter_faction == "capellan_confederation"}
-                        >
-                          Capellan Confederation
-                        </option>
-                        <option
-                          value="draconis_combine"
-                          selected={@filter_faction == "draconis_combine"}
-                        >
-                          Draconis Combine
-                        </option>
-                        <option
-                          value="federated_suns"
-                          selected={@filter_faction == "federated_suns"}
-                        >
-                          Federated Suns
-                        </option>
-                        <option
-                          value="free_worlds_league"
-                          selected={@filter_faction == "free_worlds_league"}
-                        >
-                          Free Worlds League
-                        </option>
-                        <option
-                          value="lyran_commonwealth"
-                          selected={@filter_faction == "lyran_commonwealth"}
-                        >
-                          Lyran Commonwealth
-                        </option>
-                        <option
-                          value="republic_of_the_sphere"
-                          selected={@filter_faction == "republic_of_the_sphere"}
-                        >
-                          Republic of the Sphere
-                        </option>
-                      </optgroup>
-                      <optgroup label="Clans">
-                        <option value="clan_wolf" selected={@filter_faction == "clan_wolf"}>
-                          Clan Wolf
-                        </option>
-                        <option
-                          value="clan_jade_falcon"
-                          selected={@filter_faction == "clan_jade_falcon"}
-                        >
-                          Clan Jade Falcon
-                        </option>
-                        <option
-                          value="clan_ghost_bear"
-                          selected={@filter_faction == "clan_ghost_bear"}
-                        >
-                          Clan Ghost Bear
-                        </option>
-                        <option value="clan_sea_fox" selected={@filter_faction == "clan_sea_fox"}>
-                          Clan Sea Fox
-                        </option>
-                        <option
-                          value="clan_hell_horses"
-                          selected={@filter_faction == "clan_hell_horses"}
-                        >
-                          Clan Hell's Horses
-                        </option>
-                      </optgroup>
-                    </select>
-                  </form>
-                </div>
-
-                <!-- Unit Type Filter -->
-                <div>
-                  <label class="label">
-                    <span class="label-text font-semibold">Unit Type</span>
-                  </label>
-                  <form phx-change="set_type_filter" phx-target={@myself}>
-                    <select class="select select-bordered select-sm" name="type">
-                      <option value="" selected={@filter_type == nil}>All Types</option>
-                      <option value="battlemech" selected={@filter_type == "battlemech"}>
-                        BattleMech
-                      </option>
-                      <option value="combat_vehicle" selected={@filter_type == "combat_vehicle"}>
-                        Combat Vehicle
-                      </option>
-                      <option value="battle_armor" selected={@filter_type == "battle_armor"}>
-                        Battle Armor
-                      </option>
-                      <option
-                        value="conventional_infantry"
-                        selected={@filter_type == "conventional_infantry"}
-                      >
-                        Infantry
-                      </option>
-                      <option value="protomech" selected={@filter_type == "protomech"}>
-                        ProtoMech
-                      </option>
-                    </select>
-                  </form>
-                </div>
+          <!-- Budget/Warchest info for SP purchase mode -->
+          <%= if @mode == :sp_purchase do %>
+            <div class="alert alert-info mb-4">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                class="stroke-current shrink-0 w-6 h-6"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                >
+                </path>
+              </svg>
+              <div>
+                <div class="font-semibold">Warchest: {@budget} SP</div>
+                <div class="text-sm">Unit cost = PV × 40 SP</div>
               </div>
             </div>
-
-            <div class="divider"></div>
-
-            <div class="max-h-96 overflow-y-auto">
-              <%= if @search_error do %>
-                <div class="alert alert-warning mb-4" role="alert">
-                  <span>{@search_error}</span>
-                </div>
-              <% end %>
-              <%= if @search_loading do %>
-                <div class="flex justify-center py-8">
-                  <span class="loading loading-spinner loading-lg"></span>
-                </div>
-              <% else %>
-                <%= if length(@search_results) > 0 do %>
-                  <%= if @search_result_source == :fixture do %>
-                    <div class="text-xs text-gray-500 mb-2">
-                      Results from local fixtures (MUL live access disabled).
-                    </div>
-                  <% end %>
-                  <div class="grid gap-3">
-                    <%= for unit <- @search_results do %>
-                      <.unit_card
-                        unit={unit}
-                        mode={@mode}
-                        can_afford={can_afford?(unit, assigns)}
-                        myself={@myself}
-                      />
-                    <% end %>
-                  </div>
-                <% else %>
-                  <%= if @search_term != "" and is_nil(@search_error) do %>
-                    <div class="text-center py-8">
-                      <p class="text-gray-600">No units found for "{@search_term}"</p>
-                      <p class="text-sm text-gray-500 mt-2">
-                        Try searching by chassis name (e.g., "Atlas" instead of "AS7-D")
-                      </p>
-                    </div>
-                  <% end %>
-                  <%= if @search_term == "" do %>
-                    <div class="text-center py-8">
-                      <p class="text-gray-600">
-                        Search for units to <%= if @mode == :pv_budget,
-                          do: "add to your company roster",
-                          else: "purchase for your company" %>
-                      </p>
-                    </div>
-                  <% end %>
-                <% end %>
-              <% end %>
+          <% end %>
+          
+    <!-- Error display -->
+          <%= if @error do %>
+            <div class="alert alert-error mb-4">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                class="stroke-current shrink-0 h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <span>{@error}</span>
             </div>
+          <% end %>
+
+          <input
+            type="text"
+            name="search"
+            placeholder="Search for units (e.g. Atlas, Timber Wolf, Locust...)"
+            class="input input-bordered w-full"
+            value={@search_term}
+            phx-keyup="search"
+            phx-target={@myself}
+            phx-debounce="300"
+          />
+          <p class="text-sm text-gray-600 mt-2">
+            Units are sourced from
+            <a href="https://masterunitlist.info" target="_blank" class="link">
+              Master Unit List
+            </a>
+            with respect and attribution.
+          </p>
+        </div>
+        
+    <!-- Filters -->
+        <div class="bg-base-200 p-4 rounded-lg mb-4">
+          <div class="flex flex-wrap gap-4">
+            <!-- Era Filter -->
+            <div>
+              <label class="label">
+                <span class="label-text font-semibold">Era</span>
+              </label>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  phx-click="toggle_era_filter"
+                  phx-value-era="ilclan"
+                  phx-target={@myself}
+                  class={"btn btn-sm #{if "ilclan" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
+                >
+                  ilClan
+                </button>
+                <button
+                  type="button"
+                  phx-click="toggle_era_filter"
+                  phx-value-era="dark_age"
+                  phx-target={@myself}
+                  class={"btn btn-sm #{if "dark_age" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
+                >
+                  Dark Age
+                </button>
+                <button
+                  type="button"
+                  phx-click="toggle_era_filter"
+                  phx-value-era="late_republic"
+                  phx-target={@myself}
+                  class={"btn btn-sm #{if "late_republic" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
+                >
+                  Late Republic
+                </button>
+                <button
+                  type="button"
+                  phx-click="toggle_era_filter"
+                  phx-value-era="early_republic"
+                  phx-target={@myself}
+                  class={"btn btn-sm #{if "early_republic" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
+                >
+                  Early Republic
+                </button>
+                <button
+                  type="button"
+                  phx-click="toggle_era_filter"
+                  phx-value-era="clan_invasion"
+                  phx-target={@myself}
+                  class={"btn btn-sm #{if "clan_invasion" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
+                >
+                  Clan Invasion
+                </button>
+              </div>
+            </div>
+            
+    <!-- Faction Filter -->
+            <div>
+              <label class="label">
+                <span class="label-text font-semibold">Faction</span>
+              </label>
+              <form phx-change="set_faction_filter" phx-target={@myself}>
+                <select class="select select-bordered select-sm" name="faction">
+                  <option value="" selected={is_nil(@filter_faction)}>Any Faction</option>
+                  <option value="mercenary" selected={@filter_faction == "mercenary"}>
+                    Mercenary
+                  </option>
+                  <optgroup label="Inner Sphere">
+                    <option
+                      value="capellan_confederation"
+                      selected={@filter_faction == "capellan_confederation"}
+                    >
+                      Capellan Confederation
+                    </option>
+                    <option
+                      value="draconis_combine"
+                      selected={@filter_faction == "draconis_combine"}
+                    >
+                      Draconis Combine
+                    </option>
+                    <option
+                      value="federated_suns"
+                      selected={@filter_faction == "federated_suns"}
+                    >
+                      Federated Suns
+                    </option>
+                    <option
+                      value="free_worlds_league"
+                      selected={@filter_faction == "free_worlds_league"}
+                    >
+                      Free Worlds League
+                    </option>
+                    <option
+                      value="lyran_commonwealth"
+                      selected={@filter_faction == "lyran_commonwealth"}
+                    >
+                      Lyran Commonwealth
+                    </option>
+                    <option
+                      value="republic_of_the_sphere"
+                      selected={@filter_faction == "republic_of_the_sphere"}
+                    >
+                      Republic of the Sphere
+                    </option>
+                  </optgroup>
+                  <optgroup label="Clans">
+                    <option value="clan_wolf" selected={@filter_faction == "clan_wolf"}>
+                      Clan Wolf
+                    </option>
+                    <option
+                      value="clan_jade_falcon"
+                      selected={@filter_faction == "clan_jade_falcon"}
+                    >
+                      Clan Jade Falcon
+                    </option>
+                    <option
+                      value="clan_ghost_bear"
+                      selected={@filter_faction == "clan_ghost_bear"}
+                    >
+                      Clan Ghost Bear
+                    </option>
+                    <option value="clan_sea_fox" selected={@filter_faction == "clan_sea_fox"}>
+                      Clan Sea Fox
+                    </option>
+                    <option
+                      value="clan_hell_horses"
+                      selected={@filter_faction == "clan_hell_horses"}
+                    >
+                      Clan Hell's Horses
+                    </option>
+                  </optgroup>
+                </select>
+              </form>
+            </div>
+            
+    <!-- Unit Type Filter -->
+            <div>
+              <label class="label">
+                <span class="label-text font-semibold">Unit Type</span>
+              </label>
+              <form phx-change="set_type_filter" phx-target={@myself}>
+                <select class="select select-bordered select-sm" name="type">
+                  <option value="" selected={@filter_type == nil}>All Types</option>
+                  <option value="battlemech" selected={@filter_type == "battlemech"}>
+                    BattleMech
+                  </option>
+                  <option value="combat_vehicle" selected={@filter_type == "combat_vehicle"}>
+                    Combat Vehicle
+                  </option>
+                  <option value="battle_armor" selected={@filter_type == "battle_armor"}>
+                    Battle Armor
+                  </option>
+                  <option
+                    value="conventional_infantry"
+                    selected={@filter_type == "conventional_infantry"}
+                  >
+                    Infantry
+                  </option>
+                  <option value="protomech" selected={@filter_type == "protomech"}>
+                    ProtoMech
+                  </option>
+                </select>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="max-h-96 overflow-y-auto">
+          <%= cond do %>
+            <% @search_loading -> %>
+              <div class="flex justify-center py-8">
+                <span class="loading loading-spinner loading-lg"></span>
+              </div>
+            <% length(@search_results) > 0 -> %>
+              <div class="flex flex-col gap-1 mb-3">
+                <div class="flex items-baseline justify-between">
+                  <span class="text-sm text-gray-600" data-role="result-count">
+                    {length(@search_results)} unit{if length(@search_results) == 1, do: "", else: "s"}
+                  </span>
+                  <%= if source_label(@search_source) do %>
+                    <span class="text-xs text-gray-500" data-role="source-indicator">
+                      {source_label(@search_source)}
+                    </span>
+                  <% end %>
+                </div>
+                <%= if match?({:mul_unavailable, _}, @search_error) do %>
+                  <div class="alert alert-warning py-2" data-role="mul-unavailable-banner">
+                    <span class="text-sm">
+                      Couldn't reach the Master Unit List ({inspect(elem(@search_error, 1))}). Showing local results only.
+                    </span>
+                    <button
+                      type="button"
+                      phx-click="retry_search"
+                      phx-target={@myself}
+                      class="btn btn-sm"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                <% end %>
+              </div>
+              <div class="grid gap-3">
+                <%= for unit <- @search_results do %>
+                  <.unit_card
+                    unit={unit}
+                    mode={@mode}
+                    can_afford={can_afford?(unit, assigns)}
+                    myself={@myself}
+                  />
+                <% end %>
+              </div>
+            <% @search_error == :cache_empty -> %>
+              <div class="text-center py-8" data-role="cache-empty">
+                <p class="text-gray-600">
+                  Unit cache is empty. Run <code class="text-xs bg-base-200 px-2 py-1 rounded">mix seed_master_units --matrix</code>.
+                </p>
+              </div>
+            <% @search_error == :mul_empty -> %>
+              <div class="text-center py-8" data-role="mul-empty">
+                <p class="text-gray-600">No units match "{@search_term}" with these filters.</p>
+              </div>
+            <% match?({:mul_unavailable, _}, @search_error) -> %>
+              <div class="text-center py-8" data-role="mul-unavailable">
+                <div class="alert alert-warning inline-flex">
+                  <span>
+                    Couldn't reach the Master Unit List ({inspect(elem(@search_error, 1))}). Showing local results only.
+                  </span>
+                </div>
+                <div class="mt-3">
+                  <button
+                    type="button"
+                    phx-click="retry_search"
+                    phx-target={@myself}
+                    class="btn btn-sm"
+                  >
+                    Retry
+                  </button>
+                </div>
+              </div>
+            <% @search_error == :query_failed -> %>
+              <div class="text-center py-8" data-role="query-failed">
+                <div class="alert alert-error inline-flex">
+                  <span>Something went wrong looking up units. Please try again.</span>
+                </div>
+              </div>
+            <% @search_term != "" -> %>
+              <div class="text-center py-8">
+                <p class="text-gray-600">No units found for "{@search_term}"</p>
+                <p class="text-sm text-gray-500 mt-2">
+                  Try searching by chassis name (e.g., "Atlas" instead of "AS7-D")
+                </p>
+              </div>
+            <% true -> %>
+              <div class="text-center py-8">
+                <p class="text-gray-600">
+                  Search for units to {if @mode == :pv_budget,
+                    do: "add to your company roster",
+                    else: "purchase for your company"}
+                </p>
+              </div>
+          <% end %>
+        </div>
       </.modal>
     </div>
     """
@@ -564,7 +690,9 @@ defmodule AcesWeb.Components.UnitSearchModal do
                 </span>
               <% end %>
               <%= if @unit.bf_overheat && @unit.bf_overheat > 0 do %>
-                <span title="Overheat"><span class="font-semibold">OV:</span> {@unit.bf_overheat}</span>
+                <span title="Overheat">
+                  <span class="font-semibold">OV:</span> {@unit.bf_overheat}
+                </span>
               <% end %>
             </div>
             <%= if @unit.bf_abilities && @unit.bf_abilities != "" do %>
@@ -572,13 +700,14 @@ defmodule AcesWeb.Components.UnitSearchModal do
                 <span class="font-semibold">Specials:</span> {@unit.bf_abilities}
               </p>
             <% end %>
-            <%= if @unit.factions && map_size(@unit.factions) > 0 do %>
+            <% factions = Aces.Units.MasterUnit.available_factions(@unit) %>
+            <%= if factions != [] do %>
               <div class="flex flex-wrap gap-1 mt-2">
-                <%= for faction <- Enum.take(Map.keys(@unit.factions), 3) do %>
+                <%= for faction <- Enum.take(factions, 3) do %>
                   <div class="badge badge-ghost badge-xs">{String.capitalize(faction)}</div>
                 <% end %>
-                <%= if map_size(@unit.factions) > 3 do %>
-                  <div class="badge badge-ghost badge-xs">+{map_size(@unit.factions) - 3}</div>
+                <%= if length(factions) > 3 do %>
+                  <div class="badge badge-ghost badge-xs">+{length(factions) - 3}</div>
                 <% end %>
               </div>
             <% end %>
@@ -599,7 +728,11 @@ defmodule AcesWeb.Components.UnitSearchModal do
                 type="button"
                 disabled
                 class="btn btn-disabled btn-sm"
-                title={if @mode == :pv_budget, do: "Insufficient PV budget", else: "Insufficient SP in warchest"}
+                title={
+                  if @mode == :pv_budget,
+                    do: "Insufficient PV budget",
+                    else: "Insufficient SP in warchest"
+                }
               >
                 Too Expensive
               </button>

@@ -5,6 +5,22 @@ defmodule Aces.Units.Filters do
   This module provides composable filters for querying the master_units table.
   Filters are applied as a keyword list and processed recursively.
 
+  ## Introduction era vs. availability era
+
+  Two filters use era strings and they mean **different things** despite
+  sharing the same `@era_ids` table:
+
+    * `:era` matches `master_units.era_id` — the era in which the unit was
+      *introduced* into canon (one value per unit, sourced from MUL's
+      `EraId`). This is a historical/publishing attribute.
+    * `:era_faction` (and `:eras`) match keys inside `master_units.factions`
+      — the eras in which the unit is *available to a given faction*. One
+      unit can be available across many eras.
+
+    The era buttons in the unit-search modal always mean *availability*, not
+    introduction. Use `:era` only when you specifically care about when a
+    unit was first published.
+
   ## Supported Filters
 
   ### Unit Type
@@ -17,8 +33,9 @@ defmodule Aces.Units.Filters do
   ### Tonnage
     * `{:tonnage_range, {min, max}}` - Filter by tonnage range (inclusive)
 
-  ### Era
-    * `{:era, era_string}` - Filter by unit introduction era
+  ### Era (unit introduction)
+    * `{:era, era_string}` - Filter by unit *introduction* era (matches
+      `master_units.era_id`, not availability).
 
     Supported era strings:
       - "ilclan" (3151+)
@@ -32,16 +49,22 @@ defmodule Aces.Units.Filters do
       - "early_succession_war"
       - "star_league"
 
-  ### Faction Availability
+  ### Faction / Era Availability
     * `{:faction, faction_string}` - Filter by faction availability (legacy format)
       Checks both old top-level format and new era-based format.
 
     * `{:factions, [faction_strings]}` - Filter by any of multiple factions (legacy)
       Returns units available to any faction in the list.
 
-    * `{:era_faction, {eras, faction}}` - Era-aware faction filter (preferred)
-      Filters for units available to a faction in any of the specified eras.
+    * `{:era_faction, {eras, faction}}` - Era-aware faction filter (preferred).
+      Filters for units *available to* a faction in any of the specified
+      eras. Matches keys in `master_units.factions`, not `era_id`.
       Example: `{:era_faction, {["ilclan", "dark_age"], "mercenary"}}`
+
+    * `{:eras, [era_strings]}` - Availability-era filter with no faction
+      constraint. Matches units that have any faction availability recorded
+      in one of the named eras (matches keys in `master_units.factions`,
+      not `era_id`).
 
   ## Usage
 
@@ -114,6 +137,9 @@ defmodule Aces.Units.Filters do
     |> filter(rest)
   end
 
+  # Matches the era in which the unit was *introduced* (u.era_id). Distinct
+  # from :era_faction / :eras, which match availability keys inside the
+  # factions map.
   def filter(query, [{:era, era} | rest]) when is_binary(era) do
     case Map.get(@era_ids, era) do
       nil ->
@@ -160,10 +186,11 @@ defmodule Aces.Units.Filters do
     |> filter(rest)
   end
 
+  # Availability-era + faction filter. Matches units whose factions map
+  # contains one of `eras` as a key AND has `faction` in that era's list.
+  # Distinct from :era, which matches u.era_id (introduction era).
   def filter(query, [{:era_faction, {eras, faction}} | rest])
       when is_list(eras) and is_binary(faction) do
-    # Era-aware faction filter: check if faction is available in ANY of the specified eras
-    # New factions format: %{"ilclan" => ["mercenary", "capellan"], "dark_age" => ["mercenary"]}
     lowercase_faction = String.downcase(faction)
 
     query
@@ -180,6 +207,27 @@ defmodule Aces.Units.Filters do
         u.factions,
         ^eras,
         ^lowercase_faction
+      )
+    )
+    |> filter(rest)
+  end
+
+  # Availability-era-only filter (no faction constraint). Matches units whose
+  # factions map has any of `eras` as a key. Mirrors :era_faction minus the
+  # per-era faction value check.
+  def filter(query, [{:eras, eras} | rest]) when is_list(eras) do
+    query
+    |> where(
+      [u],
+      fragment(
+        """
+        EXISTS (
+          SELECT 1 FROM jsonb_each(?) AS era_data
+          WHERE era_data.key = ANY(?)
+        )
+        """,
+        u.factions,
+        ^eras
       )
     )
     |> filter(rest)

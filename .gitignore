@@ -42,3 +42,6 @@ log/*
 /.smoke-worktree/
 /.local-smoke/
 .worktrees/*
+
+# Rework harness scratch files (per-branch plan, not code)
+/_branch_rework_plan.md

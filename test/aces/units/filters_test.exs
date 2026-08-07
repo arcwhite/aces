@@ -95,14 +95,17 @@ defmodule Aces.Units.FiltersTest do
     end
 
     test "filters by faction (era-based format)" do
-      merc = master_unit_fixture(%{
-        name: "Merc Unit",
-        factions: %{"ilclan" => ["mercenary"]}
-      })
-      _clan = master_unit_fixture(%{
-        name: "Clan Unit",
-        factions: %{"ilclan" => ["clan_wolf"]}
-      })
+      merc =
+        master_unit_fixture(%{
+          name: "Merc Unit",
+          factions: %{"ilclan" => ["mercenary"]}
+        })
+
+      _clan =
+        master_unit_fixture(%{
+          name: "Clan Unit",
+          factions: %{"ilclan" => ["clan_wolf"]}
+        })
 
       results =
         MasterUnit
@@ -114,14 +117,17 @@ defmodule Aces.Units.FiltersTest do
     end
 
     test "filters by era_faction" do
-      ilclan_merc = master_unit_fixture(%{
-        name: "IlClan Merc",
-        factions: %{"ilclan" => ["mercenary"], "dark_age" => ["clan_wolf"]}
-      })
-      _dark_age_only = master_unit_fixture(%{
-        name: "Dark Age Only",
-        factions: %{"dark_age" => ["mercenary"]}
-      })
+      ilclan_merc =
+        master_unit_fixture(%{
+          name: "IlClan Merc",
+          factions: %{"ilclan" => ["mercenary"], "dark_age" => ["clan_wolf"]}
+        })
+
+      _dark_age_only =
+        master_unit_fixture(%{
+          name: "Dark Age Only",
+          factions: %{"dark_age" => ["mercenary"]}
+        })
 
       # Filter for mercenary in ilclan era only
       results =
@@ -134,18 +140,23 @@ defmodule Aces.Units.FiltersTest do
     end
 
     test "filters by multiple eras in era_faction" do
-      ilclan_merc = master_unit_fixture(%{
-        name: "IlClan Merc",
-        factions: %{"ilclan" => ["mercenary"]}
-      })
-      dark_age_merc = master_unit_fixture(%{
-        name: "Dark Age Merc",
-        factions: %{"dark_age" => ["mercenary"]}
-      })
-      _jihad_only = master_unit_fixture(%{
-        name: "Jihad Only",
-        factions: %{"jihad" => ["mercenary"]}
-      })
+      ilclan_merc =
+        master_unit_fixture(%{
+          name: "IlClan Merc",
+          factions: %{"ilclan" => ["mercenary"]}
+        })
+
+      dark_age_merc =
+        master_unit_fixture(%{
+          name: "Dark Age Merc",
+          factions: %{"dark_age" => ["mercenary"]}
+        })
+
+      _jihad_only =
+        master_unit_fixture(%{
+          name: "Jihad Only",
+          factions: %{"jihad" => ["mercenary"]}
+        })
 
       # Filter for mercenary in ilclan OR dark_age
       results =
@@ -159,25 +170,79 @@ defmodule Aces.Units.FiltersTest do
       assert length(results) == 2
     end
 
+    test "filters by :eras only (availability, no faction constraint)" do
+      ilclan_only =
+        master_unit_fixture(%{
+          name: "IlClan Availability",
+          factions: %{"ilclan" => ["mercenary"]}
+        })
+
+      dark_age_only =
+        master_unit_fixture(%{
+          name: "Dark Age Availability",
+          factions: %{"dark_age" => ["clan_wolf"]}
+        })
+
+      _jihad_only =
+        master_unit_fixture(%{
+          name: "Jihad Availability",
+          factions: %{"jihad" => ["mercenary"]}
+        })
+
+      results =
+        MasterUnit
+        |> Filters.filter(eras: ["ilclan", "dark_age"])
+        |> Repo.all()
+
+      result_ids = Enum.map(results, & &1.id)
+      assert ilclan_only.id in result_ids
+      assert dark_age_only.id in result_ids
+      # The jihad-only row must be excluded.
+      refute Enum.any?(results, fn u -> u.name == "Jihad Availability" end)
+    end
+
+    test ":eras filter matches on availability keys, not era_id" do
+      # era_id 14 (jihad) but availability recorded under ilclan → should
+      # match {:eras, ["ilclan"]}.
+      unit =
+        master_unit_fixture(%{
+          name: "Introduced Jihad, Available IlClan",
+          era_id: 14,
+          factions: %{"ilclan" => ["mercenary"]}
+        })
+
+      results =
+        MasterUnit
+        |> Filters.filter(eras: ["ilclan"])
+        |> Repo.all()
+
+      assert unit.id in Enum.map(results, & &1.id)
+    end
+
     test "combines multiple filters" do
-      matching = master_unit_fixture(%{
-        name: "Perfect Match",
-        unit_type: "BattleMech",
-        point_value: 35,
-        factions: %{"ilclan" => ["mercenary"]}
-      })
-      _wrong_type = master_unit_fixture(%{
-        name: "Wrong Type",
-        unit_type: "Combat Vehicle",
-        point_value: 35,
-        factions: %{"ilclan" => ["mercenary"]}
-      })
-      _wrong_pv = master_unit_fixture(%{
-        name: "Wrong PV",
-        unit_type: "BattleMech",
-        point_value: 80,
-        factions: %{"ilclan" => ["mercenary"]}
-      })
+      matching =
+        master_unit_fixture(%{
+          name: "Perfect Match",
+          unit_type: "BattleMech",
+          point_value: 35,
+          factions: %{"ilclan" => ["mercenary"]}
+        })
+
+      _wrong_type =
+        master_unit_fixture(%{
+          name: "Wrong Type",
+          unit_type: "Combat Vehicle",
+          point_value: 35,
+          factions: %{"ilclan" => ["mercenary"]}
+        })
+
+      _wrong_pv =
+        master_unit_fixture(%{
+          name: "Wrong PV",
+          unit_type: "BattleMech",
+          point_value: 80,
+          factions: %{"ilclan" => ["mercenary"]}
+        })
 
       results =
         MasterUnit

@@ -7,20 +7,32 @@
 #
 # Usage:
 #   bin/local-smoke up [ref]      Create/refresh the worktree, set up the
-#                                 DB, build assets, start the server.
+#                                 DB, build assets, seed matrix, start server.
 #   bin/local-smoke down          Stop the server, leave the worktree in place.
 #   bin/local-smoke clean         Stop and remove the worktree entirely.
 #   bin/local-smoke status        Report worktree ref, server PID, tailscale.
 #   bin/local-smoke logs          Tail the server log.
+#   bin/local-smoke seed          Run mix seed_master_units --matrix (5×12)
+#                                 against the smoke DB. Prints bf_type
+#                                 histogram + per-combo failures on completion.
+#                                 NOTE: --matrix mode was added in commit
+#                                 9a78f87. Refs older than that silently
+#                                 drop the flag (OptionParser is non-strict)
+#                                 and fall through to the single-combination
+#                                 seed, which then aborts because required
+#                                 --era/--faction args are missing. Point
+#                                 SMOKE_REF at a ref at-or-after 9a78f87.
 #   bin/local-smoke serve         tailscale serve the running port over HTTPS.
 #   bin/local-smoke unserve       Tear down the tailscale serve mapping.
 #
 # Env overrides:
-#   SMOKE_PORT      Phoenix port              (default 4100)
-#   SMOKE_DB_NAME   Postgres database name    (default aces_smoke)
-#   SMOKE_DIR       Worktree directory        (default .smoke-worktree)
-#   SMOKE_STATE     Runtime state directory   (default .local-smoke)
-#   SMOKE_REF       Default ref for `up`      (default origin/main)
+#   SMOKE_PORT        Phoenix port              (default 4100)
+#   SMOKE_DB_NAME     Postgres database name    (default aces_smoke)
+#   SMOKE_DIR         Worktree directory        (default .smoke-worktree)
+#   SMOKE_STATE       Runtime state directory   (default .local-smoke)
+#   SMOKE_REF         Default ref for `up`      (default origin/main)
+#   SMOKE_SKIP_SEED   Skip matrix seed in `up`  (default unset)
+#   SMOKE_SEED_LOG    Where to tee seed output  (default ${SMOKE_STATE}/seed.log)
 
 set -euo pipefail
 
@@ -38,6 +50,7 @@ STATE_DIR="${REPO_ROOT}/${SMOKE_STATE}"
 PID_FILE="${STATE_DIR}/server.pid"
 LOG_FILE="${STATE_DIR}/server.log"
 META_FILE="${STATE_DIR}/meta"
+SEED_LOG_FILE="${SMOKE_SEED_LOG:-${STATE_DIR}/seed.log}"
 
 mkdir -p "$STATE_DIR"
 
@@ -100,6 +113,45 @@ setup_smoke() {
     mix assets.setup
     mix assets.build
   )
+}
+
+seed_matrix() {
+  require mix
+
+  if [ -z "${WORKTREE_PATH:-}" ] || [ ! -d "$WORKTREE_PATH" ]; then
+    die "no worktree at ${SMOKE_DIR}; run 'bin/local-smoke up' first"
+  fi
+
+  # Matrix mode iterates 5 eras × 12 factions with a 1s/request rate limit,
+  # so the full run is a 2–4 minute wall-clock step. We tee output to
+  # $SEED_LOG_FILE so the histogram/failures survive terminal scrollback.
+  log "seeding master units — mix seed_master_units --matrix"
+  log "  5 eras × 12 factions (60 QuickList requests, ~2–4 min at 1s rate limit)"
+  log "  streaming to ${SEED_LOG_FILE}"
+
+  # Wrap the subshell in `|| status=$?` so it runs in a conditional context —
+  # otherwise `set -e` aborts the whole script on any non-zero subshell exit
+  # (matrix_seed halts on per-combination failures), and the diagnostic branch
+  # below never runs.
+  local status=0
+  (
+    cd "$WORKTREE_PATH"
+    export MIX_ENV=dev
+    export DB_NAME="$SMOKE_DB_NAME"
+    export PORT="$SMOKE_PORT"
+    mix seed_master_units --matrix 2>&1 | tee "$SEED_LOG_FILE"
+    exit "${PIPESTATUS[0]}"
+  ) || status=$?
+
+  if [ "$status" -ne 0 ]; then
+    log "matrix seed exited non-zero (${status}); the histogram + summary above are still valid."
+    log "tail of ${SEED_LOG_FILE}:"
+    tail -n 40 "$SEED_LOG_FILE" >&2 || true
+    log "continuing to start_server — a flaky MUL request shouldn't block bring-up."
+    return 0
+  fi
+
+  log "matrix seed complete — histogram + summary above (also in ${SEED_LOG_FILE})"
 }
 
 start_server() {
@@ -182,7 +234,16 @@ cmd_up() {
   local ref="${1:-$SMOKE_REF_DEFAULT}"
   ensure_worktree "$ref"
   setup_smoke
+  if [ -n "${SMOKE_SKIP_SEED:-}" ]; then
+    log "SMOKE_SKIP_SEED set — skipping matrix seed"
+  else
+    seed_matrix
+  fi
   start_server
+}
+
+cmd_seed() {
+  seed_matrix
 }
 
 cmd_down() {
@@ -230,6 +291,7 @@ main() {
     clean)     cmd_clean ;;
     status)    cmd_status ;;
     logs)      cmd_logs ;;
+    seed)      cmd_seed ;;
     serve)     tailscale_serve ;;
     unserve)   tailscale_unserve ;;
     ""|help|-h|--help)

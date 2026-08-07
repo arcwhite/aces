@@ -342,7 +342,7 @@ defmodule AcesWeb.CompanyLive.Draft do
   def handle_info({:perform_search, search_term}, socket) do
     if socket.assigns.unit_search_term == search_term do
       opts = build_search_opts(socket.assigns)
-      {:noreply, apply_search_result(socket, Units.search_units(search_term, opts))}
+      {:noreply, apply_search_result(socket, Units.search(search_term, opts))}
     else
       {:noreply, socket}
     end
@@ -379,19 +379,19 @@ defmodule AcesWeb.CompanyLive.Draft do
 
     if String.length(search_term) >= 2 do
       opts = build_search_opts(socket.assigns)
-      apply_search_result(socket, Units.search_units(search_term, opts))
+      apply_search_result(socket, Units.search(search_term, opts))
     else
       socket
     end
   end
 
-  defp apply_search_result(socket, {:ok, {results, _source}}) do
+  defp apply_search_result(socket, {:ok, %{units: results}}) do
     socket
     |> assign(:search_results, results)
     |> assign(:search_loading, false)
   end
 
-  defp apply_search_result(socket, {:error, {:term_too_short, _}}) do
+  defp apply_search_result(socket, {:error, :term_too_short}) do
     socket
     |> assign(:search_results, [])
     |> assign(:search_loading, false)
