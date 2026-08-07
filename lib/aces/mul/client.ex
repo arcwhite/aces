@@ -35,6 +35,8 @@ defmodule Aces.MUL.Client do
 
   require Logger
 
+  alias Aces.MUL.Vocabulary
+
   @base_url "https://masterunitlist.azurewebsites.net"
   @rate_limit_delay 1000  # 1 second between requests
   @request_timeout 10_000  # 10 second timeout
@@ -224,21 +226,7 @@ defmodule Aces.MUL.Client do
     if params == "", do: "", else: "?" <> params
   end
 
-  # Era IDs from https://masterunitlist.azurewebsites.net/Era/Index
-  # IMPORTANT: These must match the actual MUL era IDs
-  @era_ids %{
-    "ilclan" => 257,
-    "dark_age" => 16,
-    "late_republic" => 254,
-    "republic" => 254,  # Alias for late_republic
-    "early_republic" => 15,
-    "jihad" => 14,
-    "civil_war" => 247,
-    "clan_invasion" => 13,
-    "late_succession_war" => 256,
-    "early_succession_war" => 11,
-    "star_league" => 10
-  }
+  @era_ids Vocabulary.era_ids()
 
   # Single era
   defp encode_param(:era, era) when is_binary(era) do
@@ -269,6 +257,8 @@ defmodule Aces.MUL.Client do
 
   defp encode_param(:min_tons, tons), do: "MinTons=#{tons}"
   defp encode_param(:max_tons, tons), do: "MaxTons=#{tons}"
+  defp encode_param(:min_pv, pv), do: "MinPV=#{pv}"
+  defp encode_param(:max_pv, pv), do: "MaxPV=#{pv}"
   defp encode_param(:name, name), do: "Name=#{URI.encode(name)}"
 
   # Faction name to ID mapping (extracted from https://masterunitlist.azurewebsites.net/Faction/Index)

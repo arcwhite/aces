@@ -41,6 +41,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
 
   require Logger
 
+  alias Aces.MUL.Vocabulary
   alias Aces.Units
 
   @impl true
@@ -135,7 +136,6 @@ defmodule AcesWeb.Components.UnitSearchModal do
       if String.length(search_term) >= 2 do
         socket
         |> assign(:search_term, search_term)
-        |> assign(:search_loading, true)
         |> perform_search()
       else
         socket
@@ -148,7 +148,7 @@ defmodule AcesWeb.Components.UnitSearchModal do
 
   def handle_event("retry_search", _params, socket) do
     if socket.assigns.search_term != "" do
-      {:noreply, socket |> assign(:search_loading, true) |> perform_search()}
+      {:noreply, perform_search(socket)}
     else
       {:noreply, load_default_results(socket)}
     end
@@ -174,91 +174,86 @@ defmodule AcesWeb.Components.UnitSearchModal do
     end
   end
 
+  # Dispatched async so the reduction returns immediately and the spinner
+  # actually reaches the browser — a search can carry a MUL round-trip.
+  # start_async cancels any in-flight :search task, so rapid typing and
+  # filter-toggling self-debounce without extra bookkeeping.
   defp perform_search(socket) do
+    term = socket.assigns.search_term
     opts = current_filter_opts(socket.assigns)
 
-    case Units.search(socket.assigns.search_term, opts) do
+    socket
+    |> assign(:search_loading, true)
+    |> start_async(:search, fn -> Units.search(term, opts) end)
+  end
+
+  @impl true
+  def handle_async(:search, {:ok, result}, socket) do
+    {:noreply, apply_search_result(socket, result)}
+  end
+
+  def handle_async(:search, {:exit, reason}, socket) do
+    Logger.error("Unit search task exited: #{inspect(reason)}")
+    {:noreply, assign_results(socket, [], nil, :query_failed)}
+  end
+
+  defp apply_search_result(socket, result) do
+    case result do
       # MUL was reached and had nothing. Distinct from an empty local cache,
-      # so the template can say which one happened. `source` is still
-      # assigned: knowing an empty result came from fixtures rather than the
+      # so the template can say which one happened. `source` is still passed
+      # through: knowing an empty result came from fixtures rather than the
       # live MUL is exactly what smoke operators need to see.
       {:ok, %{units: [], source: source}} when source != :local ->
-        socket
-        |> assign(:search_results, [])
-        |> assign(:search_source, source)
-        |> assign(:search_error, :mul_empty)
-        |> assign(:search_loading, false)
+        assign_results(socket, [], source, :mul_empty)
 
       {:ok, %{units: units, source: source}} ->
-        socket
-        |> assign(:search_results, units)
-        |> assign(:search_source, source)
-        |> assign(:search_error, nil)
-        |> assign(:search_loading, false)
+        assign_results(socket, units, source, nil)
 
       {:error, :term_too_short} ->
-        socket
-        |> assign(:search_results, [])
-        |> assign(:search_source, nil)
-        |> assign(:search_error, nil)
-        |> assign(:search_loading, false)
+        assign_results(socket, [], nil, nil)
 
       {:error, {:mul_unavailable, reason}} ->
-        socket
-        |> assign(:search_results, [])
-        |> assign(:search_source, nil)
-        |> assign(:search_error, {:mul_unavailable, reason})
-        |> assign(:search_loading, false)
+        assign_results(socket, [], nil, {:mul_unavailable, reason})
 
       {:error, {:query_failed, reason}} ->
         Logger.error("Unit search query failed: #{inspect(reason)}")
-
-        socket
-        |> assign(:search_results, [])
-        |> assign(:search_source, nil)
-        |> assign(:search_error, :query_failed)
-        |> assign(:search_loading, false)
+        assign_results(socket, [], nil, :query_failed)
     end
   end
 
   defp load_default_results(socket) do
-    opts = current_filter_opts(socket.assigns)
+    # The context returns a typed result now, so the view no longer rescues
+    # Postgrex errors itself.
+    case Units.list_cached_master_units(current_filter_opts(socket.assigns)) do
+      {:ok, []} ->
+        assign_results(socket, [], nil, :cache_empty)
 
-    try do
-      case Units.list_cached_master_units(opts) do
-        [] ->
-          socket
-          |> assign(:search_results, [])
-          |> assign(:search_source, nil)
-          |> assign(:search_error, :cache_empty)
-          |> assign(:search_loading, false)
+      {:ok, units} ->
+        assign_results(socket, units, :local, nil)
 
-        units ->
-          socket
-          |> assign(:search_results, units)
-          |> assign(:search_source, :local)
-          |> assign(:search_error, nil)
-          |> assign(:search_loading, false)
-      end
-    rescue
-      error in [Postgrex.Error, DBConnection.ConnectionError] ->
-        Logger.error("Default unit load failed: #{inspect(error)}")
-
-        socket
-        |> assign(:search_results, [])
-        |> assign(:search_source, nil)
-        |> assign(:search_error, :query_failed)
-        |> assign(:search_loading, false)
+      {:error, {:query_failed, reason}} ->
+        Logger.error("Default unit load failed: #{inspect(reason)}")
+        assign_results(socket, [], nil, :query_failed)
     end
   end
 
+  # Single place that writes the four result assigns, so every branch above
+  # stays one line. `source` is data provenance (:local/:api/:fixture or nil);
+  # `error` is the render-state atom the template matches on.
+  defp assign_results(socket, units, source, error) do
+    socket
+    |> assign(:search_results, units)
+    |> assign(:search_source, source)
+    |> assign(:search_error, error)
+    |> assign(:search_loading, false)
+  end
+
+  # Clears the term as well as the results, so reopening the modal starts from
+  # a blank search rather than a stale one.
   defp reset_search(socket) do
     socket
     |> assign(:search_term, "")
-    |> assign(:search_results, [])
-    |> assign(:search_loading, false)
-    |> assign(:search_source, nil)
-    |> assign(:search_error, nil)
+    |> assign_results([], nil, nil)
   end
 
   defp current_filter_opts(assigns) do
@@ -389,49 +384,14 @@ defmodule AcesWeb.Components.UnitSearchModal do
               </label>
               <div class="flex flex-wrap gap-2">
                 <button
+                  :for={era <- Vocabulary.eras()}
                   type="button"
                   phx-click="toggle_era_filter"
-                  phx-value-era="ilclan"
+                  phx-value-era={era.key}
                   phx-target={@myself}
-                  class={"btn btn-sm #{if "ilclan" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
+                  class={"btn btn-sm #{if era.key in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
                 >
-                  ilClan
-                </button>
-                <button
-                  type="button"
-                  phx-click="toggle_era_filter"
-                  phx-value-era="dark_age"
-                  phx-target={@myself}
-                  class={"btn btn-sm #{if "dark_age" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                >
-                  Dark Age
-                </button>
-                <button
-                  type="button"
-                  phx-click="toggle_era_filter"
-                  phx-value-era="late_republic"
-                  phx-target={@myself}
-                  class={"btn btn-sm #{if "late_republic" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                >
-                  Late Republic
-                </button>
-                <button
-                  type="button"
-                  phx-click="toggle_era_filter"
-                  phx-value-era="early_republic"
-                  phx-target={@myself}
-                  class={"btn btn-sm #{if "early_republic" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                >
-                  Early Republic
-                </button>
-                <button
-                  type="button"
-                  phx-click="toggle_era_filter"
-                  phx-value-era="clan_invasion"
-                  phx-target={@myself}
-                  class={"btn btn-sm #{if "clan_invasion" in @filter_eras, do: "btn-primary", else: "btn-outline"}"}
-                >
-                  Clan Invasion
+                  {era.label}
                 </button>
               </div>
             </div>
@@ -444,73 +404,27 @@ defmodule AcesWeb.Components.UnitSearchModal do
               <form phx-change="set_faction_filter" phx-target={@myself}>
                 <select class="select select-bordered select-sm" name="faction">
                   <option value="" selected={is_nil(@filter_faction)}>Any Faction</option>
-                  <option value="mercenary" selected={@filter_faction == "mercenary"}>
-                    Mercenary
-                  </option>
-                  <optgroup label="Inner Sphere">
-                    <option
-                      value="capellan_confederation"
-                      selected={@filter_faction == "capellan_confederation"}
-                    >
-                      Capellan Confederation
-                    </option>
-                    <option
-                      value="draconis_combine"
-                      selected={@filter_faction == "draconis_combine"}
-                    >
-                      Draconis Combine
-                    </option>
-                    <option
-                      value="federated_suns"
-                      selected={@filter_faction == "federated_suns"}
-                    >
-                      Federated Suns
-                    </option>
-                    <option
-                      value="free_worlds_league"
-                      selected={@filter_faction == "free_worlds_league"}
-                    >
-                      Free Worlds League
-                    </option>
-                    <option
-                      value="lyran_commonwealth"
-                      selected={@filter_faction == "lyran_commonwealth"}
-                    >
-                      Lyran Commonwealth
-                    </option>
-                    <option
-                      value="republic_of_the_sphere"
-                      selected={@filter_faction == "republic_of_the_sphere"}
-                    >
-                      Republic of the Sphere
-                    </option>
-                  </optgroup>
-                  <optgroup label="Clans">
-                    <option value="clan_wolf" selected={@filter_faction == "clan_wolf"}>
-                      Clan Wolf
-                    </option>
-                    <option
-                      value="clan_jade_falcon"
-                      selected={@filter_faction == "clan_jade_falcon"}
-                    >
-                      Clan Jade Falcon
-                    </option>
-                    <option
-                      value="clan_ghost_bear"
-                      selected={@filter_faction == "clan_ghost_bear"}
-                    >
-                      Clan Ghost Bear
-                    </option>
-                    <option value="clan_sea_fox" selected={@filter_faction == "clan_sea_fox"}>
-                      Clan Sea Fox
-                    </option>
-                    <option
-                      value="clan_hell_horses"
-                      selected={@filter_faction == "clan_hell_horses"}
-                    >
-                      Clan Hell's Horses
-                    </option>
-                  </optgroup>
+                  <%= for {group_label, factions} <- Vocabulary.faction_option_groups() do %>
+                    <%= if group_label do %>
+                      <optgroup label={group_label}>
+                        <option
+                          :for={faction <- factions}
+                          value={faction.key}
+                          selected={@filter_faction == faction.key}
+                        >
+                          {faction.label}
+                        </option>
+                      </optgroup>
+                    <% else %>
+                      <option
+                        :for={faction <- factions}
+                        value={faction.key}
+                        selected={@filter_faction == faction.key}
+                      >
+                        {faction.label}
+                      </option>
+                    <% end %>
+                  <% end %>
                 </select>
               </form>
             </div>
@@ -523,23 +437,12 @@ defmodule AcesWeb.Components.UnitSearchModal do
               <form phx-change="set_type_filter" phx-target={@myself}>
                 <select class="select select-bordered select-sm" name="type">
                   <option value="" selected={@filter_type == nil}>All Types</option>
-                  <option value="battlemech" selected={@filter_type == "battlemech"}>
-                    BattleMech
-                  </option>
-                  <option value="combat_vehicle" selected={@filter_type == "combat_vehicle"}>
-                    Combat Vehicle
-                  </option>
-                  <option value="battle_armor" selected={@filter_type == "battle_armor"}>
-                    Battle Armor
-                  </option>
                   <option
-                    value="conventional_infantry"
-                    selected={@filter_type == "conventional_infantry"}
+                    :for={unit_type <- Vocabulary.unit_types()}
+                    value={unit_type.key}
+                    selected={@filter_type == unit_type.key}
                   >
-                    Infantry
-                  </option>
-                  <option value="protomech" selected={@filter_type == "protomech"}>
-                    ProtoMech
+                    {unit_type.label}
                   </option>
                 </select>
               </form>

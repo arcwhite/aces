@@ -12,35 +12,11 @@ defmodule Aces.Units do
   alias Aces.Repo
   alias Aces.Units.Filters
   alias Aces.Units.MasterUnit
-  alias Aces.MUL.Client
-  alias Aces.MUL.TypeMapping
+  alias Aces.MUL.{Client, TypeMapping}
 
   require Logger
 
   @cache_ttl_days 30  # Refresh cached units after 30 days
-
-  @doc """
-  Search for units — checks local DB first, falls back to the MUL client.
-
-  This function returns a plain list for backward compatibility with the
-  draft LiveView. Prefer `search/2` for new callers — it identifies where
-  the units came from (`:local`, `:api`, `:fixture`) and surfaces specific
-  failure modes in the return value instead of collapsing them to `[]`.
-  """
-  @deprecated "Use search/2 for typed results including error branches"
-  def search_units(search_term, opts \\ []) when is_binary(search_term) do
-    case search(search_term, opts) do
-      {:ok, %{units: units}} ->
-        units
-
-      {:error, :term_too_short} ->
-        []
-
-      {:error, reason} ->
-        Logger.info("MUL API search failed for '#{search_term}': #{inspect(reason)}")
-        []
-    end
-  end
 
   @doc """
   Typed unit search. Returns a tagged tuple naming what happened so callers
@@ -125,6 +101,11 @@ defmodule Aces.Units do
   @doc """
   Get master units from local cache, ordered by point_value then name.
 
+  Returns `{:ok, units}` on success, `{:error, {:query_failed, reason}}` if the
+  DB call raises. Callers should pattern-match instead of rescuing at the view
+  layer — the shape mirrors `search/2` so both boundary calls can be handled
+  uniformly.
+
   Options:
     * `:limit` — max rows to return (default `50`).
     * Everything else is forwarded to `Aces.Units.Filters.filter/2`.
@@ -135,11 +116,19 @@ defmodule Aces.Units do
   def list_cached_master_units(opts \\ []) do
     {limit, filter_opts} = Keyword.pop(opts, :limit, 50)
 
-    MasterUnit
-    |> Filters.filter(filter_opts)
-    |> order_by([u], [u.point_value, u.name])
-    |> limit(^limit)
-    |> Repo.all()
+    query =
+      MasterUnit
+      |> Filters.filter(filter_opts)
+      |> order_by([u], [u.point_value, u.name])
+      |> limit(^limit)
+
+    try do
+      {:ok, Repo.all(query)}
+    rescue
+      error ->
+        Logger.error("list_cached_master_units failed: #{inspect(error)}")
+        {:error, {:query_failed, error}}
+    end
   end
 
   @doc """
@@ -148,13 +137,26 @@ defmodule Aces.Units do
   When updating an existing unit, the factions field is merged rather than replaced,
   allowing faction availability to accumulate across multiple seed operations with
   different era/faction combinations.
+
+  Returns `{:error, :no_alpha_strike_card}` for payloads that lack both `bf_type`
+  and `point_value` — units without an Alpha Strike statline are not useful to
+  cache and would otherwise fall through to `TypeMapping.resolve/2`'s `"other"`
+  bucket. "Lack" means nil, `""`, or `0`: MUL sends zeros rather than nulls for
+  these rows (see `no_alpha_strike_card?/1`).
+
+  The check runs on insert only. Updates still merge, so a row already cached
+  before this guard existed is not retroactively rejected on a faction re-seed.
   """
   def create_or_update_master_unit(attrs) when is_map(attrs) do
     case Repo.get_by(MasterUnit, mul_id: attrs[:mul_id] || attrs["mul_id"]) do
       nil ->
-        %MasterUnit{}
-        |> MasterUnit.changeset(attrs)
-        |> Repo.insert()
+        if no_alpha_strike_card?(attrs) do
+          {:error, :no_alpha_strike_card}
+        else
+          %MasterUnit{}
+          |> MasterUnit.changeset(attrs)
+          |> Repo.insert()
+        end
 
       existing ->
         # Merge factions instead of replacing
@@ -165,6 +167,28 @@ defmodule Aces.Units do
         |> Repo.update()
     end
   end
+
+  # MUL does not send nulls for statline-less rows — it sends zeros and empty
+  # strings. A real payload for one of these looks like:
+  #
+  #     %{bf_type: nil, point_value: 0, battle_value: 0, tonnage: 0, ...}
+  #
+  # so an is_nil/1 check on point_value never fires and the guard silently
+  # never rejected anything. Treat 0 and "" as absent.
+  defp no_alpha_strike_card?(attrs) do
+    absent_bf_type?(attrs[:bf_type] || attrs["bf_type"]) and
+      absent_point_value?(attrs[:point_value] || attrs["point_value"])
+  end
+
+  defp absent_bf_type?(nil), do: true
+  defp absent_bf_type?(value) when is_binary(value), do: String.trim(value) == ""
+  defp absent_bf_type?(_), do: false
+
+  # PV 0 is never legitimate for a unit we would put on a roster.
+  defp absent_point_value?(nil), do: true
+  defp absent_point_value?(0), do: true
+  defp absent_point_value?(value) when is_binary(value), do: String.trim(value) in ["", "0"]
+  defp absent_point_value?(_), do: false
 
   # Merge new faction data with existing faction data
   defp merge_faction_attrs(existing, attrs) do
@@ -210,16 +234,17 @@ defmodule Aces.Units do
 
     case Client.fetch_units(api_filters) do
       {:ok, {api_units, source}} ->
-        cached_units =
-          api_units
-          |> Enum.map(&create_or_update_master_unit/1)
-          |> Enum.filter(&match?({:ok, _}, &1))
-          |> Enum.map(fn {:ok, unit} -> unit end)
-          |> post_filter_by_unit_type(opts)
+        Enum.each(api_units, &create_or_update_master_unit/1)
 
-        # An empty list here is a legitimate zero-match result, not an error;
-        # callers read it off {units: [], source: source}.
-        {:ok, %{units: cached_units, source: source}}
+        # Re-run the local pass with the full original opts so untranslatable
+        # filters (dropped from the API request) still narrow the returned
+        # set. This supersedes post-filtering the API rows on :unit_type — it
+        # enforces *every* opt, not just that one.
+        #
+        # `source` still names the client backing rather than :local: these
+        # rows required a MUL round-trip, even though they are read back out
+        # of the cache we just upserted them into.
+        {:ok, %{units: search_local_units(search_term, opts), source: source}}
 
       # The client already returns {:mul_unavailable, _} / {:query_failed, _},
       # so re-wrapping here would nest the tag twice.
@@ -228,46 +253,67 @@ defmodule Aces.Units do
     end
   end
 
-  # Translate internal filter format to MUL API format.
+  # Internal opt keys that MUL binds. Anything not here is dropped from the
+  # API request (with a debug log) and enforced by the local pass instead.
   #
-  # `:unit_type` is expanded to the MUL Types ids `TypeMapping` associates
-  # with it. Because a MUL type id can cover more internal unit types than
-  # we asked for (e.g. Types=21 returns both battle armor and conventional
-  # infantry, Types=18 returns both battlemechs and industrial mechs), the
-  # returned units are also post-filtered locally on the resolved unit_type
-  # — see `post_filter_by_unit_type/2`.
-  defp translate_filters_for_api(opts) do
-    Enum.reduce(opts, %{}, fn
-      {:era_faction, {eras, faction}}, acc ->
-        acc
-        |> Map.put(:eras, eras)
-        |> Map.put(:factions, [faction])
+  # Deliberately named differently from `Aces.MUL.Client`'s
+  # @supported_filter_keys: that one allowlists outbound *MUL parameter*
+  # names, this one allowlists inbound *internal opt* names. Same idea, two
+  # layers, non-overlapping vocabularies.
+  @translatable_opt_keys ~w(era eras era_faction unit_type min_pv max_pv tonnage_range)a
 
-      {:eras, eras}, acc when is_list(eras) ->
-        Map.put(acc, :eras, eras)
+  @doc false
+  # Translate internal filter opts into a best-effort MUL API narrowing request.
+  # Unknown keys never fail the search — they just don't reach MUL. Public for
+  # test visibility; not part of the API contract.
+  def translate_filters_for_api(opts) do
+    {known, unknown} = Enum.split_with(opts, fn {key, _} -> key in @translatable_opt_keys end)
 
-      {:faction, faction}, acc when is_binary(faction) ->
-        Map.put(acc, :factions, [faction])
+    if unknown != [] do
+      Logger.debug(fn ->
+        keys = unknown |> Enum.map(fn {k, _} -> k end) |> Enum.uniq()
+        "MUL filter translation dropped unsupported keys: #{inspect(keys)}"
+      end)
+    end
 
-      {:unit_type, type}, acc ->
-        case TypeMapping.to_mul_ids(type) do
-          [] -> acc
-          ids -> Map.put(acc, :types, ids)
-        end
-
-      {key, value}, acc ->
-        Map.put(acc, key, value)
-    end)
+    known
+    |> Enum.reduce(%{}, &translate_filter/2)
+    |> pair_complete(:min_pv, :max_pv, 0, 9999)
+    |> pair_complete(:min_tons, :max_tons, 0, 200)
   end
 
-  # Post-filter API-cached rows on the resolved unit_type so a request for
-  # e.g. "conventional_infantry" doesn't leak battle_armor rows from the
-  # same Types=21 fetch. We still cache everything MUL returned — the
-  # filter only trims the returned subset.
-  defp post_filter_by_unit_type(units, opts) do
-    case Keyword.get(opts, :unit_type) do
-      nil -> units
-      type -> Enum.filter(units, fn unit -> unit.unit_type == type end)
+  defp translate_filter({:era_faction, {eras, faction}}, acc) do
+    acc
+    |> Map.put(:eras, eras)
+    |> Map.put(:factions, [faction])
+  end
+
+  defp translate_filter({:unit_type, type}, acc) do
+    # TypeMapping rather than Vocabulary.mul_type_id/1: a single MUL type id
+    # can cover more internal unit types than we asked for (Types=21 is both
+    # battle armor and conventional infantry), so this returns a list. The
+    # local re-run is what narrows the result back down.
+    case TypeMapping.to_mul_ids(type) do
+      [] -> acc
+      ids -> Map.put(acc, :types, ids)
+    end
+  end
+
+  defp translate_filter({:tonnage_range, {min, max}}, acc) do
+    acc
+    |> Map.put(:min_tons, min)
+    |> Map.put(:max_tons, max)
+  end
+
+  defp translate_filter({key, value}, acc), do: Map.put(acc, key, value)
+
+  # MUL ignores a lone bound in a range filter; emit the pair or neither, using
+  # sentinels for the missing side (verified: MinPV=0&MaxPV=9999 is unfiltered).
+  defp pair_complete(filters, min_key, max_key, min_default, max_default) do
+    case {Map.has_key?(filters, min_key), Map.has_key?(filters, max_key)} do
+      {true, false} -> Map.put(filters, max_key, max_default)
+      {false, true} -> Map.put(filters, min_key, min_default)
+      _ -> filters
     end
   end
 

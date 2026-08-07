@@ -33,6 +33,9 @@
 #   SMOKE_REF         Default ref for `up`      (default origin/main)
 #   SMOKE_SKIP_SEED   Skip matrix seed in `up`  (default unset)
 #   SMOKE_SEED_LOG    Where to tee seed output  (default ${SMOKE_STATE}/seed.log)
+#   SMOKE_SEED_SOURCE Where `seed` gets units   (default fixture; `api` hits
+#                     the LIVE Master Unit List — 120 requests, ~6-9 min. Use
+#                     it when the import path itself is what you're testing.)
 
 set -euo pipefail
 
@@ -51,6 +54,7 @@ PID_FILE="${STATE_DIR}/server.pid"
 LOG_FILE="${STATE_DIR}/server.log"
 META_FILE="${STATE_DIR}/meta"
 SEED_LOG_FILE="${SMOKE_SEED_LOG:-${STATE_DIR}/seed.log}"
+SMOKE_SEED_SOURCE="${SMOKE_SEED_SOURCE:-fixture}"
 
 mkdir -p "$STATE_DIR"
 
@@ -74,6 +78,16 @@ ensure_worktree() {
   local ref="$1"
 
   require git
+
+  # `up` with no argument falls back to SMOKE_REF (default origin/main), so it
+  # will happily re-pin a worktree you had deliberately parked on a feature
+  # branch — and the next `seed` then runs against main. Say so out loud.
+  local previous_ref
+  previous_ref="$(sed -n 's/^ref=//p' "$META_FILE" 2>/dev/null || true)"
+  if [ -n "$previous_ref" ] && [ "$previous_ref" != "$ref" ]; then
+    log "note: re-pinning ${SMOKE_DIR} from '${previous_ref}' → '${ref}'"
+    log "      pass a ref to keep the old one: bin/local-smoke up ${previous_ref}"
+  fi
 
   if [ -d "$WORKTREE_PATH/.git" ] || git worktree list --porcelain | grep -q "^worktree ${WORKTREE_PATH}$"; then
     log "refreshing worktree at ${SMOKE_DIR} → ${ref}"
@@ -115,6 +129,44 @@ setup_smoke() {
   )
 }
 
+# The worktree is pinned once, by `up`. Neither `seed` nor `status` re-pins,
+# so a rebase or force-push upstream leaves the worktree quietly running code
+# that no longer exists on the branch — and the failure surfaces as whatever
+# that stale code happens to do, which is never obviously a staleness problem.
+# Returns 1 when drifted so callers can decide whether to warn or stop.
+check_worktree_pin() {
+  [ -f "$META_FILE" ] || return 0
+  [ -d "$WORKTREE_PATH" ] || return 0
+
+  local pinned_ref head_commit ref_commit
+  pinned_ref="$(sed -n 's/^ref=//p' "$META_FILE" 2>/dev/null || true)"
+  [ -n "$pinned_ref" ] || return 0
+
+  head_commit="$(git -C "$WORKTREE_PATH" rev-parse HEAD 2>/dev/null || true)"
+  ref_commit="$(git rev-parse "$pinned_ref" 2>/dev/null || true)"
+
+  if [ -z "$ref_commit" ]; then
+    log "WARNING: pinned ref '${pinned_ref}' no longer resolves — it may have been deleted."
+    log "  re-pin with: bin/local-smoke up <ref>"
+    return 1
+  fi
+
+  [ -n "$head_commit" ] || return 0
+  [ "$head_commit" != "$ref_commit" ] || return 0
+
+  log "WARNING: ${SMOKE_DIR} is stale — it is NOT running ${pinned_ref}."
+  log "  worktree HEAD : $(git -C "$WORKTREE_PATH" rev-parse --short HEAD)"
+  log "  ${pinned_ref} : $(git rev-parse --short "$pinned_ref")"
+
+  if ! git merge-base --is-ancestor "$head_commit" "$ref_commit" 2>/dev/null; then
+    log "  the worktree commit is not an ancestor of ${pinned_ref} — it was rebased"
+    log "  or force-pushed away, so the worktree holds orphaned code."
+  fi
+
+  log "  re-pin with: bin/local-smoke up ${pinned_ref}"
+  return 1
+}
+
 seed_matrix() {
   require mix
 
@@ -122,11 +174,44 @@ seed_matrix() {
     die "no worktree at ${SMOKE_DIR}; run 'bin/local-smoke up' first"
   fi
 
-  # Matrix mode iterates 5 eras × 12 factions with a 1s/request rate limit,
-  # so the full run is a 2–4 minute wall-clock step. We tee output to
-  # $SEED_LOG_FILE so the histogram/failures survive terminal scrollback.
+  # Warn but don't stop: re-pinning is the caller's call, and a deliberate
+  # seed against a pinned older ref is a legitimate thing to do.
+  check_worktree_pin || true
+
+  # OptionParser is non-strict, so a ref predating --matrix silently drops the
+  # flag, falls through to single-combination mode, and dies on the missing
+  # --era. That error names the wrong problem entirely, so check up front.
+  local seed_task="${WORKTREE_PATH}/lib/mix/tasks/seed_master_units.ex"
+  if [ -f "$seed_task" ] && ! grep -q 'matrix: :boolean' "$seed_task"; then
+    log "error: the pinned ref does not support 'mix seed_master_units --matrix'." >&2
+    log "  worktree : $(git -C "$WORKTREE_PATH" rev-parse --short HEAD) ($(sed -n 's/^ref=//p' "$META_FILE" 2>/dev/null))" >&2
+    log "  OptionParser would silently drop --matrix and then abort on the" >&2
+    log "  missing --era, which reads as an argument problem rather than a" >&2
+    log "  stale-checkout problem." >&2
+    log "  re-pin at a ref that has matrix mode, e.g.:" >&2
+    log "    bin/local-smoke up recut/d-12772" >&2
+    exit 1
+  fi
+
+  case "$SMOKE_SEED_SOURCE" in
+    fixture|api) ;;
+    *) die "SMOKE_SEED_SOURCE must be 'fixture' or 'api' (got '${SMOKE_SEED_SOURCE}')" ;;
+  esac
+
   log "seeding master units — mix seed_master_units --matrix"
-  log "  5 eras × 12 factions (60 QuickList requests, ~2–4 min at 1s rate limit)"
+
+  if [ "$SMOKE_SEED_SOURCE" = "api" ]; then
+    # Deliberate opt-in: the import path itself is what's under test, so the
+    # smoke DB needs real MUL payloads rather than the fixture set.
+    log "  !! SMOKE_SEED_SOURCE=api — hitting the LIVE Master Unit List"
+    log "  !! 10 eras × 12 factions (120 QuickList requests, ~6–9 min at 1s rate limit)"
+  else
+    log "  source: local fixtures (no network)"
+    log "  set SMOKE_SEED_SOURCE=api to import from the live MUL instead"
+  fi
+
+  # We tee output to $SEED_LOG_FILE so the histogram/failures survive
+  # terminal scrollback.
   log "  streaming to ${SEED_LOG_FILE}"
 
   # Wrap the subshell in `|| status=$?` so it runs in a conditional context —
@@ -139,6 +224,9 @@ seed_matrix() {
     export MIX_ENV=dev
     export DB_NAME="$SMOKE_DB_NAME"
     export PORT="$SMOKE_PORT"
+    # Unlike setup_smoke/start_server, which hard-pin fixtures, the seed step
+    # is the one place a live MUL fetch is a legitimate thing to want.
+    export MUL_CLIENT_SOURCE="$SMOKE_SEED_SOURCE"
     mix seed_master_units --matrix 2>&1 | tee "$SEED_LOG_FILE"
     exit "${PIPESTATUS[0]}"
   ) || status=$?
@@ -261,6 +349,10 @@ cmd_status() {
   if [ -f "$META_FILE" ]; then
     log "worktree:"
     sed 's/^/  /' "$META_FILE"
+
+    if check_worktree_pin; then
+      log "  (in sync with its pinned ref)"
+    fi
   else
     log "no worktree set up"
   fi

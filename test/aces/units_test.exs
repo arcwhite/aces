@@ -256,20 +256,6 @@ defmodule Aces.UnitsTest do
     end
   end
 
-  describe "search_units/2 (deprecated)" do
-    test "collapses a too-short term to an empty list" do
-      assert [] == Units.search_units("A")
-    end
-
-    test "returns cached units as a plain list when found in the DB" do
-      atlas = atlas_master_unit_fixture()
-
-      results = Units.search_units("Atlas")
-      assert length(results) > 0
-      assert Enum.any?(results, fn unit -> unit.id == atlas.id end)
-    end
-  end
-
   describe "search/2" do
     test "returns :term_too_short for trimmed term under 2 chars" do
       assert {:error, :term_too_short} = Units.search("A")
@@ -308,8 +294,13 @@ defmodule Aces.UnitsTest do
       assert {:ok, %{units: [], source: :fixture}} = Units.search("NoSuchLocalUnit")
     end
 
-    test "passes a structured filter error through as {:query_failed, {:unsupported_filter, key}}" do
-      assert {:error, {:query_failed, {:unsupported_filter, :bogus}}} =
+    test "drops an untranslatable opt instead of failing the search" do
+      # Best-effort narrowing: a key MUL doesn't bind never reaches the API
+      # request, and the local re-run enforces whatever it can. A stray opt is
+      # not a reason to fail a user's search.
+      put_fixture_units([])
+
+      assert {:ok, %{units: [], source: :fixture}} =
                Units.search("NoSuchLocalUnit", bogus: 1)
     end
 
@@ -378,7 +369,7 @@ defmodule Aces.UnitsTest do
           point_value: 8
         )
 
-      results = Units.list_cached_master_units()
+      assert {:ok, results} = Units.list_cached_master_units()
       names = Enum.map(results, & &1.name)
 
       assert names == ["ZZZ Light", "AAA Middle", "ZZZ Heavy"]
@@ -394,7 +385,8 @@ defmodule Aces.UnitsTest do
         )
       end
 
-      assert length(Units.list_cached_master_units()) == 50
+      assert {:ok, units} = Units.list_cached_master_units()
+      assert length(units) == 50
     end
 
     test "honours an explicit :limit option" do
@@ -407,7 +399,8 @@ defmodule Aces.UnitsTest do
         )
       end
 
-      assert length(Units.list_cached_master_units(limit: 2)) == 2
+      assert {:ok, units} = Units.list_cached_master_units(limit: 2)
+      assert length(units) == 2
     end
 
     test "forwards non-:limit options to Filters.filter/2" do
@@ -426,12 +419,20 @@ defmodule Aces.UnitsTest do
           full_name: "Filter Vehicle FV-1"
         )
 
-      results = Units.list_cached_master_units(unit_type: "battlemech")
+      assert {:ok, results} = Units.list_cached_master_units(unit_type: "battlemech")
       assert Enum.all?(results, fn u -> u.unit_type == "battlemech" end)
     end
 
-    test "returns [] against an empty cache" do
-      assert Units.list_cached_master_units() == []
+    test "returns {:ok, []} against an empty cache" do
+      assert {:ok, []} = Units.list_cached_master_units()
+    end
+
+    test "does not leak :limit into the query filter" do
+      # :limit is popped before Filters.filter/2 sees the opts; if it leaked
+      # through it would be treated as an unknown filter key.
+      _mech = units_master_unit_fixture(name: "Leak Test", variant: "LK-1", full_name: "Leak Test LK-1")
+
+      assert {:ok, [_ | _]} = Units.list_cached_master_units(limit: 3)
     end
   end
 
@@ -483,6 +484,86 @@ defmodule Aces.UnitsTest do
       assert updated.variant == "AS7-K"
     end
 
+    test "returns :no_alpha_strike_card when payload has neither bf_type nor point_value" do
+      attrs = %{
+        mul_id: 5150,
+        name: "Stateless Row",
+        variant: "SR-1",
+        full_name: "Stateless Row SR-1",
+        unit_type: "other"
+      }
+
+      assert {:error, :no_alpha_strike_card} = Units.create_or_update_master_unit(attrs)
+      assert is_nil(Aces.Repo.get_by(Aces.Units.MasterUnit, mul_id: 5150))
+    end
+
+    test "returns :no_alpha_strike_card for MUL's zero-valued statline rows" do
+      # Verbatim shape of a real MUL QuickList row (mul_id 4487, seen during a
+      # live matrix seed). MUL sends zeros, not nulls, so an is_nil/1 check on
+      # point_value never fired and these rows were cached regardless.
+      attrs = %{
+        mul_id: 4487,
+        name: "Leapfrog Exoskeleton",
+        variant: "CEX-250 (Sqd4)",
+        full_name: "Leapfrog Exoskeleton CEX-250 (Sqd4)",
+        unit_type: "other",
+        bf_type: nil,
+        point_value: 0,
+        battle_value: 0,
+        tonnage: 0,
+        bf_armor: 0,
+        bf_structure: 0
+      }
+
+      assert {:error, :no_alpha_strike_card} = Units.create_or_update_master_unit(attrs)
+      assert is_nil(Aces.Repo.get_by(Aces.Units.MasterUnit, mul_id: 4487))
+    end
+
+    test "treats an empty-string bf_type as absent" do
+      attrs = %{
+        mul_id: 4488,
+        name: "Blank BFType Row",
+        variant: "BB-1",
+        full_name: "Blank BFType Row BB-1",
+        unit_type: "other",
+        bf_type: "   ",
+        point_value: 0
+      }
+
+      assert {:error, :no_alpha_strike_card} = Units.create_or_update_master_unit(attrs)
+    end
+
+    test "accepts a zero point_value when bf_type is present" do
+      # Only the *combination* means "no statline" — a real BFType is enough
+      # to keep the row, whatever the PV says.
+      attrs = %{
+        mul_id: 4489,
+        name: "Zero PV With Card",
+        variant: "ZP-1",
+        full_name: "Zero PV With Card ZP-1",
+        unit_type: "conventional_infantry",
+        bf_type: "CI",
+        point_value: 0
+      }
+
+      assert {:ok, unit} = Units.create_or_update_master_unit(attrs)
+      assert unit.bf_type == "CI"
+    end
+
+    test "accepts payloads that carry bf_type even without point_value" do
+      attrs = %{
+        mul_id: 5151,
+        name: "BF-only Row",
+        variant: "BFO-1",
+        full_name: "BF-only Row BFO-1",
+        unit_type: "battle_armor",
+        bf_type: "BA"
+      }
+
+      assert {:ok, unit} = Units.create_or_update_master_unit(attrs)
+      assert unit.bf_type == "BA"
+    end
+
     test "merges faction data when updating" do
       existing =
         units_master_unit_fixture(
@@ -505,6 +586,58 @@ defmodule Aces.UnitsTest do
       assert Map.has_key?(updated.factions, "dark_age")
       assert "mercenary" in updated.factions["ilclan"]
       assert "clan_wolf" in updated.factions["dark_age"]
+    end
+  end
+
+  describe "translate_filters_for_api/1" do
+    test "drops unknown opts silently instead of failing" do
+      # An unknown opt used to leak into the API request; now it should just be
+      # dropped (correctness comes from the local pass re-running).
+      assert Units.translate_filters_for_api(foo: :bar) == %{}
+
+      # A mix of known + unknown keeps the known ones.
+      result = Units.translate_filters_for_api(unit_type: "battlemech", foo: :bar)
+      assert result == %{types: [18]}
+    end
+
+    test "pair-completes a one-sided min_pv with a MaxPV sentinel" do
+      # MUL ignores a lone MinPV / MaxPV; we must emit both.
+      assert Units.translate_filters_for_api(min_pv: 20) == %{min_pv: 20, max_pv: 9999}
+      assert Units.translate_filters_for_api(max_pv: 40) == %{min_pv: 0, max_pv: 40}
+      assert Units.translate_filters_for_api(min_pv: 20, max_pv: 40) ==
+               %{min_pv: 20, max_pv: 40}
+    end
+
+    test "translates tonnage_range and pair-completes a lone tonnage bound" do
+      assert Units.translate_filters_for_api(tonnage_range: {50, 75}) ==
+               %{min_tons: 50, max_tons: 75}
+    end
+
+    test "translates era_faction into eras + factions" do
+      assert Units.translate_filters_for_api(era_faction: {["ilclan"], "mercenary"}) ==
+               %{eras: ["ilclan"], factions: ["mercenary"]}
+    end
+  end
+
+  describe "search_units/2 filter honouring" do
+    test "min_pv is honoured in the returned local set" do
+      _heavy = units_master_unit_fixture(
+        name: "Filter Heavy",
+        variant: "FH-1",
+        full_name: "Filter Heavy FH-1",
+        point_value: 50
+      )
+
+      light = units_master_unit_fixture(
+        name: "Filter Light",
+        variant: "FL-1",
+        full_name: "Filter Light FL-1",
+        point_value: 10
+      )
+
+      assert {:ok, %{units: results}} = Units.search("Filter", min_pv: 40)
+      assert Enum.all?(results, fn u -> u.point_value >= 40 end)
+      refute Enum.any?(results, fn u -> u.id == light.id end)
     end
   end
 
