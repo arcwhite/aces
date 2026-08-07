@@ -141,7 +141,11 @@ defmodule Aces.Units do
   Returns `{:error, :no_alpha_strike_card}` for payloads that lack both `bf_type`
   and `point_value` — units without an Alpha Strike statline are not useful to
   cache and would otherwise fall through to `TypeMapping.resolve/2`'s `"other"`
-  bucket.
+  bucket. "Lack" means nil, `""`, or `0`: MUL sends zeros rather than nulls for
+  these rows (see `no_alpha_strike_card?/1`).
+
+  The check runs on insert only. Updates still merge, so a row already cached
+  before this guard existed is not retroactively rejected on a faction re-seed.
   """
   def create_or_update_master_unit(attrs) when is_map(attrs) do
     case Repo.get_by(MasterUnit, mul_id: attrs[:mul_id] || attrs["mul_id"]) do
@@ -164,10 +168,27 @@ defmodule Aces.Units do
     end
   end
 
+  # MUL does not send nulls for statline-less rows — it sends zeros and empty
+  # strings. A real payload for one of these looks like:
+  #
+  #     %{bf_type: nil, point_value: 0, battle_value: 0, tonnage: 0, ...}
+  #
+  # so an is_nil/1 check on point_value never fires and the guard silently
+  # never rejected anything. Treat 0 and "" as absent.
   defp no_alpha_strike_card?(attrs) do
-    is_nil(attrs[:bf_type] || attrs["bf_type"]) and
-      is_nil(attrs[:point_value] || attrs["point_value"])
+    absent_bf_type?(attrs[:bf_type] || attrs["bf_type"]) and
+      absent_point_value?(attrs[:point_value] || attrs["point_value"])
   end
+
+  defp absent_bf_type?(nil), do: true
+  defp absent_bf_type?(value) when is_binary(value), do: String.trim(value) == ""
+  defp absent_bf_type?(_), do: false
+
+  # PV 0 is never legitimate for a unit we would put on a roster.
+  defp absent_point_value?(nil), do: true
+  defp absent_point_value?(0), do: true
+  defp absent_point_value?(value) when is_binary(value), do: String.trim(value) in ["", "0"]
+  defp absent_point_value?(_), do: false
 
   # Merge new faction data with existing faction data
   defp merge_faction_attrs(existing, attrs) do

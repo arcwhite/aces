@@ -497,6 +497,59 @@ defmodule Aces.UnitsTest do
       assert is_nil(Aces.Repo.get_by(Aces.Units.MasterUnit, mul_id: 5150))
     end
 
+    test "returns :no_alpha_strike_card for MUL's zero-valued statline rows" do
+      # Verbatim shape of a real MUL QuickList row (mul_id 4487, seen during a
+      # live matrix seed). MUL sends zeros, not nulls, so an is_nil/1 check on
+      # point_value never fired and these rows were cached regardless.
+      attrs = %{
+        mul_id: 4487,
+        name: "Leapfrog Exoskeleton",
+        variant: "CEX-250 (Sqd4)",
+        full_name: "Leapfrog Exoskeleton CEX-250 (Sqd4)",
+        unit_type: "other",
+        bf_type: nil,
+        point_value: 0,
+        battle_value: 0,
+        tonnage: 0,
+        bf_armor: 0,
+        bf_structure: 0
+      }
+
+      assert {:error, :no_alpha_strike_card} = Units.create_or_update_master_unit(attrs)
+      assert is_nil(Aces.Repo.get_by(Aces.Units.MasterUnit, mul_id: 4487))
+    end
+
+    test "treats an empty-string bf_type as absent" do
+      attrs = %{
+        mul_id: 4488,
+        name: "Blank BFType Row",
+        variant: "BB-1",
+        full_name: "Blank BFType Row BB-1",
+        unit_type: "other",
+        bf_type: "   ",
+        point_value: 0
+      }
+
+      assert {:error, :no_alpha_strike_card} = Units.create_or_update_master_unit(attrs)
+    end
+
+    test "accepts a zero point_value when bf_type is present" do
+      # Only the *combination* means "no statline" — a real BFType is enough
+      # to keep the row, whatever the PV says.
+      attrs = %{
+        mul_id: 4489,
+        name: "Zero PV With Card",
+        variant: "ZP-1",
+        full_name: "Zero PV With Card ZP-1",
+        unit_type: "conventional_infantry",
+        bf_type: "CI",
+        point_value: 0
+      }
+
+      assert {:ok, unit} = Units.create_or_update_master_unit(attrs)
+      assert unit.bf_type == "CI"
+    end
+
     test "accepts payloads that carry bf_type even without point_value" do
       attrs = %{
         mul_id: 5151,
